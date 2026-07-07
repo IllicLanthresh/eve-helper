@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVE Jita Sell Helper</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,'Segoe UI',Roboto,sans-serif}
+  header{padding:18px 22px 10px}
+  header h1{margin:0;font-size:20px;letter-spacing:.4px}
+  header p{margin:4px 0 0;color:var(--dim);font-size:13px}
+  main{padding:0 22px 60px;max-width:1400px;margin:0 auto}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+  section h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)}
+  .cols{display:flex;gap:14px;flex-wrap:wrap}
+  .col{flex:1 1 380px;min-width:300px}
+  label{display:block;color:var(--dim);font-size:12px;margin-bottom:4px}
+  textarea{width:100%;height:170px;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:8px;font:12px/1.4 var(--mono);resize:vertical;white-space:pre}
+  textarea:focus,input:focus,select:focus{outline:1px solid var(--cyan)}
+  input[type=number],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;font:13px var(--mono);width:90px}
+  button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
+    padding:7px 14px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--cyan)}
+  button.primary{background:#14344a;border-color:#2a6d92;color:#cfeefb}
+  button:disabled{opacity:.5;cursor:default}
+  .rowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .rowline .sep{flex:1}
+  .hint{color:var(--dim);font-size:12px}
+  .stat{display:inline-block;margin-right:22px;margin-top:6px}
+  .stat b{font-family:var(--mono);font-size:15px;color:#fff}
+  .stat span{color:var(--dim);font-size:12px;display:block}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  thead th{position:sticky;top:0;background:#182130;color:var(--dim);font-weight:600;text-align:left;
+    padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap}
+  thead th.num{text-align:right}
+  tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
+  tbody tr:hover{background:#161d2b}
+  td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  td.name{max-width:340px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .flag{display:inline-block;font-size:11px;color:var(--red);margin-right:6px}
+  .flag.warn{color:var(--amber)}
+  .flag.info{color:var(--dim)}
+  tr.excluded td{opacity:.45}
+  .tablewrap{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  #preview{height:200px}
+  ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
+  code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
+  details{margin-top:10px;color:var(--dim);font-size:13px}
+  details summary{cursor:pointer;color:var(--text)}
+  #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .ok{color:var(--green)} .err{color:var(--red)}
+  @media (max-width:760px){ td.name{max-width:180px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>EVE Jita Sell Helper</h1>
+  <p>Paste your inventory and a Janice appraisal (or fetch live Jita 4-4 prices from ESI — no login needed),
+     get every item ranked by expected net profit, see whether an instant sale beats a sell order after fees,
+     and copy the top-X list straight into the game's multi-sell import.</p>
+</header>
+<main>
+
+<section>
+  <h2>1 · Input</h2>
+  <div class="cols">
+    <div class="col">
+      <label for="inv">Inventory paste (Ctrl-A / Ctrl-C in a hangar or container — optional, used for quantities,
+        volumes and to catch items Janice dropped)</label>
+      <textarea id="inv" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Group&#9;…&#9;Volume&#9;Est. price"></textarea>
+    </div>
+    <div class="col">
+      <label for="janice">Janice appraisal paste (the per-unit <i>buy / sell</i> columns — optional if you fetch ESI prices)</label>
+      <textarea id="janice" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Volume&#9;Buy&#9;Sell"></textarea>
+    </div>
+  </div>
+  <div class="rowline">
+    <button id="btnDemo" type="button">Load sample data</button>
+    <button id="btnClear" type="button">Clear</button>
+    <span class="sep"></span>
+    <button id="btnEsi" type="button" class="primary">Fetch live Jita 4-4 prices (ESI)</button>
+    <span id="esiStatus"></span>
+  </div>
+  <div class="rowline">
+    <label for="brokerFee" style="margin:0">Broker fee % (sell orders only)</label>
+    <input id="brokerFee" type="number" step="0.01" min="0" max="20" value="2.1">
+    <label for="salesTax" style="margin:0">Sales tax % (all sales)</label>
+    <input id="salesTax" type="number" step="0.01" min="0" max="20" value="7.5">
+    <span class="hint">Net/unit — instant: <code>buy × (1 − tax)</code> · order: <code>sell × (1 − tax − broker)</code></span>
+  </div>
+</section>
+
+<section>
+  <h2>2 · Summary</h2>
+  <div id="summary"><span class="hint">Paste data above to see results.</span></div>
+</section>
+
+<section>
+  <h2>3 · Items ranked by expected profit</h2>
+  <div class="rowline">
+    <label for="topN" style="margin:0">Select top</label>
+    <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
+    <button id="btnTop" type="button">Select top N</button>
+    <button id="btnAll" type="button">All</button>
+    <button id="btnNone" type="button">None</button>
+    <span class="sep"></span>
+    <label style="margin:0"><input type="checkbox" id="undercut"> undercut sell price by 1 tick</label>
+    <label for="decSep" style="margin:0">export decimals</label>
+    <select id="decSep" style="width:110px">
+      <option value="dot">1234.56</option>
+      <option value="comma">1234,56</option>
+    </select>
+  </div>
+  <div class="tablewrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-key="checked" title="include in export">✓</th>
+        <th data-key="rank" class="num">#</th>
+        <th data-key="name">Item</th>
+        <th data-key="qty" class="num">Qty</th>
+        <th data-key="buy" class="num">Buy /u</th>
+        <th data-key="sell" class="num">Sell /u</th>
+        <th data-key="strategy">Best</th>
+        <th data-key="exportPrice" class="num">List at /u</th>
+        <th data-key="totalNet" class="num">Expected net</th>
+        <th data-key="advTotal" class="num" title="extra ISK from using a sell order instead of instant-selling (negative = instant is better)">Order Δ</th>
+        <th data-key="flags">Flags</th>
+      </tr></thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>4 · Export — copy into the game's multi-sell import</h2>
+  <div class="rowline">
+    <button id="btnCopy" type="button" class="primary">Copy import list</button>
+    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
+    <span id="copyStatus" class="hint"></span>
+  </div>
+  <p class="hint" style="margin:8px 0 4px">
+    Format: <code>Item name ⇥ Quantity ⇥ Price</code>. Items flagged <b>INSTANT</b> are priced at the current best
+    buy — importing them fills against buy orders immediately (no broker fee). <b>ORDER</b> items are priced at the
+    sell price (optionally one tick under).</p>
+  <textarea id="preview" readonly spellcheck="false"></textarea>
+</section>
+
+<section>
+  <h2>5 · Unpriced / not sellable</h2>
+  <div id="unpricedBox"><span class="hint">Nothing yet.</span></div>
+  <details>
+    <summary>Notes &amp; assumptions</summary>
+    <ul class="plain">
+      <li>Broker fee is charged up front on the full order value when you list a sell order; it is <i>not</i> charged
+          when your sale fills an existing buy order (instant sale). Sales tax applies to every sale.</li>
+      <li>Relist fees from repricing later are not modelled — if you expect to have to undercut repeatedly, instant
+          selling gets relatively better.</li>
+      <li><span class="flag warn">suspect price</span> = buy &gt; sell. These are exactly the items Janice marks as
+          “missing or low quality price information” (thin markets) — double-check them in game before trusting the number.</li>
+      <li><span class="flag">unsellable?</span> = Ice Storm / Expired filaments etc. that the market won't accept;
+          they are auto-excluded from the export (you can re-tick them).</li>
+      <li>ESI prices are the live best buy / best sell at Jita IV-4 (buy orders that cover the station are included).
+          Public endpoints only — no ESI login required.</li>
+      <li>Quantities come from the inventory paste when both are given; mismatches are flagged.</li>
+      <li>EVE only accepts prices with 4 significant digits; the one-tick undercut respects that.</li>
+    </ul>
+  </details>
+</section>
+
+</main>
+
+<script type="text/plain" id="demo-inv">'Notos' Compact Large Proton Smartbomb	14	Smart Bomb		High	700 m3	7.803.022,36 ISK
+500MN Quad LiF Restrained Microwarpdrive	12	Propulsion Module		Medium	120 m3	7.669.767,24 ISK
+Heavy Ghoul Compact Energy Nosferatu	13	Energy Nosferatu		High	65 m3	7.028.590,92 ISK
+1600mm Crystalline Carbonide Restrained Plates	11	Armor Plate		Low	220 m3	6.782.474,60 ISK
+'YF-12a' Compact Large Plasma Smartbomb	11	Smart Bomb		High	550 m3	6.215.327,25 ISK
+True Sansha Explosive Armor Hardener	1	Armor Hardener		Low	5 m3	6.025.270,43 ISK
+500MN Cold-Gas Enduring Microwarpdrive	8	Propulsion Module		Medium	80 m3	5.129.734,32 ISK
+800mm Rolled Tungsten Compact Plates	14	Armor Plate		Low	280 m3	5.127.393,32 ISK
+Sansha Copper Tag	1	Criminal Tags			0,10 m3	4.737.802,34 ISK
+Heavy Gunnar Compact Stasis Grappler	5	Stasis Grappler		Medium	250 m3	4.519.162,45 ISK
+Tachyon Modal Laser I	7	Energy Weapon	Large	High	140 m3	4.045.734,35 ISK
+Drone Damage Amplifier II	4	Drone Damage Modules		Low	20 m3	3.883.973,48 ISK
+Heavy Infectious Scoped Energy Neutralizer	13	Energy Neutralizer		High	65 m3	3.796.122,46 ISK
+Heavy Jigoro Enduring Stasis Grappler	4	Stasis Grappler		Medium	200 m3	3.579.106,04 ISK
+Tachyon Anode Particle Stream I	6	Energy Weapon	Large	High	120 m3	3.531.496,14 ISK
+Tachyon Afocal Laser I	6	Energy Weapon	Large	High	120 m3	3.471.633,84 ISK
+Large Automated Structural Restoration	12	Hull Repair Unit		Medium	600 m3	3.126.451,20 ISK
+Experimental Enduring Thermal Armor Hardener I	10	Armor Hardener		Low	50 m3	2.786.035,00 ISK
+Uncompromising Scarlet Gloss - Unlimited	1	Ship SKIN Design Element			0,10 m3	2.664.049,20 ISK
+Prototype Compact Kinetic Armor Hardener I	8	Armor Hardener		Low	40 m3	2.660.582,56 ISK
+800mm Crystalline Carbonide Restrained Plates	7	Armor Plate		Low	140 m3	2.649.158,96 ISK
+Prototype Compact Explosive Armor Hardener I	7	Armor Hardener		Low	35 m3	2.631.441,33 ISK
+100MN Monopropellant Enduring Afterburner	17	Propulsion Module		Medium	85 m3	2.605.489,02 ISK
+'YF-12a' Compact Medium Plasma Smartbomb	4	Smart Bomb		High	40 m3	2.320.428,80 ISK
+IFFA Compact Damage Control	1	Damage Control		Low	5 m3	2.313.063,44 ISK
+Experimental Enduring EM Armor Hardener I	10	Armor Hardener		Low	50 m3	2.260.107,00 ISK
+Heavy Gremlin Compact Energy Neutralizer	8	Energy Neutralizer		High	40 m3	2.225.955,44 ISK
+Large 'Hope' Hull Reconstructor I	8	Hull Repair Unit		Medium	400 m3	2.124.268,88 ISK
+Prototype Compact EM Armor Hardener I	9	Armor Hardener		Low	45 m3	1.998.329,22 ISK
+Heavy F-RX Compact Capacitor Booster	13	Capacitor Booster		Medium	260 m3	1.947.160,54 ISK
+'Vehemence' Compact Medium EMP Smartbomb	3	Smart Bomb		High	30 m3	1.762.087,17 ISK
+Fragmented Warp - Unlimited	1	Ship SKIN Design Element			0,10 m3	1.707.356,58 ISK
+Tachyon Modulated Energy Beam I	3	Energy Weapon	Large	High	60 m3	1.685.938,95 ISK
+Experimental Enduring Kinetic Armor Hardener I	5	Armor Hardener		Low	25 m3	1.640.342,90 ISK
+Large I-b Polarized Structural Regenerator	6	Hull Repair Unit		Medium	300 m3	1.606.257,12 ISK
+Experimental Enduring Explosive Armor Hardener I	4	Armor Hardener		Low	20 m3	1.519.671,96 ISK
+Mega Afocal Pulse Laser I	4	Energy Weapon	Large	High	80 m3	1.512.914,04 ISK
+100MN Y-S8 Compact Afterburner	10	Propulsion Module		Medium	50 m3	1.475.807,00 ISK
+Mega Afocal Laser I	3	Energy Weapon	Large	High	60 m3	1.446.764,49 ISK
+Mega Modulated Pulse Energy Beam I	3	Energy Weapon	Large	High	60 m3	1.379.378,10 ISK
+Large Inefficient Hull Repair Unit	5	Hull Repair Unit		Medium	250 m3	1.338.887,00 ISK
+Unstable Heavy Energy Nosferatu Mutaplasmid	1	Mutaplasmids			1 m3	1.329.139,23 ISK
+Gamma L	18	Frequency Crystal	Large		18 m3	1.273.688,10 ISK
+Mega Anode Pulse Particle Stream I	3	Energy Weapon	Large	High	60 m3	1.157.844,66 ISK
+5MN Y-T8 Compact Microwarpdrive	3	Propulsion Module		Medium	30 m3	1.147.792,23 ISK
+Medium Armor Repairer II	1	Armor Repair Unit		Low	10 m3	1.031.871,13 ISK
+Multifrequency L	8	Frequency Crystal	Large		8 m3	1.006.802,88 ISK
+Medium Cap Battery II	1	Capacitor Battery		Medium	10 m3	931.760,61 ISK
+Radio L	14	Frequency Crystal	Large		14 m3	930.873,02 ISK
+Compact Multispectrum Energized Membrane	2	Energized Armor Membrane		Low	10 m3	894.263,92 ISK
+Medium Inefficient Hull Repair Unit	3	Hull Repair Unit		Medium	30 m3	824.242,38 ISK
+Prototype Compact Thermal Armor Hardener I	3	Armor Hardener		Low	15 m3	823.336,59 ISK
+Drone Link Augmentor I	2	Drone Control Range Module		High	50 m3	749.663,78 ISK
+Large Radiative Scoped Remote Capacitor Transmitter	13	Remote Capacitor Transmitter		High	325 m3	707.188,82 ISK
+Xray L	11	Frequency Crystal	Large		11 m3	676.172,86 ISK
+Extruded Compact Heat Sink	8	Heat Sink		Low	40 m3	639.917,76 ISK
+Small Focused Modulated Energy Beam I	1	Energy Weapon	Small	High	5 m3	579.112,06 ISK
+Medium Ghoul Compact Energy Nosferatu	4	Energy Nosferatu		High	20 m3	571.315,76 ISK
+Microwave L	14	Frequency Crystal	Large		14 m3	569.836,54 ISK
+Medium I-b Polarized Structural Regenerator	2	Hull Repair Unit		Medium	20 m3	552.235,60 ISK
+Wartorn Electrum Metallic - Limited	3	Ship SKIN Design Element			0,30 m3	541.810,74 ISK
+Dual Anode Heavy Particle Stream I	2	Energy Weapon	Large	High	40 m3	516.810,04 ISK
+Simple Asteroid Mining Crystal Type B II		Mining Crystal	Small		10 m3	498.864,09 ISK
+Simple Asteroid Mining Crystal Type B II		Mining Crystal	Small		10 m3	498.864,09 ISK
+Simple Asteroid Mining Crystal Type B II		Mining Crystal	Small		10 m3	498.864,09 ISK
+Osmium Vine Metallic - Limited	5	Ship SKIN Design Element			0,50 m3	487.850,40 ISK
+Large Inductive Compact Remote Capacitor Transmitter	6	Remote Capacitor Transmitter		High	150 m3	447.517,62 ISK
+Fleeting Compact Stasis Webifier	5	Stasis Web		Medium	25 m3	444.141,15 ISK
+Cap Recharger II	1	Capacitor Recharger		Medium	5 m3	436.941,77 ISK
+Metal Scraps	422	Commodities			4,22 m3	418.442,54 ISK
+Gravastar Black Metallic - Limited	5	Ship SKIN Design Element			0,50 m3	390.694,05 ISK
+Ultraviolet L	13	Frequency Crystal	Large		13 m3	379.712,32 ISK
+Infrared L	18	Frequency Crystal	Large		18 m3	375.876,90 ISK
+Large Compact Pb-Acid Cap Battery	12	Capacitor Battery		Medium	180 m3	372.514,44 ISK
+Mega Modal Pulse Laser I	1	Energy Weapon	Large	High	20 m3	371.867,52 ISK
+Heavy Modulated Energy Beam I	2	Energy Weapon	Medium	High	20 m3	354.952,38 ISK
+Symmetry Decryptor	1	Generic Decryptor			0,10 m3	353.928,52 ISK
+Initiated Compact Warp Scrambler	9	Warp Scrambler		Medium	45 m3	312.934,14 ISK
+Sansha Silver Tag	1	Criminal Tags			0,10 m3	301.740,61 ISK
+Standard L	9	Frequency Crystal	Large		9 m3	297.102,24 ISK
+400mm Crystalline Carbonide Restrained Plates	2	Armor Plate		Low	20 m3	279.995,34 ISK
+Medium 'Hope' Hull Reconstructor I	1	Hull Repair Unit		Medium	10 m3	275.227,47 ISK
+Dual Heavy Modal Pulse Laser I	4	Energy Weapon	Large	High	80 m3	272.303,52 ISK
+Signal-5 'Needlejack' Filament	1	Jump Filaments			0,10 m3	268.788,20 ISK
+Medium Automated Structural Restoration	1	Hull Repair Unit		Medium	10 m3	268.088,25 ISK
+Kerr Sequencer	1.634	Sequence Binders			1,63 m3	265.884,48 ISK
+Stellar White Satin - Unlimited	5	Ship SKIN Design Element			0,50 m3	258.634,55 ISK
+Compact Layered Energized Membrane	4	Energized Armor Membrane		Low	20 m3	256.392,08 ISK
+True Sansha Thermal Energized Membrane	2	Energized Armor Membrane		Low	10 m3	252.144,68 ISK
+Medium Gremlin Compact Energy Neutralizer	1	Energy Neutralizer		High	5 m3	249.194,31 ISK
+Large I-a Enduring Armor Repairer	8	Armor Repair Unit		Low	400 m3	241.253,44 ISK
+Cult Cardinal Matte - Limited	6	Ship SKIN Design Element			0,60 m3	240.000,00 ISK
+50MN Quad LiF Restrained Microwarpdrive	5	Propulsion Module		Medium	50 m3	238.066,80 ISK
+Small Focused Anode Particle Stream I	2	Energy Weapon	Small	High	10 m3	230.956,50 ISK
+Compact Kinetic Energized Membrane	4	Energized Armor Membrane		Low	20 m3	229.860,32 ISK
+Oceanic Serpent Matte - Unlimited	3	Ship SKIN Design Element			0,30 m3	228.123,30 ISK
+Dual Modal Heavy Laser I	1	Energy Weapon	Large	High	20 m3	220.799,46 ISK
+Dual Modulated Light Energy Beam I	1	Energy Weapon	Small	High	5 m3	210.313,71 ISK
+Standard M	10	Frequency Crystal	Medium		10 m3	209.706,30 ISK
+200mm Rolled Tungsten Compact Plates	3	Armor Plate		Low	30 m3	206.217,36 ISK
+Small Murky Compact Remote Shield Booster	5	Remote Shield Booster		High	25 m3	202.879,70 ISK
+Dual Heavy Modulated Pulse Energy Beam I	3	Energy Weapon	Large	High	60 m3	202.777,41 ISK
+Dual Heavy Afocal Pulse Laser I	3	Energy Weapon	Large	High	60 m3	195.948,78 ISK
+Dual Heavy Anode Pulse Particle Stream I	3	Energy Weapon	Large	High	60 m3	192.588,81 ISK
+Medium Knave Scoped Energy Nosferatu	2	Energy Nosferatu		High	10 m3	192.559,06 ISK
+Compact EM Energized Membrane	3	Energized Armor Membrane		Low	15 m3	190.817,73 ISK
+Syndicated Teal Satin - Limited	3	Ship SKIN Design Element			0,30 m3	180.000,00 ISK
+200mm Crystalline Carbonide Restrained Plates	3	Armor Plate		Low	30 m3	178.768,98 ISK
+Heavy Modal Laser I	3	Energy Weapon	Medium	High	30 m3	172.747,08 ISK
+1MN Y-S8 Compact Afterburner	4	Propulsion Module		Medium	20 m3	170.662,92 ISK
+Alignment Sequencer	3.411	Sequence Binders			3,41 m3	164.000,88 ISK
+Synthetic Mocha Matte - Unlimited	5	Ship SKIN Design Element			0,50 m3	152.096,55 ISK
+50MN Y-T8 Compact Microwarpdrive	3	Propulsion Module		Medium	30 m3	149.823,00 ISK
+J5 Enduring Warp Disruptor	9	Warp Scrambler		Medium	45 m3	147.613,32 ISK
+Fermionic Sequencer	1.514	Sequence Binders			1,51 m3	141.271,34 ISK
+Heavy Afocal Pulse Laser I	3	Energy Weapon	Medium	High	30 m3	140.369,28 ISK
+Emerald Boulevard Gloss - Limited	4	Ship SKIN Design Element			0,40 m3	134.863,56 ISK
+Multifrequency M	6	Frequency Crystal	Medium		6 m3	133.531,44 ISK
+Grey Matter Matte - Limited	4	Ship SKIN Design Element			0,40 m3	129.411,12 ISK
+Large ACM Compact Armor Repairer	4	Armor Repair Unit		Low	200 m3	124.681,16 ISK
+J5b Enduring Warp Scrambler	7	Warp Scrambler		Medium	35 m3	119.648,76 ISK
+Heavy Afocal Laser I	2	Energy Weapon	Medium	High	20 m3	118.424,60 ISK
+Heavy Anode Particle Stream I	2	Energy Weapon	Medium	High	20 m3	115.949,94 ISK
+Compact EM Shield Hardener	4	Shield Hardener		Medium	20 m3	115.749,40 ISK
+Enfeebling Scoped Ladar ECM	6	ECM		Medium	30 m3	115.731,30 ISK
+Small Focused Modal Laser I	2	Energy Weapon	Small	High	10 m3	105.753,70 ISK
+Mark I Compact Reactor Control Unit	2	Reactor Control Unit		Low	10 m3	105.198,38 ISK
+Medium Inductive Compact Remote Capacitor Transmitter	1	Remote Capacitor Transmitter		High	10 m3	103.488,76 ISK
+Medium I-ax Enduring Remote Armor Repairer	3	Remote Armor Repairer		High	30 m3	99.968,79 ISK
+Sansha Platinum Tag	4	Criminal Tags			0,40 m3	97.523,36 ISK
+Radio M	8	Frequency Crystal	Medium		8 m3	96.956,96 ISK
+Small Focused Anode Pulse Particle Stream I	3	Energy Weapon	Small	High	15 m3	94.893,69 ISK
+Medium Compact Pb-Acid Cap Battery	6	Capacitor Battery		Medium	60 m3	94.725,72 ISK
+5MN Quad LiF Restrained Microwarpdrive	1	Propulsion Module		Medium	10 m3	93.947,69 ISK
+Crossroad - Unlimited	1	Ship SKIN Design Element			0,10 m3	91.819,47 ISK
+Heavy Modal Pulse Laser I	2	Energy Weapon	Medium	High	20 m3	89.162,38 ISK
+Medium I-a Enduring Armor Repairer	4	Armor Repair Unit		Low	40 m3	88.521,88 ISK
+Ultraviolet M	10	Frequency Crystal	Medium		10 m3	83.872,90 ISK
+100mm Rolled Tungsten Compact Plates	5	Armor Plate		Low	25 m3	81.623,90 ISK
+Eutectic Compact Cap Recharger	10	Capacitor Recharger		Medium	50 m3	81.185,20 ISK
+Languid Enduring Ladar ECM	6	ECM		Medium	30 m3	80.258,88 ISK
+Small Asymmetric Enduring Remote Shield Booster	2	Remote Shield Booster		High	10 m3	77.390,50 ISK
+Medium ACM Compact Armor Repairer	4	Armor Repair Unit		Low	40 m3	76.756,80 ISK
+Halting Compact Ladar ECM	6	ECM		Medium	30 m3	76.705,02 ISK
+EFFA Compact Assault Damage Control	3	Damage Control		Low	15 m3	76.384,14 ISK
+Medium Solace Scoped Remote Armor Repairer	3	Remote Armor Repairer		High	30 m3	73.713,72 ISK
+100mm Crystalline Carbonide Restrained Plates	6	Armor Plate		Low	30 m3	72.484,74 ISK
+Medium Infectious Scoped Energy Neutralizer	1	Energy Neutralizer		High	5 m3	71.463,58 ISK
+Elder's Bone Satin - Unlimited	1	Ship SKIN Design Element			0,10 m3	70.071,20 ISK
+Compact Explosive Energized Membrane	1	Energized Armor Membrane		Low	5 m3	63.920,68 ISK
+Compact Thermal Energized Membrane	1	Energized Armor Membrane		Low	5 m3	61.308,01 ISK
+Gamma M	8	Frequency Crystal	Medium		8 m3	60.757,44 ISK
+Xray S	10	Frequency Crystal	Small		10 m3	58.050,00 ISK
+Small Clarity Ward Enduring Shield Booster	11	Shield Booster		Medium	55 m3	57.430,12 ISK
+Medium Asymmetric Enduring Remote Shield Booster	5	Remote Shield Booster		High	50 m3	56.961,25 ISK
+X5 Enduring Stasis Webifier	5	Stasis Web		Medium	25 m3	52.598,10 ISK
+Suppressed Lavender Gloss - Limited	4	Ship SKIN Design Element			0,40 m3	50.852,80 ISK
+True Sansha Diamond Tag	1	Criminal Tags			0,10 m3	50.062,45 ISK
+Noise-5 'Needlejack' Filament	1	Jump Filaments			0,10 m3	49.120,17 ISK
+1MN Monopropellant Enduring Afterburner	3	Propulsion Module		Medium	15 m3	48.642,15 ISK
+Heavy Anode Pulse Particle Stream I	1	Energy Weapon	Medium	High	10 m3	46.649,84 ISK
+Mark I Compact Power Diagnostic System	5	Power Diagnostic System		Low	25 m3	45.876,50 ISK
+EP-S Gaussian Scoped Mining Laser	6	Mining Laser		High	30 m3	45.785,16 ISK
+Pillars of Inequality - Unlimited	1	Ship SKIN Design Element			0,10 m3	44.785,52 ISK
+Medium Murky Compact Remote Shield Booster	2	Remote Shield Booster		High	20 m3	43.622,70 ISK
+Small Compact Pb-Acid Cap Battery	2	Capacitor Battery		Medium	10 m3	43.357,16 ISK
+Sensor Booster I	1	Sensor Booster	Small	Medium	5 m3	43.236,47 ISK
+Small S95a Scoped Remote Shield Booster	1	Remote Shield Booster		High	5 m3	42.553,00 ISK
+'YF-12a' Compact Small Plasma Smartbomb	3	Smart Bomb		High	15 m3	41.722,29 ISK
+50MN Cold-Gas Enduring Microwarpdrive	3	Propulsion Module		Medium	30 m3	41.615,10 ISK
+Strawberry Fedo Matte - Unlimited	5	Ship SKIN Design Element			0,50 m3	41.074,85 ISK
+Sanshas Microwave M	1	Frequency Crystal	Medium		1 m3	39.749,94 ISK
+Hollow Hex - Limited	2	Ship SKIN Design Element			0,20 m3	37.766,84 ISK
+Initiated Compact Warp Disruptor	2	Warp Scrambler		Medium	10 m3	35.378,12 ISK
+Small Inefficient Hull Repair Unit	4	Hull Repair Unit		Medium	20 m3	35.320,52 ISK
+Peripheral Compact Target Painter	2	Target Painter		Medium	10 m3	31.645,38 ISK
+Medium C5-L Compact Shield Booster	2	Shield Booster		Medium	20 m3	30.609,02 ISK
+Sansha Diamond Tag	10	Criminal Tags			1 m3	28.390,10 ISK
+Dual Afocal Light Laser I	1	Energy Weapon	Small	High	5 m3	25.687,80 ISK
+Small Radiative Scoped Remote Capacitor Transmitter	4	Remote Capacitor Transmitter		High	20 m3	25.205,60 ISK
+Xray M	4	Frequency Crystal	Medium		4 m3	24.993,88 ISK
+Reinforced Metal Scraps	5	Commodities			0,05 m3	24.554,30 ISK
+Microwave M	5	Frequency Crystal	Medium		5 m3	21.967,45 ISK
+Multifrequency S	3	Frequency Crystal	Small		3 m3	21.836,31 ISK
+Type-D Restrained Capacitor Flux Coil	5	Capacitor Flux Coil		Low	25 m3	21.068,30 ISK
+Nanofiber Internal Structure I	3	Nanofiber Internal Structure		Low	15 m3	20.121,24 ISK
+FFR Enduring Assault Damage Control	2	Damage Control		Low	10 m3	19.661,68 ISK
+Mark I Compact Capacitor Power Relay	8	Capacitor Power Relay		Low	40 m3	19.421,36 ISK
+Small Coaxial Compact Remote Armor Repairer	3	Remote Armor Repairer		High	15 m3	18.506,85 ISK
+Small Infectious Scoped Energy Neutralizer	1	Energy Neutralizer		High	5 m3	17.779,82 ISK
+Medium Radiative Scoped Remote Capacitor Transmitter	1	Remote Capacitor Transmitter		High	10 m3	17.758,18 ISK
+Sansha Palladium Tag	2	Criminal Tags			0,20 m3	17.671,36 ISK
+'Vehemence' Compact Small EMP Smartbomb	1	Smart Bomb		High	5 m3	17.182,94 ISK
+Standard S	7	Frequency Crystal	Small		7 m3	16.990,12 ISK
+Small Gremlin Compact Energy Neutralizer	1	Energy Neutralizer		High	5 m3	16.743,54 ISK
+Ultraviolet S	7	Frequency Crystal	Small		7 m3	16.648,52 ISK
+Upgraded Multispectrum Coating I	3	Armor Coating		Low	15 m3	16.500,75 ISK
+Mark I Compact Capacitor Flux Coil	2	Capacitor Flux Coil		Low	10 m3	15.763,56 ISK
+F-90 Compact Sensor Booster	6	Sensor Booster	Small	Medium	30 m3	15.193,62 ISK
+Emerald Boulevard Satin - Limited	5	Ship SKIN Design Element			0,50 m3	14.980,45 ISK
+Targeting Range Script	1	Sensor Booster Script	Small		1 m3	14.567,07 ISK
+Small Solace Scoped Remote Armor Repairer	1	Remote Armor Repairer		High	5 m3	12.994,78 ISK
+Synthetic Mocha Matte - Limited	1	Ship SKIN Design Element			0,10 m3	12.827,39 ISK
+Small Automated Structural Restoration	3	Hull Repair Unit		Medium	15 m3	12.593,82 ISK
+'Concussion' Compact Small Graviton Smartbomb	1	Smart Bomb		High	5 m3	12.381,10 ISK
+Infrared M	9	Frequency Crystal	Medium		9 m3	11.882,52 ISK
+Medium F-RX Compact Capacitor Booster	1	Capacitor Booster		Medium	10 m3	11.725,23 ISK
+ML-3 Compact Mining Survey Chipset	5	Mining Survey Chipset		Medium	25 m3	11.681,05 ISK
+Diffracted Rejoinder - Limited	2	Ship SKIN Design Element			0,20 m3	11.650,66 ISK
+10MN Monopropellant Enduring Afterburner	1	Propulsion Module		Medium	5 m3	11.512,06 ISK
+Auto Targeting System I	1	Automated Targeting System		High	5 m3	11.333,10 ISK
+True Sansha Brass Tag	1	Criminal Tags			0,10 m3	11.039,24 ISK
+Microwave S	5	Frequency Crystal	Small		5 m3	10.843,75 ISK
+Type-D Restrained Capacitor Power Relay	7	Capacitor Power Relay		Low	35 m3	10.565,66 ISK
+Radio S	3	Frequency Crystal	Small		3 m3	10.242,78 ISK
+Compact Explosive Shield Amplifier	5	Shield Resistance Amplifier		Medium	25 m3	9.642,15 ISK
+Small Ghoul Compact Energy Nosferatu	1	Energy Nosferatu		High	5 m3	9.199,22 ISK
+Particle Bore Compact Mining Laser	3	Mining Laser		High	15 m3	8.761,26 ISK
+Upgraded EM Coating I	2	Armor Coating		Low	10 m3	8.377,80 ISK
+Small I-b Polarized Structural Regenerator	2	Hull Repair Unit		Medium	10 m3	8.315,66 ISK
+Small I-ax Enduring Remote Armor Repairer	2	Remote Armor Repairer		High	10 m3	8.210,02 ISK
+Small Knave Scoped Energy Nosferatu	2	Energy Nosferatu		High	10 m3	7.401,42 ISK
+Mark I Compact Reinforced Bulkheads	1	Reinforced Bulkhead		Low	5 m3	6.549,48 ISK
+Type-D Restrained Reinforced Bulkheads	2	Reinforced Bulkhead		Low	10 m3	6.002,02 ISK
+Dual Modal Light Laser I	1	Energy Weapon	Small	High	5 m3	5.995,50 ISK
+Small Inductive Compact Remote Capacitor Transmitter	1	Remote Capacitor Transmitter		High	5 m3	5.412,08 ISK
+Small Focused Afocal Laser I	1	Energy Weapon	Small	High	5 m3	5.389,53 ISK
+Elder's Bone Satin - Limited	5	Ship SKIN Design Element			0,50 m3	5.000,00 ISK
+Upgraded Kinetic Coating I	2	Armor Coating		Low	10 m3	4.454,46 ISK
+Gamma S	2	Frequency Crystal	Small		2 m3	4.375,02 ISK
+Upgraded Explosive Coating I	1	Armor Coating		Low	5 m3	4.168,45 ISK
+M51 Benefactor Compact Shield Recharger	1	Shield Recharger		Medium	5 m3	3.904,96 ISK
+Gallente Frigate	1	Spaceship Command			0,01 m3	3.550,39 ISK
+Small ACM Compact Armor Repairer	1	Armor Repair Unit		Low	5 m3	3.223,61 ISK
+Infrared S	3	Frequency Crystal	Small		3 m3	3.128,01 ISK
+Ta3 Compact Ship Scanner	6	Ship Scanner		Medium	30 m3	3.007,38 ISK
+F-89 Compact Signal Amplifier	1	Signal Amplifier		Low	5 m3	2.464,54 ISK
+Suppressed Targeting System I	2	Passive Targeting System		Medium	10 m3	2.452,10 ISK
+Type-E Enduring Cargo Scanner	6	Cargo Scanner		Medium	30 m3	1.646,52 ISK
+Plutonium Charge S	100	Hybrid Charge	Small		0,25 m3	1.440,00 ISK
+Sanshas Infrared L	1	Frequency Crystal	Large		1 m3	1.389,81 ISK
+Lead Charge S	100	Hybrid Charge	Small		0,25 m3	1.072,00 ISK
+Isotopic Iodide Satin - Limited	1	Ship SKIN Design Element			0,10 m3	1.000,00 ISK
+Expired VXN-01N Nullsec Ice Storm Filament	10	Expired Jump Filaments			1 m3
+Expired PRNCR-10H Highsec Ice Storm Filament	1	Jump Filaments			0,10 m3
+Expired DNNR-01L Lowsec Ice Storm Filament	5	Expired Jump Filaments			0,50 m3
+Expired DNCR-05H Highsec Ice Storm Filament	6	Expired Jump Filaments			0,60 m3
+Expired CMT-05N Nullsec Ice Storm Filament	2	Expired Jump Filaments			0,20 m3
+Expired BLTZN-05L Lowsec Ice Storm Filament	2	Expired Jump Filaments			0,20 m3
+DSHR-01H Highsec Ice Storm Filament	13	Jump Filaments			1,30 m3
+AIR Mining Range Booster I	1	Booster		2	1 m3</script>
+<script type="text/plain" id="demo-janice">'Notos' Compact Large Proton Smartbomb	14	50.00	486600.00	544800.00
+500MN Quad LiF Restrained Microwarpdrive	12	10.00	592400.00	606200.00
+Heavy Ghoul Compact Energy Nosferatu	13	5.00	427000.00	460000.00
+1600mm Crystalline Carbonide Restrained Plates	11	20.00	589000.00	633700.00
+'YF-12a' Compact Large Plasma Smartbomb	11	50.00	508000.00	540400.00
+True Sansha Explosive Armor Hardener	1	5.00	6129000.00	7184000.00
+500MN Cold-Gas Enduring Microwarpdrive	8	10.00	586000.00	600000.00
+800mm Rolled Tungsten Compact Plates	14	20.00	341100.00	354900.00
+Sansha Copper Tag	1	0.10	1507000.00	3554000.00
+Heavy Gunnar Compact Stasis Grappler	5	50.00	845100.00	849400.00
+Tachyon Modal Laser I	7	20.00	550000.00	550400.00
+Drone Damage Amplifier II	4	5.00	854600.00	924900.00
+Heavy Infectious Scoped Energy Neutralizer	13	5.00	255600.00	318100.00
+Heavy Jigoro Enduring Stasis Grappler	4	50.00	838600.00	873900.00
+Tachyon Anode Particle Stream I	6	20.00	551900.00	555900.00
+Tachyon Afocal Laser I	6	20.00	515800.00	550000.00
+Large Automated Structural Restoration	12	50.00	230000.00	201800.00
+Experimental Enduring Thermal Armor Hardener I	10	5.00	252700.00	260000.00
+Uncompromising Scarlet Gloss - Unlimited	1	0.10	340000.00	3199000.00
+Prototype Compact Kinetic Armor Hardener I	8	5.00	311100.00	348900.00
+800mm Crystalline Carbonide Restrained Plates	7	20.00	342000.00	342900.00
+Prototype Compact Explosive Armor Hardener I	7	5.00	326300.00	379700.00
+100MN Monopropellant Enduring Afterburner	17	5.00	145000.00	158300.00
+'YF-12a' Compact Medium Plasma Smartbomb	4	10.00	541200.00	541300.00
+IFFA Compact Damage Control	1	5.00	1488000.00	1656000.00
+Experimental Enduring EM Armor Hardener I	10	5.00	211000.00	218000.00
+Heavy Gremlin Compact Energy Neutralizer	8	5.00	240300.00	304500.00
+Large 'Hope' Hull Reconstructor I	8	50.00	232300.00	236600.00
+Prototype Compact EM Armor Hardener I	9	5.00	195700.00	223000.00
+Heavy F-RX Compact Capacitor Booster	13	20.00	133900.00	177100.00
+'Vehemence' Compact Medium EMP Smartbomb	3	10.00	552000.00	600000.00
+Fragmented Warp - Unlimited	1	0.10	1803000.00	5989000.00
+Tachyon Modulated Energy Beam I	3	20.00	552000.00	621400.00
+Experimental Enduring Kinetic Armor Hardener I	5	5.00	278900.00	317100.00
+Large I-b Polarized Structural Regenerator	6	50.00	240000.00	238000.00
+Experimental Enduring Explosive Armor Hardener I	4	5.00	320800.00	378000.00
+Mega Afocal Pulse Laser I	4	20.00	204100.00	338600.00
+100MN Y-S8 Compact Afterburner	10	5.00	150600.00	167000.00
+Mega Afocal Laser I	3	20.00	466000.00	457200.00
+Mega Modulated Pulse Energy Beam I	3	20.00	360500.00	464000.00
+Large Inefficient Hull Repair Unit	5	50.00	240000.00	219900.00
+Unstable Heavy Energy Nosferatu Mutaplasmid	1	1.00	661700.00	6982000.00
+Gamma L	18	1.00	71020.00	85000.00
+Mega Anode Pulse Particle Stream I	3	20.00	350800.00	352900.00
+5MN Y-T8 Compact Microwarpdrive	3	10.00	290500.00	317800.00
+Medium Armor Repairer II	1	10.00	828100.00	996700.00
+Multifrequency L	8	1.00	125200.00	132100.00
+Medium Cap Battery II	1	10.00	859500.00	894600.00
+Radio L	14	1.00	67020.00	90000.00
+Compact Multispectrum Energized Membrane	2	5.00	321400.00	459000.00
+Medium Inefficient Hull Repair Unit	3	10.00	240400.00	262700.00
+Prototype Compact Thermal Armor Hardener I	3	5.00	245500.00	285200.00
+Drone Link Augmentor I	2	25.00	315200.00	366900.00
+Large Radiative Scoped Remote Capacitor Transmitter	13	25.00	54220.00	59900.00
+Xray L	11	1.00	58000.00	61800.00
+Extruded Compact Heat Sink	8	5.00	60810.00	79940.00
+Small Focused Modulated Energy Beam I	1	5.00	351400.00	486800.00
+Medium Ghoul Compact Energy Nosferatu	4	5.00	117700.00	149000.00
+Microwave L	14	1.00	35020.00	58000.00
+Medium I-b Polarized Structural Regenerator	2	10.00	243900.00	246800.00
+Wartorn Electrum Metallic - Limited	3	0.10	120000.00	1500000.00
+Dual Anode Heavy Particle Stream I	2	20.00	259700.00	259800.00
+Simple Asteroid Mining Crystal Type B II	3	10.00	430000.00	483600.00
+Osmium Vine Metallic - Limited	5	0.10	40000.00	120000.00
+Large Inductive Compact Remote Capacitor Transmitter	6	25.00	50230.00	93680.00
+Fleeting Compact Stasis Webifier	5	5.00	44450.00	59740.00
+Cap Recharger II	1	5.00	401800.00	451300.00
+Metal Scraps	422	0.01	910.00	910.10
+Gravastar Black Metallic - Limited	5	0.10	20000.00	35000.00
+Ultraviolet L	13	1.00	22110.00	34200.00
+Infrared L	18	1.00	1001.00	39000.00
+Large Compact Pb-Acid Cap Battery	12	15.00	27680.00	42730.00
+Mega Modal Pulse Laser I	1	20.00	351400.00	367000.00
+Heavy Modulated Energy Beam I	2	10.00	131100.00	594900.00
+Symmetry Decryptor	1	0.10	356600.00	356700.00
+Initiated Compact Warp Scrambler	9	5.00	20510.00	43850.00
+Sansha Silver Tag	1	0.10	300100.00	598000.00
+Standard L	9	1.00	30000.00	35620.00
+400mm Crystalline Carbonide Restrained Plates	2	10.00	147500.00	189400.00
+Medium 'Hope' Hull Reconstructor I	1	10.00	245600.00	247300.00
+Dual Heavy Modal Pulse Laser I	4	20.00	70330.00	77000.00
+Signal-5 'Needlejack' Filament	1	0.10	182400.00	270000.00
+Medium Automated Structural Restoration	1	10.00	214700.00	214800.00
+Kerr Sequencer	1634	0.00	163.00	202.90
+Stellar White Satin - Unlimited	5	0.10	0.01	147900.00
+Compact Layered Energized Membrane	4	5.00	68100.00	112900.00
+True Sansha Thermal Energized Membrane	2	5.00	75330.00	399500.00
+Medium Gremlin Compact Energy Neutralizer	1	5.00	100000.00	115900.00
+Large I-a Enduring Armor Repairer	8	50.00	31300.00	31370.00
+Cult Cardinal Matte - Limited	6	0.10	10000.00	150000.00
+50MN Quad LiF Restrained Microwarpdrive	5	10.00	19600.00	23560.00
+Small Focused Anode Particle Stream I	2	5.00	33010.00	67870.00
+Compact Kinetic Energized Membrane	4	5.00	58050.00	79800.00
+Oceanic Serpent Matte - Unlimited	3	0.10	80000.00	109900.00
+Dual Modal Heavy Laser I	1	20.00	241100.00	254600.00
+Dual Modulated Light Energy Beam I	1	5.00	79540.00	162900.00
+Standard M	10	1.00	9070.00	16250.00
+200mm Rolled Tungsten Compact Plates	3	10.00	63370.00	79990.00
+Small Murky Compact Remote Shield Booster	5	5.00	36000.00	44990.00
+Dual Heavy Modulated Pulse Energy Beam I	3	20.00	9653.00	71000.00
+Dual Heavy Afocal Pulse Laser I	3	20.00	57100.00	62000.00
+Dual Heavy Anode Pulse Particle Stream I	3	20.00	30240.00	67000.00
+Medium Knave Scoped Energy Nosferatu	2	5.00	90730.00	103700.00
+Compact EM Energized Membrane	3	5.00	64320.00	68330.00
+Syndicated Teal Satin - Limited	3	0.10	20000.00	57960.00
+200mm Crystalline Carbonide Restrained Plates	3	10.00	60300.00	67000.00
+Heavy Modal Laser I	3	10.00	55160.00	55170.00
+1MN Y-S8 Compact Afterburner	4	5.00	29840.00	60770.00
+Alignment Sequencer	3411	0.00	38.00	38.04
+Synthetic Mocha Matte - Unlimited	5	0.10	10000.00	65000.00
+50MN Y-T8 Compact Microwarpdrive	3	10.00	18110.00	29000.00
+J5 Enduring Warp Disruptor	9	5.00	16190.00	20110.00
+Fermionic Sequencer	1514	0.00	85.00	85.01
+Heavy Afocal Pulse Laser I	3	10.00	45000.00	45010.00
+Emerald Boulevard Gloss - Limited	4	0.10	40000.00	980000.00
+Multifrequency M	6	1.00	14230.00	17300.00
+Grey Matter Matte - Limited	4	0.10	10000.00	89000.00
+Large ACM Compact Armor Repairer	4	50.00	31450.00	31460.00
+J5b Enduring Warp Scrambler	7	5.00	16380.00	21300.00
+Heavy Afocal Laser I	2	10.00	50020.00	57000.00
+Heavy Anode Particle Stream I	2	10.00	60350.00	64000.00
+Compact EM Shield Hardener	4	5.00	30330.00	32700.00
+Enfeebling Scoped Ladar ECM	6	5.00	14040.00	30000.00
+Small Focused Modal Laser I	2	5.00	15020.00	73250.00
+Mark I Compact Reactor Control Unit	2	5.00	43120.00	78790.00
+Medium Inductive Compact Remote Capacitor Transmitter	1	10.00	25040.00	36980.00
+Medium I-ax Enduring Remote Armor Repairer	3	10.00	15420.00	37880.00
+Sansha Platinum Tag	4	0.10	2800.00	9899.00
+Radio M	8	1.00	10040.00	16570.00
+Small Focused Anode Pulse Particle Stream I	3	5.00	19080.00	152000.00
+Medium Compact Pb-Acid Cap Battery	6	10.00	15760.00	22420.00
+5MN Quad LiF Restrained Microwarpdrive	1	10.00	68030.00	80660.00
+Crossroad - Unlimited	1	0.10	10000.00	789700.00
+Heavy Modal Pulse Laser I	2	10.00	45010.00	46510.00
+Medium I-a Enduring Armor Repairer	4	10.00	17470.00	26440.00
+Ultraviolet M	10	1.00	7358.00	12200.00
+100mm Rolled Tungsten Compact Plates	5	5.00	11960.00	11970.00
+Eutectic Compact Cap Recharger	10	5.00	4211.00	7967.00
+Languid Enduring Ladar ECM	6	5.00	12010.00	17000.00
+Small Asymmetric Enduring Remote Shield Booster	2	5.00	39420.00	79970.00
+Medium ACM Compact Armor Repairer	4	10.00	1013.00	48920.00
+Halting Compact Ladar ECM	6	5.00	11350.00	34760.00
+EFFA Compact Assault Damage Control	3	5.00	8560.00	29950.00
+Medium Solace Scoped Remote Armor Repairer	3	10.00	14030.00	87490.00
+100mm Crystalline Carbonide Restrained Plates	6	5.00	8032.00	16000.00
+Medium Infectious Scoped Energy Neutralizer	1	5.00	57450.00	76990.00
+Elder's Bone Satin - Unlimited	1	0.10	60000.00	695000.00
+Compact Explosive Energized Membrane	1	5.00	66960.00	119000.00
+Compact Thermal Energized Membrane	1	5.00	62590.00	71000.00
+Gamma M	8	1.00	1550.00	14590.00
+Xray S	10	1.00	650.60	4800.00
+Small Clarity Ward Enduring Shield Booster	11	5.00	4406.00	40970.00
+Medium Asymmetric Enduring Remote Shield Booster	5	10.00	10720.00	14990.00
+X5 Enduring Stasis Webifier	5	5.00	9990.00	12970.00
+Suppressed Lavender Gloss - Limited	4	0.10	40000.00	350000.00
+True Sansha Diamond Tag	1	0.10	50060.00	191300.00
+Noise-5 'Needlejack' Filament	1	0.10	55790.00	65810.00
+1MN Monopropellant Enduring Afterburner	3	5.00	3552.00	8650.00
+Heavy Anode Pulse Particle Stream I	1	10.00	40010.00	49990.00
+Mark I Compact Power Diagnostic System	5	5.00	7135.00	10490.00
+EP-S Gaussian Scoped Mining Laser	6	5.00	5201.00	9996.00
+Pillars of Inequality - Unlimited	1	0.10	10000.00	480000.00
+Medium Murky Compact Remote Shield Booster	2	10.00	12110.00	26910.00
+Small Compact Pb-Acid Cap Battery	2	5.00	17370.00	26580.00
+Sensor Booster I	1	5.00	15770.00	39350.00
+Small S95a Scoped Remote Shield Booster	1	5.00	43270.00	52900.00
+'YF-12a' Compact Small Plasma Smartbomb	3	5.00	15590.00	17480.00
+50MN Cold-Gas Enduring Microwarpdrive	3	10.00	9262.00	13850.00
+Strawberry Fedo Matte - Unlimited	5	0.10	0.01	79980.00
+Sanshas Microwave M	1	1.00	28650.00	44490.00
+Hollow Hex - Limited	2	0.10	10000.00	970000.00
+Initiated Compact Warp Disruptor	2	5.00	13520.00	21680.00
+Small Inefficient Hull Repair Unit	4	5.00	5001.00	28960.00
+Peripheral Compact Target Painter	2	5.00	9313.00	39970.00
+Medium C5-L Compact Shield Booster	2	10.00	16320.00	22830.00
+Sansha Diamond Tag	10	0.10	1000.00	9504.00
+Dual Afocal Light Laser I	1	5.00	508.30	14970.00
+Small Radiative Scoped Remote Capacitor Transmitter	4	5.00	6191.00	6193.00
+Xray M	4	1.00	3708.00	29700.00
+Reinforced Metal Scraps	5	0.01	4720.00	5749.00
+Microwave M	5	1.00	357.70	12320.00
+Multifrequency S	3	1.00	5701.00	9248.00
+Type-D Restrained Capacitor Flux Coil	5	5.00	438.20	6394.00
+Nanofiber Internal Structure I	3	5.00	5101.00	5899.00
+FFR Enduring Assault Damage Control	2	5.00	9033.00	35740.00
+Mark I Compact Capacitor Power Relay	8	5.00	1544.00	2879.00
+Small Coaxial Compact Remote Armor Repairer	3	5.00	6101.00	28790.00
+Small Infectious Scoped Energy Neutralizer	1	5.00	10010.00	22640.00
+Medium Radiative Scoped Remote Capacitor Transmitter	1	10.00	16020.00	34950.00
+Sansha Palladium Tag	2	0.10	1350.00	5000.00
+'Vehemence' Compact Small EMP Smartbomb	1	5.00	17160.00	79780.00
+Standard S	7	1.00	2125.00	2800.00
+Small Gremlin Compact Energy Neutralizer	1	5.00	9007.00	14720.00
+Ultraviolet S	7	1.00	1715.00	2400.00
+Upgraded Multispectrum Coating I	3	5.00	4896.00	10150.00
+Mark I Compact Capacitor Flux Coil	2	5.00	5015.00	9896.00
+F-90 Compact Sensor Booster	6	5.00	1506.00	3547.00
+Emerald Boulevard Satin - Limited	5	0.10	1000.00	52000.00
+Targeting Range Script	1	1.00	9853.00	14620.00
+Small Solace Scoped Remote Armor Repairer	1	5.00	4289.00	25690.00
+Synthetic Mocha Matte - Limited	1	0.10	10000.00	43000.00
+Small Automated Structural Restoration	3	5.00	1386.00	7550.00
+'Concussion' Compact Small Graviton Smartbomb	1	5.00	13490.00	18980.00
+Infrared M	9	1.00	379.00	3849.00
+Medium F-RX Compact Capacitor Booster	1	10.00	7526.00	25850.00
+ML-3 Compact Mining Survey Chipset	5	5.00	2662.00	4001.00
+Diffracted Rejoinder - Limited	2	0.10	10000.00	980000.00
+10MN Monopropellant Enduring Afterburner	1	5.00	5905.00	8899.00
+Auto Targeting System I	1	5.00	2520.00	12470.00
+True Sansha Brass Tag	1	0.10	15030.00	35490.00
+Microwave S	5	1.00	1905.00	2620.00
+Type-D Restrained Capacitor Power Relay	7	5.00	532.50	2678.00
+Radio S	3	1.00	530.10	9494.00
+Compact Explosive Shield Amplifier	5	5.00	1966.00	4740.00
+Small Ghoul Compact Energy Nosferatu	1	5.00	6351.00	13000.00
+Particle Bore Compact Mining Laser	3	5.00	1026.00	3292.00
+Upgraded EM Coating I	2	5.00	4242.00	5482.00
+Small I-b Polarized Structural Regenerator	2	5.00	4023.00	5999.00
+Small I-ax Enduring Remote Armor Repairer	2	5.00	4111.00	19010.00
+Small Knave Scoped Energy Nosferatu	2	5.00	3690.00	29990.00
+Mark I Compact Reinforced Bulkheads	1	5.00	507.30	5939.00
+Type-D Restrained Reinforced Bulkheads	2	5.00	3002.00	3100.00
+Dual Modal Light Laser I	1	5.00	618.30	22000.00
+Small Inductive Compact Remote Capacitor Transmitter	1	5.00	5734.00	8400.00
+Small Focused Afocal Laser I	1	5.00	117.50	25000.00
+Elder's Bone Satin - Limited	5	0.10	1000.00	8400.00
+Upgraded Kinetic Coating I	2	5.00	3045.00	5837.00
+Gamma S	2	1.00	1909.00	6994.00
+Upgraded Explosive Coating I	1	5.00	4201.00	13990.00
+M51 Benefactor Compact Shield Recharger	1	5.00	3728.00	3990.00
+Gallente Frigate	1	0.01	204.00	5800.00
+Small ACM Compact Armor Repairer	1	5.00	3359.00	10360.00
+Infrared S	3	1.00	950.00	2276.00
+Ta3 Compact Ship Scanner	6	5.00	529.20	1000.00
+F-89 Compact Signal Amplifier	1	5.00	2456.00	8999.00
+Suppressed Targeting System I	2	5.00	1911.00	2250.00
+Type-E Enduring Cargo Scanner	6	5.00	310.00	1940.00
+Plutonium Charge S	100	0.00	8.80	21.73
+Sanshas Infrared L	1	1.00	1250.00	21190.00
+Lead Charge S	100	0.00	8.12	8.13
+Isotopic Iodide Satin - Limited	1	0.10	1000.00	990000.00
+DSHR-01H Highsec Ice Storm Filament	13	0.10	101.50	31990.00</script>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const ESI = 'https://esi.evetech.net/latest';
+const REGION_FORGE = 10000002, JITA_44 = 60003760, JITA_SYSTEM = 30000142;
+const UNSELLABLE = [/^expired\s/i, /ice storm filament/i];
+const LS_KEY = 'eveSellHelper.v1';
+
+const state = {
+  rows: [],            // sellable items
+  unpriced: [],        // {name, qty, reason}
+  esi: new Map(),      // lowercased name -> {buy, sell, typeId, when}
+  esiRunning: false,
+  sortKey: 'totalNet', sortDir: -1,
+};
+
+/* ---------- number parsing (handles 1.634 / 1,634 / 7.803.022,36 / 486600.00) ---------- */
+function parseNum(raw){
+  if (raw == null) return NaN;
+  let s = String(raw).trim()
+    .replace(/(isk|m3|m³)\s*$/i, '')
+    .replace(/[\s   ']/g, '');
+  if (!s) return NaN;
+  const hasC = s.includes(','), hasD = s.includes('.');
+  if (hasC && hasD){
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.split('.').join('').replace(',', '.'); // EU
+    else s = s.split(',').join('');                                                            // US
+  } else if (hasC){
+    const p = s.split(',');
+    s = (p.length === 2 && p[p.length-1].length !== 3) ? p[0] + '.' + p[1] : p.join('');
+  } else if (hasD){
+    const p = s.split('.');
+    if (p.length === 2 && p[1].length !== 3){ /* decimal, keep */ }
+    else if (p.slice(1).every(x => x.length === 3) && p[0].length >= 1 && p[0].length <= 3) s = p.join('');
+  }
+  return Number(s);
+}
+function parseQty(raw){
+  if (raw == null || String(raw).trim() === '') return 1;   // EVE omits qty for single items
+  const n = parseNum(raw);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/* ---------- input parsers ---------- */
+// EVE inventory copy: Name \t Qty \t Group \t Size \t Slot \t Volume \t Est.Price (tabs may trail off)
+function parseInventory(text){
+  const map = new Map();
+  for (const line of (text || '').split('\n')){
+    if (!line.trim()) continue;
+    const c = line.split('\t');
+    const name = (c[0] || '').trim();
+    if (!name) continue;
+    const qty = parseQty(c[1]);
+    if (qty == null) continue;
+    let volPerUnit = null;
+    for (const cell of c.slice(2)){
+      if (/m3\s*$|m³\s*$/i.test(cell.trim())){
+        const v = parseNum(cell);
+        if (Number.isFinite(v) && qty > 0) volPerUnit = v / qty;
+        break;
+      }
+    }
+    const key = name.toLowerCase();
+    const prev = map.get(key);
+    if (prev){ prev.qty += qty; }
+    else map.set(key, { name, qty, volPerUnit });
+  }
+  return map;
+}
+// Janice: Name \t Qty \t Vol/u \t Buy/u \t Sell/u
+function parseJanice(text){
+  const map = new Map();
+  for (const line of (text || '').split('\n')){
+    if (!line.trim()) continue;
+    const c = line.split('\t');
+    if (c.length < 5) continue;
+    if (/isk\s*$/i.test(line.trim())) continue;          // looks like an inventory line
+    const name = (c[0] || '').trim();
+    if (!name) continue;
+    const qty  = parseQty(c[1]);
+    const vol  = parseNum(c[2]);
+    const buy  = parseNum(c[3]);
+    const sell = parseNum(c[4]);
+    map.set(name.toLowerCase(), {
+      name, qty: qty ?? 1,
+      volPerUnit: Number.isFinite(vol) ? vol : null,
+      buy:  Number.isFinite(buy)  && buy  > 0 ? buy  : null,
+      sell: Number.isFinite(sell) && sell > 0 ? sell : null,
+    });
+  }
+  return map;
+}
+
+/* ---------- EVE price ticks (4 significant digits) ---------- */
+function tickFor(p){
+  if (!(p > 0)) return 0.01;
+  return Math.max(Math.pow(10, Math.floor(Math.log10(p)) - 3), 0.01);
+}
+function undercut(p){
+  const t = tickFor(p);
+  const u = p - t;
+  if (!(u > 0)) return p;
+  const t2 = tickFor(u);
+  return Number((Math.round(u / t2) * t2).toFixed(2));
+}
+
+/* ---------- core rebuild ---------- */
+function currentChecks(){
+  const m = new Map();
+  for (const r of state.rows) m.set(r.key, r.checked);
+  return m;
+}
+
+function rebuild(keepChecks = true){
+  const prevChecks = keepChecks ? currentChecks() : new Map();
+  const inv = parseInventory($('inv').value);
+  const jan = parseJanice($('janice').value);
+  const broker = (parseFloat($('brokerFee').value) || 0) / 100;
+  const tax    = (parseFloat($('salesTax').value)  || 0) / 100;
+  const useUndercut = $('undercut').checked;
+
+  const keys = new Set([...inv.keys(), ...jan.keys()]);
+  const rows = [], unpriced = [];
+
+  for (const key of keys){
+    const i = inv.get(key), j = jan.get(key), e = state.esi.get(key);
+    const name = (i || j).name;
+    const qty  = i ? i.qty : j.qty;
+    const volPerUnit = (i && i.volPerUnit != null) ? i.volPerUnit : (j ? j.volPerUnit : null);
+    const flags = [];
+
+    let buy = null, sell = null, src = '—';
+    if (j){ buy = j.buy; sell = j.sell; src = 'J'; }
+    if (e){
+      if (e.status === 'ok'){
+        buy = e.buy; sell = e.sell; src = 'E';
+        if (e.buy == null && e.sell == null) flags.push({t:'no Jita orders', cls:'warn'});
+      } else if (e.status === 'failed' && j){
+        flags.push({t:'ESI fetch failed — Janice price kept', cls:'info'});
+      } else if (e.status === 'unresolved' && j){
+        flags.push({t:'name not recognized by ESI', cls:'info'});
+      }
+    }
+
+    const unsellable = UNSELLABLE.some(rx => rx.test(name));
+    if (unsellable) flags.push({t:'unsellable?', cls:'bad'});
+    if (i && j && j.qty !== i.qty) flags.push({t:`Janice qty ${j.qty} ≠ ${i.qty}`, cls:'warn'});
+    if (buy != null && sell != null && buy > sell) flags.push({t:'suspect price', cls:'warn'});
+
+    if (buy == null && sell == null){
+      let reason = 'no price data (not in Janice paste)';
+      if (e && e.status === 'ok') reason = 'no market orders at Jita 4-4';
+      else if (e && e.status === 'failed') reason = 'ESI lookup failed';
+      else if (e && e.status === 'unresolved') reason = 'name not recognized by ESI';
+      unpriced.push({ name, qty, reason, unsellable });
+      continue;
+    }
+
+    const netImm = buy  != null ? buy  * (1 - tax)          : null;
+    const netOrd = sell != null ? sell * (1 - tax - broker) : null;
+    let strategy;
+    if (netImm != null && netOrd != null) strategy = netImm >= netOrd ? 'imm' : 'ord';
+    else if (netImm != null){ strategy = 'imm'; flags.push({t:'no sell orders', cls:'info'}); }
+    else { strategy = 'ord'; if (src === 'E') flags.push({t:'no buy orders', cls:'info'}); }
+
+    const bestNet = strategy === 'imm' ? netImm : netOrd;
+    const exportPrice = strategy === 'imm' ? buy : (useUndercut ? undercut(sell) : sell);
+    const advTotal = (netImm != null && netOrd != null) ? (netOrd - netImm) * qty : null;
+
+    rows.push({
+      key, name, qty, volPerUnit, buy, sell, src,
+      netImm, netOrd, strategy, bestNet, exportPrice,
+      totalNet: bestNet * qty, advTotal, flags, unsellable,
+      checked: prevChecks.has(key) ? prevChecks.get(key) : !unsellable,
+    });
+  }
+
+  rows.sort((a, b) => b.totalNet - a.totalNet);
+  rows.forEach((r, idx) => r.rank = idx + 1);
+
+  state.rows = rows;
+  state.unpriced = unpriced.sort((a, b) => a.name.localeCompare(b.name));
+  render();
+  persist();
+}
+
+/* ---------- rendering ---------- */
+const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const fmtIsk = n => n == null ? '—' : fmt.format(Math.round(n * 100) / 100);
+function fmtExport(n){
+  let s = n.toFixed(2).replace(/\.?0+$/, '');
+  if (!s.includes('.')) s = n.toFixed(0);
+  if ($('decSep').value === 'comma') s = s.replace('.', ',');
+  return s;
+}
+
+function sortedRows(){
+  const k = state.sortKey, d = state.sortDir;
+  const rows = [...state.rows];
+  rows.sort((a, b) => {
+    let x = a[k], y = b[k];
+    if (k === 'strategy' || k === 'name' || k === 'src'){ return String(x).localeCompare(String(y)) * -d; }
+    if (k === 'flags'){ return (a.flags.length - b.flags.length) * d; }
+    if (k === 'checked'){ return ((a.checked === true) - (b.checked === true)) * d; }
+    x = x == null ? -Infinity : x; y = y == null ? -Infinity : y;
+    return (x - y) * d || a.rank - b.rank;
+  });
+  return rows;
+}
+
+function render(){
+  const tbody = $('tblBody');
+  tbody.textContent = '';
+  const frag = document.createDocumentFragment();
+  for (const r of sortedRows()){
+    const tr = document.createElement('tr');
+    if (!r.checked) tr.className = 'excluded';
+
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = r.checked;
+    cb.addEventListener('change', () => { r.checked = cb.checked; render(); persist(); });
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
+    const cells = [
+      ['num', String(r.rank)],
+      ['name', r.name],
+      ['num', fmt.format(r.qty)],
+      ['num', fmtIsk(r.buy)],
+      ['num', fmtIsk(r.sell)],
+    ];
+    for (const [cls, text] of cells){
+      const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.appendChild(td);
+    }
+
+    const tdStrat = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (r.strategy === 'imm' ? 'imm' : 'ord');
+    badge.textContent = r.strategy === 'imm' ? 'INSTANT' : 'ORDER';
+    badge.title = r.strategy === 'imm'
+      ? `instant net/u ${fmtIsk(r.netImm)} ≥ order net/u ${fmtIsk(r.netOrd)}`
+      : `order net/u ${fmtIsk(r.netOrd)} > instant net/u ${fmtIsk(r.netImm)}`;
+    tdStrat.appendChild(badge);
+    tr.appendChild(tdStrat);
+
+    for (const [cls, text] of [
+      ['num', fmtIsk(r.exportPrice)],
+      ['num', fmtIsk(r.totalNet)],
+      ['num', r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal)],
+    ]){
+      const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.appendChild(td);
+    }
+
+    const tdFlags = document.createElement('td');
+    for (const f of r.flags){
+      const s = document.createElement('span');
+      s.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info' : '');
+      s.textContent = f.t;
+      tdFlags.appendChild(s);
+    }
+    if (r.src === 'E'){
+      const s = document.createElement('span'); s.className = 'flag info'; s.textContent = 'ESI'; tdFlags.appendChild(s);
+    }
+    tr.appendChild(tdFlags);
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+  renderSummary();
+  renderPreview();
+  renderUnpriced();
+}
+
+function renderSummary(){
+  const box = $('summary');
+  box.textContent = '';
+  if (!state.rows.length && !state.unpriced.length){
+    box.innerHTML = '<span class="hint">Paste data above to see results.</span>';
+    return;
+  }
+  const all = state.rows;
+  const imm = all.filter(r => r.strategy === 'imm');
+  const ord = all.filter(r => r.strategy === 'ord');
+  const sel = all.filter(r => r.checked);
+  const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
+  const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
+  const mk = (label, value) => {
+    const d = document.createElement('span'); d.className = 'stat';
+    const b = document.createElement('b'); b.textContent = value;
+    const s = document.createElement('span'); s.textContent = label;
+    d.appendChild(b); d.appendChild(s); box.appendChild(d);
+  };
+  mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`instant sale (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`sell orders (${ord.length} items)`, fmtIsk(ord.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`selected for export (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
+  if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
+}
+
+function renderPreview(){
+  const lines = state.rows
+    .filter(r => r.checked && r.exportPrice != null)
+    .sort((a, b) => a.rank - b.rank)
+    .map(r => [r.name, r.qty, fmtExport(r.exportPrice)].join('\t'));
+  $('preview').value = lines.join('\n');
+}
+
+function renderUnpriced(){
+  const box = $('unpricedBox');
+  box.textContent = '';
+  if (!state.unpriced.length){
+    box.innerHTML = '<span class="hint">Nothing — every item has a price.</span>';
+    return;
+  }
+  const ul = document.createElement('ul'); ul.className = 'plain';
+  for (const u of state.unpriced){
+    const li = document.createElement('li');
+    li.textContent = `${u.name} × ${fmt.format(u.qty)} — ${u.reason}` + (u.unsellable ? ' (reported unsellable in-game)' : '');
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+}
+
+/* ---------- clipboard ---------- */
+async function copyText(text, statusMsg){
+  const status = $('copyStatus');
+  try{
+    await navigator.clipboard.writeText(text);
+    status.textContent = statusMsg; status.className = 'hint ok';
+  }catch(_e){
+    const ta = $('preview'); const old = ta.value;
+    ta.value = text; ta.select();
+    try{ document.execCommand('copy'); status.textContent = statusMsg; status.className = 'hint ok'; }
+    catch(_e2){ status.textContent = 'copy failed — select the text and copy manually'; status.className = 'hint err'; }
+    ta.value = old;
+  }
+  setTimeout(() => { status.textContent = ''; }, 4000);
+}
+
+function fullTsv(){
+  const head = ['Item','Qty','Buy/u','Sell/u','Net instant/u','Net order/u','Best','List at/u','Expected net','Order Δ','Flags','Selected'];
+  const lines = [head.join('\t')];
+  for (const r of [...state.rows].sort((a,b) => a.rank - b.rank)){
+    lines.push([
+      r.name, r.qty,
+      r.buy ?? '', r.sell ?? '',
+      r.netImm != null ? r.netImm.toFixed(2) : '',
+      r.netOrd != null ? r.netOrd.toFixed(2) : '',
+      r.strategy === 'imm' ? 'INSTANT' : 'ORDER',
+      r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
+      r.totalNet.toFixed(2),
+      r.advTotal != null ? r.advTotal.toFixed(2) : '',
+      r.flags.map(f => f.t).join('; '),
+      r.checked ? 'yes' : 'no',
+    ].join('\t'));
+  }
+  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', 'UNPRICED', '', '', '', u.reason, 'no'].join('\t'));
+  return lines.join('\n');
+}
+
+/* ---------- ESI ---------- */
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+async function esiFetch(url, opts){
+  for (let attempt = 0; attempt < 3; attempt++){
+    let res;
+    try{ res = await fetch(url, opts); }
+    catch(e){ if (attempt === 2) throw e; await sleep(1500 * (attempt + 1)); continue; }
+    const remain = Number(res.headers.get('x-esi-error-limit-remain') || '100');
+    if (res.status === 420 || remain < 10){
+      const reset = Number(res.headers.get('x-esi-error-limit-reset') || '10');
+      await sleep((reset + 1) * 1000);
+      if (res.status === 420) continue;
+    }
+    if (res.ok) return res;
+    if (res.status >= 500 && attempt < 2){ await sleep(1500 * (attempt + 1)); continue; }
+    throw new Error('ESI HTTP ' + res.status);
+  }
+  throw new Error('ESI retries exhausted');
+}
+
+async function resolveTypeIds(names){
+  const out = new Map(); // lowercased name -> id
+  for (let i = 0; i < names.length; i += 250){
+    const chunk = names.slice(i, i + 250);
+    const res = await esiFetch(ESI + '/universe/ids/?datasource=tranquility', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chunk),
+    });
+    const data = await res.json();
+    for (const t of (data.inventory_types || [])) out.set(t.name.toLowerCase(), t.id);
+  }
+  return out;
+}
+
+function orderCoversJita(o){
+  if (o.location_id === JITA_44) return true;
+  if (!o.is_buy_order) return false;
+  if (o.range === 'region') return true;
+  if (o.system_id === JITA_SYSTEM && o.range !== 'station') return true;
+  return false;
+}
+
+async function fetchJitaPrices(typeId){
+  let page = 1, buy = null, sell = null;
+  for (;;){
+    const res = await esiFetch(`${ESI}/markets/${REGION_FORGE}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
+    const data = await res.json();
+    for (const o of data){
+      if (!orderCoversJita(o)) continue;
+      if (o.is_buy_order){ if (buy == null || o.price > buy) buy = o.price; }
+      else if (o.location_id === JITA_44){ if (sell == null || o.price < sell) sell = o.price; }
+    }
+    const pages = Number(res.headers.get('x-pages') || '1');
+    if (page >= pages) break;
+    page++;
+  }
+  return { buy, sell };
+}
+
+async function runEsi(){
+  if (state.esiRunning) return;
+  const inv = parseInventory($('inv').value);
+  const jan = parseJanice($('janice').value);
+  const items = new Map([...jan, ...inv].map(([k, v]) => [k, v.name])); // inventory names win
+  if (!items.size){ $('esiStatus').textContent = 'paste an inventory or appraisal first'; $('esiStatus').className = 'err'; return; }
+
+  state.esiRunning = true;
+  const btn = $('btnEsi'); btn.disabled = true;
+  const status = $('esiStatus'); status.className = '';
+  try{
+    status.textContent = `resolving ${items.size} item names…`;
+    const ids = await resolveTypeIds([...items.values()]);
+    const jobs = [...items.entries()].map(([key, name]) => ({ key, name, typeId: ids.get(key) ?? null }));
+    for (const j of jobs) if (j.typeId == null) state.esi.set(j.key, { buy: null, sell: null, status: 'unresolved' });
+
+    const todo = jobs.filter(j => j.typeId != null);
+    let done = 0, failed = 0;
+    const workers = Array.from({ length: 8 }, async () => {
+      for (;;){
+        const j = todo.shift();
+        if (!j) return;
+        try{
+          const p = await fetchJitaPrices(j.typeId);
+          state.esi.set(j.key, { buy: p.buy, sell: p.sell, typeId: j.typeId, status: 'ok' });
+        }catch(_e){
+          failed++;
+          state.esi.set(j.key, { buy: null, sell: null, typeId: j.typeId, status: 'failed' });
+        }
+        done++;
+        status.textContent = `fetching Jita orders… ${done}/${jobs.length}${failed ? ` (${failed} failed)` : ''}`;
+      }
+    });
+    await Promise.all(workers);
+    const when = new Date();
+    status.textContent = `live Jita 4-4 prices loaded ${when.toLocaleTimeString()}` +
+      (failed ? ` — ${failed} lookups failed (kept previous price)` : '');
+    status.className = failed ? 'err' : 'ok';
+  }catch(e){
+    status.textContent = 'ESI error: ' + e.message;
+    status.className = 'err';
+  }finally{
+    state.esiRunning = false;
+    btn.disabled = false;
+    rebuild();
+  }
+}
+
+/* ---------- persistence ---------- */
+function persist(){
+  try{
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      inv: $('inv').value, janice: $('janice').value,
+      brokerFee: $('brokerFee').value, salesTax: $('salesTax').value,
+      undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
+      unchecked: state.rows.filter(r => !r.checked).map(r => r.key),
+    }));
+  }catch(_e){ /* storage full or blocked — non-fatal */ }
+}
+function restore(){
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(_e){}
+  if (!saved) return false;
+  $('inv').value = saved.inv || '';
+  $('janice').value = saved.janice || '';
+  if (saved.brokerFee != null) $('brokerFee').value = saved.brokerFee;
+  if (saved.salesTax  != null) $('salesTax').value  = saved.salesTax;
+  $('undercut').checked = !!saved.undercut;
+  if (saved.decSep) $('decSep').value = saved.decSep;
+  if (saved.topN) $('topN').value = saved.topN;
+  rebuild(false);
+  if (Array.isArray(saved.unchecked)){
+    const un = new Set(saved.unchecked);
+    for (const r of state.rows) if (un.has(r.key)) r.checked = false;
+    render();
+  }
+  return true;
+}
+
+/* ---------- wiring ---------- */
+for (const id of ['inv', 'janice']) $(id).addEventListener('input', () => rebuild());
+for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep']) $(id).addEventListener('change', () => rebuild());
+$('topN').addEventListener('change', persist);
+
+$('btnDemo').addEventListener('click', () => {
+  $('inv').value = document.getElementById('demo-inv').textContent.trim();
+  $('janice').value = document.getElementById('demo-janice').textContent.trim();
+  rebuild(false);
+});
+$('btnClear').addEventListener('click', () => {
+  $('inv').value = ''; $('janice').value = '';
+  state.esi.clear();
+  $('esiStatus').textContent = '';
+  rebuild(false);
+});
+$('btnEsi').addEventListener('click', runEsi);
+
+$('btnTop').addEventListener('click', () => {
+  const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
+  for (const r of state.rows) r.checked = r.rank <= n && !r.unsellable;
+  render(); persist();
+});
+$('btnAll').addEventListener('click', () => { for (const r of state.rows) r.checked = !r.unsellable; render(); persist(); });
+$('btnNone').addEventListener('click', () => { for (const r of state.rows) r.checked = false; render(); persist(); });
+
+$('btnCopy').addEventListener('click', () => {
+  const text = $('preview').value;
+  if (!text){ $('copyStatus').textContent = 'nothing selected'; $('copyStatus').className = 'hint err'; return; }
+  copyText(text, `copied ${text.split('\n').length} lines`);
+});
+$('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), 'copied full table as TSV'));
+
+document.querySelectorAll('thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.key;
+    if (state.sortKey === k) state.sortDir *= -1;
+    else { state.sortKey = k; state.sortDir = -1; }
+    render();
+  });
+});
+
+restore();
+</script>
+</body>
+</html>
