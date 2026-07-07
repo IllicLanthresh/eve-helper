@@ -25,7 +25,7 @@
   textarea{width:100%;height:170px;background:var(--panel2);color:var(--text);border:1px solid var(--line);
     border-radius:8px;padding:8px;font:12px/1.4 var(--mono);resize:vertical;white-space:pre}
   textarea:focus,input:focus,select:focus{outline:1px solid var(--cyan)}
-  input[type=number],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  input[type=number],input[type=text],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
     border-radius:6px;padding:5px 8px;font:13px var(--mono);width:90px}
   button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
     padding:7px 14px;font-size:13px;cursor:pointer}
@@ -123,6 +123,16 @@
       <option value="comma">1234,56</option>
     </select>
   </div>
+  <div class="rowline">
+    <label for="fltType" style="margin:0">show</label>
+    <select id="fltType" style="width:140px">
+      <option value="all">all types</option>
+      <option value="imm">INSTANT only</option>
+      <option value="ord">ORDER only</option>
+    </select>
+    <input id="fltText" type="text" placeholder="filter by name…" style="width:230px">
+    <span class="hint" id="fltCount"></span>
+  </div>
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
@@ -151,9 +161,13 @@
     <span id="copyStatus" class="hint"></span>
   </div>
   <p class="hint" style="margin:8px 0 4px">
-    Format: <code>Item name ⇥ Quantity ⇥ Price</code>. Items flagged <b>INSTANT</b> are priced at the current best
-    buy — importing them fills against buy orders immediately (no broker fee). <b>ORDER</b> items are priced at the
-    sell price (optionally one tick under).</p>
+    Format: <code>Item name ⇥ Price</code> (the game sells the whole stack, so no quantity).
+    The list contains the ticked rows that pass the filters above — set <i>show</i> to
+    <b>INSTANT only</b> (priced at best buy, fills immediately, no broker fee) or <b>ORDER only</b>
+    (priced at the sell price, optionally one tick under) and copy each list separately, since the
+    game handles one type at a time.</p>
+  <p id="mixWarn" class="hint" style="display:none;margin:0 0 4px;color:var(--amber)">
+    ⚠ this list mixes INSTANT and ORDER items — use the type filter to copy them separately.</p>
   <textarea id="preview" readonly spellcheck="false"></textarea>
 </section>
 
@@ -686,10 +700,18 @@ const LS_KEY = 'eveSellHelper.v1';
 const state = {
   rows: [],            // sellable items
   unpriced: [],        // {name, qty, reason}
-  esi: new Map(),      // lowercased name -> {buy, sell, typeId, when}
+  esi: new Map(),      // lowercased name -> {buy, sell, typeId, status}
   esiRunning: false,
+  esiToken: 0,         // bumped to invalidate an in-flight fetch
   sortKey: 'totalNet', sortDir: -1,
+  filterType: 'all', filterText: '',
 };
+
+function rowFilter(r){
+  if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
+  if (state.filterText && !r.name.toLowerCase().includes(state.filterText)) return false;
+  return true;
+}
 
 /* ---------- number parsing (handles 1.634 / 1,634 / 7.803.022,36 / 486600.00) ---------- */
 function parseNum(raw){
@@ -756,11 +778,15 @@ function parseJanice(text){
     if (!name) continue;
     const qty  = parseQty(c[1]);
     const vol  = parseNum(c[2]);
+    if (!Number.isFinite(vol)) continue;   // Janice always has a numeric volume column — anything else is a foreign line
     const buy  = parseNum(c[3]);
     const sell = parseNum(c[4]);
-    map.set(name.toLowerCase(), {
+    const key = name.toLowerCase();
+    const prev = map.get(key);
+    if (prev){ prev.qty += qty ?? 1; continue; }   // concatenated appraisals: aggregate quantity
+    map.set(key, {
       name, qty: qty ?? 1,
-      volPerUnit: Number.isFinite(vol) ? vol : null,
+      volPerUnit: vol,
       buy:  Number.isFinite(buy)  && buy  > 0 ? buy  : null,
       sell: Number.isFinite(sell) && sell > 0 ? sell : null,
     });
@@ -886,7 +912,7 @@ function fmtExport(n){
 
 function sortedRows(){
   const k = state.sortKey, d = state.sortDir;
-  const rows = [...state.rows];
+  const rows = state.rows.filter(rowFilter);
   rows.sort((a, b) => {
     let x = a[k], y = b[k];
     if (k === 'strategy' || k === 'name' || k === 'src'){ return String(x).localeCompare(String(y)) * -d; }
@@ -956,6 +982,9 @@ function render(){
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  const shown = state.rows.filter(rowFilter).length;
+  $('fltCount').textContent = shown === state.rows.length
+    ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`;
   renderSummary();
   renderPreview();
   renderUnpriced();
@@ -971,7 +1000,7 @@ function renderSummary(){
   const all = state.rows;
   const imm = all.filter(r => r.strategy === 'imm');
   const ord = all.filter(r => r.strategy === 'ord');
-  const sel = all.filter(r => r.checked);
+  const sel = all.filter(r => rowFilter(r) && r.checked);   // = what the export list contains
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
   const mk = (label, value) => {
@@ -983,16 +1012,17 @@ function renderSummary(){
   mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`instant sale (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`sell orders (${ord.length} items)`, fmtIsk(ord.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`selected for export (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
+  mk(`in export list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
   if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
 }
 
 function renderPreview(){
-  const lines = state.rows
-    .filter(r => r.checked && r.exportPrice != null)
-    .sort((a, b) => a.rank - b.rank)
-    .map(r => [r.name, r.qty, fmtExport(r.exportPrice)].join('\t'));
-  $('preview').value = lines.join('\n');
+  const rows = state.rows
+    .filter(r => rowFilter(r) && r.checked && r.exportPrice != null)
+    .sort((a, b) => a.rank - b.rank);
+  $('preview').value = rows.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
+  const mixed = new Set(rows.map(r => r.strategy)).size > 1;
+  $('mixWarn').style.display = mixed ? '' : 'none';
 }
 
 function renderUnpriced(){
@@ -1020,7 +1050,10 @@ async function copyText(text, statusMsg){
   }catch(_e){
     const ta = $('preview'); const old = ta.value;
     ta.value = text; ta.select();
-    try{ document.execCommand('copy'); status.textContent = statusMsg; status.className = 'hint ok'; }
+    try{
+      if (!document.execCommand('copy')) throw new Error('execCommand refused');
+      status.textContent = statusMsg; status.className = 'hint ok';
+    }
     catch(_e2){ status.textContent = 'copy failed — select the text and copy manually'; status.className = 'hint err'; }
     ta.value = old;
   }
@@ -1092,14 +1125,17 @@ function orderCoversJita(o){
   return false;
 }
 
-async function fetchJitaPrices(typeId){
+async function fetchJitaPrices(typeId, qty){
   let page = 1, buy = null, sell = null;
   for (;;){
     const res = await esiFetch(`${ESI}/markets/${REGION_FORGE}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
     const data = await res.json();
     for (const o of data){
       if (!orderCoversJita(o)) continue;
-      if (o.is_buy_order){ if (buy == null || o.price > buy) buy = o.price; }
+      if (o.is_buy_order){
+        if ((o.min_volume || 1) > qty) continue;   // margin-scam guard: we can't fill this order with our stack
+        if (buy == null || o.price > buy) buy = o.price;
+      }
       else if (o.location_id === JITA_44){ if (sell == null || o.price < sell) sell = o.price; }
     }
     const pages = Number(res.headers.get('x-pages') || '1');
@@ -1113,16 +1149,18 @@ async function runEsi(){
   if (state.esiRunning) return;
   const inv = parseInventory($('inv').value);
   const jan = parseJanice($('janice').value);
-  const items = new Map([...jan, ...inv].map(([k, v]) => [k, v.name])); // inventory names win
+  const items = new Map([...jan, ...inv].map(([k, v]) => [k, { name: v.name, qty: v.qty ?? 1 }])); // inventory wins
   if (!items.size){ $('esiStatus').textContent = 'paste an inventory or appraisal first'; $('esiStatus').className = 'err'; return; }
 
   state.esiRunning = true;
+  const token = ++state.esiToken;   // Clear (or a newer run) bumps this and orphans us
   const btn = $('btnEsi'); btn.disabled = true;
   const status = $('esiStatus'); status.className = '';
   try{
     status.textContent = `resolving ${items.size} item names…`;
-    const ids = await resolveTypeIds([...items.values()]);
-    const jobs = [...items.entries()].map(([key, name]) => ({ key, name, typeId: ids.get(key) ?? null }));
+    const ids = await resolveTypeIds([...items.values()].map(v => v.name));
+    if (token !== state.esiToken) return;
+    const jobs = [...items.entries()].map(([key, it]) => ({ key, name: it.name, qty: it.qty, typeId: ids.get(key) ?? null }));
     for (const j of jobs) if (j.typeId == null) state.esi.set(j.key, { buy: null, sell: null, status: 'unresolved' });
 
     const todo = jobs.filter(j => j.typeId != null);
@@ -1130,11 +1168,13 @@ async function runEsi(){
     const workers = Array.from({ length: 8 }, async () => {
       for (;;){
         const j = todo.shift();
-        if (!j) return;
+        if (!j || token !== state.esiToken) return;
         try{
-          const p = await fetchJitaPrices(j.typeId);
+          const p = await fetchJitaPrices(j.typeId, j.qty);
+          if (token !== state.esiToken) return;
           state.esi.set(j.key, { buy: p.buy, sell: p.sell, typeId: j.typeId, status: 'ok' });
         }catch(_e){
+          if (token !== state.esiToken) return;
           failed++;
           state.esi.set(j.key, { buy: null, sell: null, typeId: j.typeId, status: 'failed' });
         }
@@ -1143,17 +1183,17 @@ async function runEsi(){
       }
     });
     await Promise.all(workers);
+    if (token !== state.esiToken) return;
     const when = new Date();
     status.textContent = `live Jita 4-4 prices loaded ${when.toLocaleTimeString()}` +
       (failed ? ` — ${failed} lookups failed (kept previous price)` : '');
     status.className = failed ? 'err' : 'ok';
   }catch(e){
-    status.textContent = 'ESI error: ' + e.message;
-    status.className = 'err';
+    if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
   }finally{
     state.esiRunning = false;
     btn.disabled = false;
-    rebuild();
+    if (token === state.esiToken) rebuild();
   }
 }
 
@@ -1164,7 +1204,8 @@ function persist(){
       inv: $('inv').value, janice: $('janice').value,
       brokerFee: $('brokerFee').value, salesTax: $('salesTax').value,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
-      unchecked: state.rows.filter(r => !r.checked).map(r => r.key),
+      unchecked: state.rows.filter(r => !r.checked && !r.unsellable).map(r => r.key),
+      rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
@@ -1180,9 +1221,13 @@ function restore(){
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
   rebuild(false);
-  if (Array.isArray(saved.unchecked)){
-    const un = new Set(saved.unchecked);
-    for (const r of state.rows) if (un.has(r.key)) r.checked = false;
+  if (Array.isArray(saved.unchecked) || Array.isArray(saved.rechecked)){
+    const un = new Set(saved.unchecked || []);
+    const re = new Set(saved.rechecked || []);
+    for (const r of state.rows){
+      if (un.has(r.key)) r.checked = false;
+      if (re.has(r.key)) r.checked = true;
+    }
     render();
     persist();   // rebuild() above already wrote state; re-save with selections applied
   }
@@ -1202,18 +1247,28 @@ $('btnDemo').addEventListener('click', () => {
 $('btnClear').addEventListener('click', () => {
   $('inv').value = ''; $('janice').value = '';
   state.esi.clear();
+  state.esiToken++;               // cancel any in-flight fetch
   $('esiStatus').textContent = '';
   rebuild(false);
 });
 $('btnEsi').addEventListener('click', runEsi);
 
+// selection buttons act on the rows passing the current filters
 $('btnTop').addEventListener('click', () => {
   const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
-  for (const r of state.rows) r.checked = r.rank <= n && !r.unsellable;
+  let left = n;
+  for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
+    if (!rowFilter(r)) continue;
+    r.checked = !r.unsellable && left > 0;
+    if (r.checked) left--;
+  }
   render(); persist();
 });
-$('btnAll').addEventListener('click', () => { for (const r of state.rows) r.checked = !r.unsellable; render(); persist(); });
-$('btnNone').addEventListener('click', () => { for (const r of state.rows) r.checked = false; render(); persist(); });
+$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = !r.unsellable; render(); persist(); });
+$('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = false; render(); persist(); });
+
+$('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
+$('fltText').addEventListener('input', () => { state.filterText = $('fltText').value.trim().toLowerCase(); render(); });
 
 $('btnCopy').addEventListener('click', () => {
   const text = $('preview').value;

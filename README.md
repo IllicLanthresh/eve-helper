@@ -22,11 +22,16 @@ price fetch).
    - **INSTANT** — selling into buy orders nets more than a sell order once you account
      for the broker fee you'd pay to list (`buy × (1 − tax)` ≥ `sell × (1 − tax − broker)`).
    - **ORDER** — listing at the sell price nets more, even after the broker fee.
-5. **Select top N** (or hand-pick rows), then **Copy import list** — the preview is
-   `Item name ⇥ Quantity ⇥ Price`, ready for the game's multi-sell import. INSTANT items
-   are priced at the current best buy so they fill the moment you import them; ORDER items
-   are listed at the sell price, optionally undercut by one tick.
-6. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
+5. **Filter and sort** the table: click column headers to sort, search by name, and use the
+   *show* filter to view **INSTANT only** or **ORDER only**. The selection buttons
+   (top N / all / none) act on the filtered rows.
+6. **Select top N** (or hand-pick rows), then **Copy import list** — the preview is
+   `Item name ⇥ Price` (the game sells whole stacks, so no quantity), ready for the game's
+   multi-sell import. Since the game handles one order type at a time, filter to INSTANT
+   (priced at the current best buy — fills the moment you import) and copy, then filter to
+   ORDER (priced at the sell price, optionally one tick under) and copy again; the app warns
+   if a copied list mixes both.
+7. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
 
 ## Flags
 
@@ -48,7 +53,8 @@ section 5 so they never pollute the ranking.
 - The ESI fetch uses only public endpoints: `POST /universe/ids` to resolve names, then
   `GET /markets/10000002/orders?type_id=…` per item, keeping orders at Jita IV-4
   (station `60003760`) — including buy orders placed elsewhere whose range covers the
-  station. It paginates, honours the ESI error-limit headers, and retries transient errors;
+  station. Buy orders whose `min_volume` exceeds your stack (margin-trading scam bait) are
+  ignored. It paginates, honours the ESI error-limit headers, and retries transient errors;
   items that fail keep their appraisal price and get flagged.
 - Exported prices respect EVE's 4-significant-digit price rule (the one-tick undercut is
   one unit of the price's own magnitude, e.g. `544 800 → 544 700`).
