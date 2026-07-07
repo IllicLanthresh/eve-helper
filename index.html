@@ -774,11 +774,14 @@ function tickFor(p){
   return Math.max(Math.pow(10, Math.floor(Math.log10(p)) - 3), 0.01);
 }
 function undercut(p){
-  const t = tickFor(p);
-  const u = p - t;
-  if (!(u > 0)) return p;
-  const t2 = tickFor(u);
-  return Number((Math.round(u / t2) * t2).toFixed(2));
+  if (!(p > 0.01)) return p;
+  // one tick of the price band just below p — at exact powers of 10 (1000.00)
+  // the band below has a finer tick (999.9, not 999)
+  const t = tickFor(p - tickFor(p) / 1000);
+  let n = Math.floor(p / t + 1e-6);
+  if (n * t >= p - t * 1e-6) n -= 1;      // p was an exact multiple: step one tick down
+  const u = n * t;
+  return u > 0 ? Number(u.toFixed(2)) : p;
 }
 
 /* ---------- core rebuild ---------- */
@@ -788,12 +791,20 @@ function currentChecks(){
   return m;
 }
 
+const lastValidFee = { brokerFee: 2.1, salesTax: 7.5 };
+function feePct(id){
+  const v = parseFloat($(id).value);
+  if (Number.isFinite(v) && v >= 0 && v <= 100){ lastValidFee[id] = v; return v / 100; }
+  $(id).value = lastValidFee[id];   // blank/garbage input: restore what is actually used
+  return lastValidFee[id] / 100;
+}
+
 function rebuild(keepChecks = true){
   const prevChecks = keepChecks ? currentChecks() : new Map();
   const inv = parseInventory($('inv').value);
   const jan = parseJanice($('janice').value);
-  const broker = (parseFloat($('brokerFee').value) || 0) / 100;
-  const tax    = (parseFloat($('salesTax').value)  || 0) / 100;
+  const broker = feePct('brokerFee');
+  const tax    = feePct('salesTax');
   const useUndercut = $('undercut').checked;
 
   const keys = new Set([...inv.keys(), ...jan.keys()]);
@@ -833,15 +844,17 @@ function rebuild(keepChecks = true){
       continue;
     }
 
-    const netImm = buy  != null ? buy  * (1 - tax)          : null;
-    const netOrd = sell != null ? sell * (1 - tax - broker) : null;
+    // when undercutting, the order really lists (and nets) one tick under the market sell
+    const orderPrice = sell != null ? (useUndercut ? undercut(sell) : sell) : null;
+    const netImm = buy        != null ? buy        * (1 - tax)          : null;
+    const netOrd = orderPrice != null ? orderPrice * (1 - tax - broker) : null;
     let strategy;
     if (netImm != null && netOrd != null) strategy = netImm >= netOrd ? 'imm' : 'ord';
     else if (netImm != null){ strategy = 'imm'; flags.push({t:'no sell orders', cls:'info'}); }
     else { strategy = 'ord'; if (src === 'E') flags.push({t:'no buy orders', cls:'info'}); }
 
     const bestNet = strategy === 'imm' ? netImm : netOrd;
-    const exportPrice = strategy === 'imm' ? buy : (useUndercut ? undercut(sell) : sell);
+    const exportPrice = strategy === 'imm' ? buy : orderPrice;
     const advTotal = (netImm != null && netOrd != null) ? (netOrd - netImm) * qty : null;
 
     rows.push({
@@ -1171,6 +1184,7 @@ function restore(){
     const un = new Set(saved.unchecked);
     for (const r of state.rows) if (un.has(r.key)) r.checked = false;
     render();
+    persist();   // rebuild() above already wrote state; re-save with selections applied
   }
   return true;
 }
