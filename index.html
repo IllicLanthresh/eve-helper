@@ -189,9 +189,10 @@
   <h2>3 · Review — items ranked by expected profit</h2>
   <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
   <div class="rowline">
-    <label for="topN" style="margin:0">Select top</label>
+    <span class="hint">import list:</span>
+    <label for="topN" style="margin:0">top</label>
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
-    <button id="btnTop" type="button" title="ticks the top N ORDER/SPLIT rows — INSTANT items have no price to choose, sell them directly in game">Select top N</button>
+    <button id="btnTop" type="button" title="ticks the top N ORDER/SPLIT rows for the import list">Tick top N</button>
     <button id="btnAll" type="button" title="ticks every ORDER/SPLIT row passing the filters">All</button>
     <button id="btnNone" type="button">None</button>
     <span class="sep"></span>
@@ -209,7 +210,7 @@
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
-        <th data-key="checked" title="include in the import list">✓</th>
+        <th data-key="checked" title="tick to include a row in the import list — INSTANT rows have nothing to import (no price to choose) and are always sold via the instant checklist instead">Import</th>
         <th data-key="rank" class="num">#</th>
         <th data-key="name">Item</th>
         <th data-key="qty" class="num">Qty</th>
@@ -246,10 +247,10 @@
       </div>
       <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
       <p class="hint" style="margin:0 0 4px">
-        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import. For SPLIT items,
-        sell the checklist leg first and this lists the remainder — importing without doing so is still safe (buy
-        orders above the price fill instantly at their own price). A manually ticked INSTANT row imports at its
-        stack-clearing floor price.</p>
+        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import — the ticked
+        rows in the table. For SPLIT items, sell the checklist leg first and this lists the remainder; importing
+        without doing so is still safe (buy orders above the price fill instantly at their own price).
+        INSTANT rows (⚡) never appear here — they have nothing to import.</p>
       <textarea id="preview" readonly spellcheck="false"></textarea>
     </div>
     <div class="col">
@@ -786,11 +787,12 @@ function rebuild(keepChecks = true){
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
-      // instants default unticked: their price isn't a choice, so they don't belong in an import list
+      // latent tick state — survives strategy flips; instants are excluded from the
+      // import list at use-time (inImport) so a transient flip never wipes a tick
       checked: prevChecks.has(key) ? prevChecks.get(key)
         : state.savedSel.un.has(key) ? false
         : state.savedSel.re.has(key) ? true
-        : (!unsellable && strategy !== 'imm'),
+        : !unsellable,
     });
   }
 
@@ -843,19 +845,30 @@ function sortedRows(){
 }
 
 function render(){
+  // effective import membership: latent tick AND an importable plan
+  for (const r of state.rows) r.inImport = r.checked && r.strategy !== 'imm';
   const tbody = $('tblBody');
   tbody.textContent = '';
   const frag = document.createDocumentFragment();
   for (const r of sortedRows()){
     const tr = document.createElement('tr');
-    // dim only rows that end up in neither artifact (unticked instants go to the checklist)
-    if (!r.checked && !(r.strategy === 'imm' && !r.unsellable)) tr.className = 'excluded';
+    // dim only rows that end up in neither artifact (instants always go to the checklist)
+    if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)) tr.className = 'excluded';
 
     const tdCheck = document.createElement('td');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox'; cb.checked = r.checked;
-    cb.addEventListener('change', () => { r.checked = cb.checked; render(); persist(); });
-    tdCheck.appendChild(cb);
+    if (r.strategy === 'imm'){
+      // nothing to import for an instant sale — it always goes to the checklist
+      const s = document.createElement('span');
+      s.textContent = '⚡';
+      s.style.color = 'var(--amber)'; s.style.cursor = 'help';
+      s.title = 'INSTANT — nothing to import; this item is on the instant checklist';
+      tdCheck.appendChild(s);
+    } else {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = r.checked;
+      cb.addEventListener('change', () => { r.checked = cb.checked; render(); persist(); });
+      tdCheck.appendChild(cb);
+    }
     tr.appendChild(tdCheck);
 
     const priceCopy = n => n == null ? '' : fmtExport(n);
@@ -936,7 +949,7 @@ function render(){
     }
   });
   const shown = state.rows.filter(rowFilter).length;
-  const hiddenTicked = state.rows.filter(r => r.checked && !rowFilter(r)).length;
+  const hiddenTicked = state.rows.filter(r => r.inImport && !rowFilter(r)).length;
   $('fltCount').textContent = (shown === state.rows.length
     ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`)
     + (hiddenTicked ? ` · ${hiddenTicked} ticked hidden — still in the import list` : '');
@@ -956,7 +969,7 @@ function renderSummary(){
   const imm = all.filter(r => r.strategy === 'imm');
   const ord = all.filter(r => r.strategy === 'ord');
   const spl = all.filter(r => r.strategy === 'split');
-  const sel = all.filter(r => r.checked);   // = the import list, independent of view filters
+  const sel = all.filter(r => r.inImport);   // = the import list, independent of view filters
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
   const mk = (label, value) => {
@@ -974,22 +987,21 @@ function renderSummary(){
 }
 
 function renderPreview(){
-  // import list: every ticked row, independent of the view filters
+  // import list: every ticked ORDER/SPLIT row, independent of the view filters
   // (a ticked SPLIT contributes only its listed-remainder leg to this side's net)
   const imp = state.rows
-    .filter(r => r.checked && r.exportPrice != null)
+    .filter(r => r.inImport && r.exportPrice != null)
     .sort((a, b) => a.rank - b.rank);
   $('preview').value = imp.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
   const impNet = imp.reduce((s, r) => s + (r.strategy === 'split' ? r.orderLegNet : r.totalNet), 0);
-  const floorN = imp.filter(r => r.strategy === 'imm').length;
   $('impEcho').textContent = imp.length
-    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net${floorN ? ` · incl. ${floorN} instant @ floor price` : ''}`
+    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net`
     : 'nothing ticked';
 
-  // instant checklist: unticked sellable INSTANT rows (full stack)
+  // instant checklist: sellable INSTANT rows (full stack)
   // plus the instant legs of ticked SPLIT rows (sell only that many, the rest is imported)
   const inst = state.rows
-    .filter(r => (r.strategy === 'imm' && !r.checked && !r.unsellable)
+    .filter(r => (r.strategy === 'imm' && !r.unsellable)
               || (r.strategy === 'split' && r.checked))
     .sort((a, b) => a.rank - b.rank);
   $('previewInst').value = inst
@@ -1053,7 +1065,7 @@ function fullTsv(){
       r.advTotal != null ? r.advTotal.toFixed(2) : '',
       r.strategy === 'imm' ? '' : r.splitFill,
       r.flags.map(f => f.t).join('; '),
-      r.checked ? 'yes' : 'no',
+      r.inImport ? 'yes' : 'no',
     ].join('\t'));
   }
   for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', '', '', '', 'UNPRICED', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
@@ -1210,7 +1222,7 @@ function persist(){
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
       // store deviations from the default tick state (default on = sellable ORDER/SPLIT)
       unchecked: state.rows.filter(r => !r.checked && !(r.unsellable || r.strategy === 'imm')).map(r => r.key),
-      rechecked: state.rows.filter(r => r.checked && (r.unsellable || r.strategy === 'imm')).map(r => r.key),
+      rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
@@ -1275,14 +1287,14 @@ $('btnTop').addEventListener('click', () => {
   const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
   let left = n;
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
-    if (!rowFilter(r)) continue;
-    r.checked = !r.unsellable && r.strategy !== 'imm' && left > 0;
+    if (!rowFilter(r) || r.strategy === 'imm') continue;   // instants have no import tick
+    r.checked = !r.unsellable && left > 0;
     if (r.checked) left--;
   }
   render(); persist();
 });
-$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = !r.unsellable && r.strategy !== 'imm'; render(); persist(); });
-$('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = false; render(); persist(); });
+$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = !r.unsellable; render(); persist(); });
+$('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = false; render(); persist(); });
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
 $('fltText').addEventListener('input', () => { state.filterText = $('fltText').value.trim().toLowerCase(); render(); });
