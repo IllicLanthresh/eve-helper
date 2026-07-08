@@ -158,9 +158,12 @@
       <li>Instant valuation walks the real buy book top-down: order depth (<code>volume_remain</code>) and
           <code>min_volume</code> (margin-scam bait) are respected, so one 1-unit buy order at a silly price
           no longer values your whole stack.</li>
-      <li>The ORDER/SPLIT plan models what actually happens when you import at <code>L</code>: buy orders
-          priced ≥ <code>L</code> fill immediately at <i>their</i> price (no broker fee, tax only), the rest
-          is listed at <code>L</code> (broker fee + tax). SPLIT just means that first part is non-empty.</li>
+      <li>SPLIT is computed from the instant side: a unit goes to the instant leg whenever its buy order pays
+          more after tax than listing it at <code>L</code> nets after tax + broker — i.e. buys down to
+          <code>L × (1−tax−broker)/(1−tax)</code> (≈ 0.977 × L at default fees). The leg appears in the instant
+          checklist (partial stack); the remainder is listed at <code>L</code> via the import. Importing the whole
+          stack at <code>L</code> without selling the leg first is safe too — buys ≥ <code>L</code> fill
+          automatically at their own price; you only lose the sliver between the two thresholds.</li>
       <li>Order fills are not guaranteed — an order at a history-derived price may take days or never fill.
           Relist fees from repricing are not modelled.</li>
       <li>Price history is per <b>region</b> (ESI has no station-level history) using each day's average
@@ -190,7 +193,8 @@
     <select id="fltType" style="width:170px">
       <option value="all">all types</option>
       <option value="imm">INSTANT only</option>
-      <option value="ordsplit">ORDER + SPLIT only</option>
+      <option value="ord">ORDER only</option>
+      <option value="split">SPLIT only</option>
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
@@ -232,8 +236,9 @@
       </div>
       <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
       <p class="hint" style="margin:0 0 4px">
-        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import: buy orders above
-        the price fill instantly at their own price, the rest lists. A manually ticked INSTANT row imports at its
+        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import. For SPLIT items,
+        sell the checklist leg first and this lists the remainder — importing without doing so is still safe (buy
+        orders above the price fill instantly at their own price). A manually ticked INSTANT row imports at its
         stack-clearing floor price.</p>
       <textarea id="preview" readonly spellcheck="false"></textarea>
     </div>
@@ -245,7 +250,8 @@
       <p class="hint" style="margin:8px 0 2px"><b>Instant checklist — sell directly in the hangar</b> · <span id="instEcho">nothing yet</span></p>
       <p class="hint" style="margin:0 0 4px">
         <code>Item name ⇥ Qty</code> — these net more sold straight into the buy orders (select them in the hangar
-        → Sell Items). No import needed; their price isn't a choice.</p>
+        → Sell Items). No import needed; their price isn't a choice. For SPLIT items the quantity is the
+        <b>instant leg only</b>: split the stack and sell just that many — the rest is in the import list.</p>
       <textarea id="previewInst" readonly spellcheck="false"></textarea>
     </div>
   </div>
@@ -537,8 +543,7 @@ const state = {
 };
 
 function rowFilter(r){
-  if (state.filterType === 'imm' && r.strategy !== 'imm') return false;
-  if (state.filterType === 'ordsplit' && r.strategy === 'imm') return false;
+  if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
   if (state.filterText && !r.name.toLowerCase().includes(state.filterText)) return false;
   return true;
 }
@@ -717,10 +722,12 @@ function rebuild(keepChecks = true){
     // plan A: pure instant — dump the whole stack into the book right now
     const inst = walkBook(levels, i.qty, null);
     const netInstant = inst.proceeds * (1 - tax);   // units the book can't absorb are valued at 0
-    // plan B: import at L — buys >= L fill at their price, the rest lists at L
+    // plan B: split computed from the instant side — sell into any buy whose net beats
+    // listing at L, i.e. down to L×(1−tax−broker)/(1−tax); list the remainder at L
     let netOrder = null, ordFill = null;
     if (L != null && L > 0){
-      ordFill = walkBook(levels, i.qty, L);
+      const thr = L * (1 - tax - broker) / (1 - tax);
+      ordFill = walkBook(levels, i.qty, thr);
       netOrder = ordFill.proceeds * (1 - tax) + (i.qty - ordFill.filled) * L * (1 - tax - broker);
     }
 
@@ -736,6 +743,9 @@ function rebuild(keepChecks = true){
     const totalNet = strategy === 'imm' ? netInstant : netOrder;
     const exportPrice = strategy === 'imm' ? inst.marginal : L;
     const advTotal = (netOrder != null) ? netOrder - netInstant : null;
+    // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
+    const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
+    const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
 
     if (bestBuy != null && bestSell != null && bestBuy > bestSell) flags.push({t:'suspect price', cls:'warn'});
     if (hist != null && bestSell != null){
@@ -751,6 +761,7 @@ function rebuild(keepChecks = true){
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
       bestBuy, bestSell, hist, L,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
+      instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
       // instants default unticked: their price isn't a choice, so they don't belong in an import list
@@ -846,7 +857,7 @@ function render(){
     badge.title = r.strategy === 'imm'
       ? `sell into the buy book now · net ${fmtIsk(r.netInstant)}${r.netOrder != null ? ` ≥ order plan ${fmtIsk(r.netOrder)}` : ''}`
       : r.strategy === 'split'
-        ? `import at ${fmtIsk(r.L)}: ≈${fmt.format(r.splitFill)} of ${fmt.format(r.qty)} fill instantly, rest lists · net ${fmtIsk(r.netOrder)} > instant ${fmtIsk(r.netInstant)}`
+        ? `sell ${fmt.format(r.splitFill)} of ${fmt.format(r.qty)} into buys ≥ ${fmtIsk(r.legMarginal)} now (checklist leg, net ${fmtIsk(r.instLegNet)}), list the rest at ${fmtIsk(r.L)} (net ${fmtIsk(r.orderLegNet)}) · total ${fmtIsk(r.netOrder)} > full dump ${fmtIsk(r.netInstant)}`
         : `list at ${fmtIsk(r.L)} · net ${fmtIsk(r.netOrder)}${r.instFill > 0 ? ` > instant ${fmtIsk(r.netInstant)}` : ''}`;
     tdStrat.dataset.copy = badge.textContent;
     tdStrat.appendChild(badge);
@@ -916,7 +927,8 @@ function renderSummary(){
   }
   const all = state.rows;
   const imm = all.filter(r => r.strategy === 'imm');
-  const os  = all.filter(r => r.strategy !== 'imm');
+  const ord = all.filter(r => r.strategy === 'ord');
+  const spl = all.filter(r => r.strategy === 'split');
   const sel = all.filter(r => r.checked);   // = the import list, independent of view filters
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
@@ -928,31 +940,37 @@ function renderSummary(){
   };
   mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`instant (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`orders + splits (${os.length} items)`, fmtIsk(os.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`orders (${ord.length} items)`, fmtIsk(ord.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`splits (${spl.length} items)`, fmtIsk(spl.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`in import list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
   if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
 }
 
 function renderPreview(){
   // import list: every ticked row, independent of the view filters
+  // (a ticked SPLIT contributes only its listed-remainder leg to this side's net)
   const imp = state.rows
     .filter(r => r.checked && r.exportPrice != null)
     .sort((a, b) => a.rank - b.rank);
   $('preview').value = imp.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
-  const impNet = imp.reduce((s, r) => s + r.totalNet, 0);
+  const impNet = imp.reduce((s, r) => s + (r.strategy === 'split' ? r.orderLegNet : r.totalNet), 0);
   const floorN = imp.filter(r => r.strategy === 'imm').length;
   $('impEcho').textContent = imp.length
     ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net${floorN ? ` · incl. ${floorN} instant @ floor price` : ''}`
     : 'nothing ticked';
 
-  // instant checklist: unticked sellable INSTANT rows (ticked ones are handled via the import)
+  // instant checklist: unticked sellable INSTANT rows (full stack)
+  // plus the instant legs of ticked SPLIT rows (sell only that many, the rest is imported)
   const inst = state.rows
-    .filter(r => r.strategy === 'imm' && !r.checked && !r.unsellable)
+    .filter(r => (r.strategy === 'imm' && !r.checked && !r.unsellable)
+              || (r.strategy === 'split' && r.checked))
     .sort((a, b) => a.rank - b.rank);
-  $('previewInst').value = inst.map(r => [r.name, r.qty].join('\t')).join('\n');
-  const instNet = inst.reduce((s, r) => s + r.totalNet, 0);
+  $('previewInst').value = inst
+    .map(r => [r.name, r.strategy === 'split' ? r.splitFill : r.qty].join('\t')).join('\n');
+  const instNet = inst.reduce((s, r) => s + (r.strategy === 'split' ? r.instLegNet : r.totalNet), 0);
+  const legN = inst.filter(r => r.strategy === 'split').length;
   $('instEcho').textContent = inst.length
-    ? `${inst.length} items · ${fmtIsk(instNet)} ISK expected net`
+    ? `${inst.length} items · ${fmtIsk(instNet)} ISK expected net${legN ? ` · incl. ${legN} split leg${legN > 1 ? 's' : ''} (partial stacks)` : ''}`
     : 'nothing yet';
 }
 
@@ -991,7 +1009,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant fill @ import','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
