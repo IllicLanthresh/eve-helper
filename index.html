@@ -65,7 +65,16 @@
   .flag.info{color:var(--dim)}
   tr.excluded td{opacity:.45}
   .tablewrap{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
-  #preview,#previewInst{height:200px}
+  #preview{height:200px}
+  #instList{max-height:200px;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .inst-item{display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:copy;
+    border-bottom:1px solid #1a2233;font:12px/1.5 var(--mono)}
+  .inst-item:hover{background:#161d2b}
+  .inst-item.done{opacity:.45;text-decoration:line-through}
+  .inst-item.copied{box-shadow:inset 0 0 0 1px var(--cyan)}
+  .inst-item .tick{width:14px;color:var(--green);flex:none}
+  .inst-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .flag.wait{color:var(--violet)}
   #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
   #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
   #fetchFill.ind{width:30%;animation:ind 1.1s linear infinite}
@@ -130,7 +139,12 @@
           title="day range for the statistic — recomputed locally, no refetch needed">
         <label style="margin:0">days</label>
       </div>
-      <div class="hint" style="margin-top:4px">drives the Hist column, ≫/≪ flags and fallback prices
+      <div class="grow" style="margin-top:4px">
+        <label style="margin:0" title="tags rows where an order at the p90 of this window would net at least this much more than the row's current plan — potential worth waiting for, whatever your list-price source">⏳ wait tag at ≥</label>
+        <input id="waitPct" type="number" min="0" max="1000" step="1" value="10" style="width:60px">
+        <label style="margin:0">% upside vs plan (p90)</label>
+      </div>
+      <div class="hint" style="margin-top:4px">drives the Hist column, ≫/≪ flags, fallback prices and the ⏳ tag
         <span id="histNote" style="color:var(--amber)"></span></div>
     </fieldset>
     <fieldset class="grp">
@@ -174,6 +188,10 @@
           history statistic (buys and sells combined — no API has per-side <i>traded</i> volume). The Buy/Sell
           depth columns are the live order book per side — outstanding orders right now, not traded volume.
           Margin % is <code>(sell − buy) ÷ buy</code>; negative (red) means a crossed market.</li>
+      <li><span class="flag wait">⏳ wait? +X%</span> = an order at the <b>p90</b> of the history window would net
+          X% more than this row's current plan — potential worth waiting for, shown whatever your list-price
+          source. It assumes that order eventually fills at p90 (one of the window's best days returns); judge the
+          odds with Vol/day. Threshold configurable in the history reference group; also in the type filter.</li>
       <li><span class="flag warn">suspect price</span> = top buy above best sell (thin/odd market) ·
           <span class="flag warn">≫/≪ history</span> = current sell far from the history statistic ·
           <span class="flag warn">depth x/y</span> = the buy book can only absorb x of your y units.</li>
@@ -202,6 +220,7 @@
       <option value="imm">INSTANT only</option>
       <option value="ord">ORDER only</option>
       <option value="split">SPLIT only</option>
+      <option value="wait">⏳ wait only</option>
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
@@ -256,14 +275,15 @@
     <div class="col">
       <div class="rowline" style="margin-top:0">
         <button id="btnCopyInst" type="button">Copy instant checklist</button>
+        <button id="btnInstReset" type="button">Reset ticks</button>
         <span id="copyStatusInst" class="hint"></span>
       </div>
       <p class="hint" style="margin:8px 0 2px"><b>Instant checklist — sell directly in the hangar</b> · <span id="instEcho">nothing yet</span></p>
       <p class="hint" style="margin:0 0 4px">
-        <code>Item name ⇥ Qty</code> — these net more sold straight into the buy orders (select them in the hangar
-        → Sell Items). No import needed; their price isn't a choice. For SPLIT items the quantity is the
-        <b>instant leg only</b>: split the stack and sell just that many — the rest is in the import list.</p>
-      <textarea id="previewInst" readonly spellcheck="false"></textarea>
+        <b>Click an item to copy its name</b> for the in-game inventory search — it gets ticked off so you can
+        work down the list. The quantity is how many to sell; for SPLIT items it's the <b>instant leg only</b>
+        (split the stack, sell just that many — the rest is in the import list).</p>
+      <div id="instList"></div>
     </div>
   </div>
   <div class="rowline">
@@ -549,12 +569,14 @@ const state = {
   esiToken: 0,         // bumped to invalidate an in-flight fetch
   fetchedHist: false,  // whether the last fetch included history
   savedSel: { un: new Set(), re: new Set() },  // saved selection deviations, applied when rows (re)appear
+  instDone: new Set(),  // checklist items ticked off this session (by row key)
   sortKey: 'totalNet', sortDir: -1,
   filterType: 'all', filterText: '',
 };
 
 function rowFilter(r){
-  if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
+  if (state.filterType === 'wait'){ if (!r.waitFlag) return false; }
+  else if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
   if (state.filterText && !r.name.toLowerCase().includes(state.filterText)) return false;
   return true;
 }
@@ -700,6 +722,7 @@ function rebuild(keepChecks = true){
   const priceSrc = $('srcHist').checked ? 'hist' : 'sell';
   const histMode = $('histMode').value;
   const histDays = Math.min(400, Math.max(1, Math.round(parseFloat($('histDays').value) || 30)));
+  const waitMin = Math.max(0, parseFloat($('waitPct').value) || 10);
 
   const rows = [], unpriced = [];
 
@@ -766,6 +789,17 @@ function rebuild(keepChecks = true){
     const totalNet = strategy === 'imm' ? netInstant : netOrder;
     const exportPrice = strategy === 'imm' ? inst.marginal : L;
     const advTotal = (netOrder != null) ? netOrder - netInstant : null;
+    // ⏳ wait signal: independent of the L source — would an order at this window's p90 beat the plan?
+    let waitPct = null;
+    const p90 = histStatOf(e.hist, histDays, 'p90');
+    if (p90 != null && totalNet > 0){
+      const Lw = round4sig(p90);
+      const wf = walkBook(levels, i.qty, Lw * (1 - tax - broker) / (1 - tax));
+      const netWait = wf.proceeds * (1 - tax) + (i.qty - wf.filled) * Lw * (1 - tax - broker);
+      waitPct = (netWait - totalNet) / totalNet * 100;
+    }
+    const waitFlag = waitPct != null && waitPct >= waitMin;
+    if (waitFlag) flags.push({t: `⏳ wait? +${Math.round(waitPct)}%`, cls: 'wait'});
     // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
     const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
     const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
@@ -784,6 +818,7 @@ function rebuild(keepChecks = true){
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
+      waitPct, waitFlag,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
@@ -810,7 +845,7 @@ function rebuild(keepChecks = true){
 function syncControls(){
   const anyHist = [...state.esi.values()].some(e => e && e.hist && e.hist.length);
   const histUsable = $('histOn').checked || anyHist;   // stat/days feed the Hist column, flags and fallbacks once data exists
-  $('histMode').disabled = $('histDays').disabled = !histUsable;
+  $('histMode').disabled = $('histDays').disabled = $('waitPct').disabled = !histUsable;
   $('srcHistEcho').textContent =
     `(${$('histMode').options[$('histMode').selectedIndex].text} · ${$('histDays').value || 30} d)`;
   let note = '';
@@ -923,7 +958,7 @@ function render(){
     const tdFlags = document.createElement('td');
     for (const f of r.flags){
       const s = document.createElement('span');
-      s.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info' : '');
+      s.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info' : f.cls === 'wait' ? ' wait' : '');
       s.textContent = f.t;
       tdFlags.appendChild(s);
     }
@@ -1002,10 +1037,36 @@ function renderPreview(){
   // plus the instant legs of ticked SPLIT rows (sell only that many, the rest is imported)
   const inst = state.rows
     .filter(r => (r.strategy === 'imm' && !r.unsellable)
-              || (r.strategy === 'split' && r.checked))
+              || (r.strategy === 'split' && r.inImport))
     .sort((a, b) => a.rank - b.rank);
-  $('previewInst').value = inst
-    .map(r => [r.name, r.strategy === 'split' ? r.splitFill : r.qty].join('\t')).join('\n');
+  const box = $('instList');
+  box.textContent = '';
+  if (!inst.length){
+    const d = document.createElement('div');
+    d.className = 'hint'; d.style.padding = '8px 10px'; d.textContent = 'nothing yet';
+    box.appendChild(d);
+  }
+  for (const r of inst){
+    const qty = r.strategy === 'split' ? r.splitFill : r.qty;
+    const div = document.createElement('div');
+    div.className = 'inst-item' + (state.instDone.has(r.key) ? ' done' : '');
+    div.dataset.name = r.name; div.dataset.qty = String(qty);
+    const tick = document.createElement('span'); tick.className = 'tick';
+    tick.textContent = state.instDone.has(r.key) ? '✓' : '';
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = r.name;
+    const q = document.createElement('span'); q.className = 'hint';
+    q.textContent = r.strategy === 'split'
+      ? `× ${fmt.format(qty)} of ${fmt.format(r.qty)} · split leg` : `× ${fmt.format(qty)}`;
+    div.append(tick, nm, q);
+    div.addEventListener('click', () => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      state.instDone.add(r.key);
+      div.classList.add('done'); tick.textContent = '✓';
+      cellCopy(r.name, div);   // clicking again re-copies and stays done
+    });
+    box.appendChild(div);
+  }
   const instNet = inst.reduce((s, r) => s + (r.strategy === 'split' ? r.instLegNet : r.totalNet), 0);
   const legN = inst.filter(r => r.strategy === 'split').length;
   $('instEcho').textContent = inst.length
@@ -1048,7 +1109,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant leg qty','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Wait upside %','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
@@ -1063,12 +1124,13 @@ function fullTsv(){
       r.netOrder != null ? r.netOrder.toFixed(2) : '',
       r.totalNet.toFixed(2),
       r.advTotal != null ? r.advTotal.toFixed(2) : '',
+      r.waitPct != null ? r.waitPct.toFixed(1) : '',
       r.strategy === 'imm' ? '' : r.splitFill,
       r.flags.map(f => f.t).join('; '),
       r.inImport ? 'yes' : 'no',
     ].join('\t'));
   }
-  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', '', '', '', 'UNPRICED', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
+  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', '', '', '', 'UNPRICED', '', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
   return lines.join('\n');
 }
 
@@ -1220,6 +1282,7 @@ function persist(){
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
+      waitPct: $('waitPct').value,
       // store deviations from the default tick state (default on = sellable ORDER/SPLIT)
       unchecked: state.rows.filter(r => !r.checked && !(r.unsellable || r.strategy === 'imm')).map(r => r.key),
       rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
@@ -1241,6 +1304,7 @@ function restore(){
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
   if (saved.histDays) $('histDays').value = saved.histDays;
+  if (saved.waitPct != null) $('waitPct').value = saved.waitPct;
   state.savedSel = { un: new Set(saved.unchecked || []), re: new Set(saved.rechecked || []) };
   rebuild(false);   // applies savedSel via the checked fallback — also after a later refetch
   return true;
@@ -1254,7 +1318,7 @@ for (const [k, h] of Object.entries(HUBS)){
 }
 
 $('inv').addEventListener('input', () => rebuild());
-for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays'])
+for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays', 'waitPct'])
   $(id).addEventListener('change', () => rebuild());
 $('topN').addEventListener('change', persist);
 
@@ -1275,6 +1339,7 @@ $('btnDemo').addEventListener('click', () => {
 $('btnClear').addEventListener('click', () => {
   $('inv').value = '';
   state.esi.clear();
+  state.instDone.clear();
   state.esiToken++;               // cancel any in-flight fetch
   $('esiStatus').textContent = '';
   rebuild(false);
@@ -1304,10 +1369,12 @@ $('btnCopy').addEventListener('click', () => {
   if (!text){ $('copyStatusImp').textContent = 'nothing ticked'; $('copyStatusImp').className = 'hint err'; return; }
   copyText(text, $('copyStatusImp'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
+$('btnInstReset').addEventListener('click', () => { state.instDone.clear(); renderPreview(); });
 $('btnCopyInst').addEventListener('click', () => {
-  const text = $('previewInst').value;
+  const text = [...document.querySelectorAll('#instList .inst-item')]
+    .map(el => `${el.dataset.name}\t${el.dataset.qty}`).join('\n');
   if (!text){ $('copyStatusInst').textContent = 'nothing to copy'; $('copyStatusInst').className = 'hint err'; return; }
-  copyText(text, $('copyStatusInst'), $('previewInst'), `copied ${text.split('\n').length} lines`);
+  copyText(text, $('copyStatusInst'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
 $('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), $('copyStatusTsv'), $('preview'), 'copied full table as TSV'));
 
