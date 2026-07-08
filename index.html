@@ -53,6 +53,8 @@
   tbody td.copied{box-shadow:inset 0 0 0 1px var(--cyan);background:#14344a}
   tbody tr:hover{background:#161d2b}
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  td.pos{color:var(--green)}
+  td.neg{color:var(--red)}
   td.name{max-width:320px}
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
   .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
@@ -168,6 +170,9 @@
           Relist fees from repricing are not modelled.</li>
       <li>Price history is per <b>region</b> (ESI has no station-level history) using each day's average
           price; the day range and statistic are applied locally, so changing them needs no refetch.</li>
+      <li>Vol/day is the mean of the region's daily traded units over the same "last N days" window as the
+          history statistic (buys and sells combined — ESI has no per-side traded volume). The cell tooltip
+          shows the live order-book depth per side, which is outstanding orders — not traded volume.</li>
       <li><span class="flag warn">suspect price</span> = top buy above best sell (thin/odd market) ·
           <span class="flag warn">≫/≪ history</span> = current sell far from the history statistic ·
           <span class="flag warn">depth x/y</span> = the buy book can only absorb x of your y units.</li>
@@ -210,6 +215,7 @@
         <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy ISK/u</th>
         <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell ISK/u</th>
         <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist ISK/u</th>
+        <th data-key="volDay" class="num" title="average units traded per day over the history window (regional, both sides combined — per-side traded volume does not exist in ESI); hover a cell for the current order-book depth">Vol/day</th>
         <th data-key="strategy" title="best plan by expected net">Plan</th>
         <th data-key="exportPrice" class="num" title="price to import the item at">Import at ISK/u</th>
         <th data-key="totalNet" class="num">Expected net ISK</th>
@@ -652,6 +658,13 @@ function histStatOf(hist, days, mode){
   const s = [...vals].sort((a, b) => a - b);
   return quantile(s, mode === 'median' ? 0.5 : mode === 'p10' ? 0.1 : 0.9);
 }
+function histVolOf(hist, days){
+  if (!hist || !hist.length) return null;
+  const cutoff = Date.now() - days * 86400e3;
+  const vals = hist.filter(h => Date.parse(h.date) >= cutoff).map(h => h.volume);
+  if (!vals.length) return null;
+  return Math.round(vals.reduce((s, x) => s + x, 0) / vals.length);
+}
 
 /* ---------- core rebuild ---------- */
 const lastValidFee = { brokerFee: 2.1, salesTax: 7.5 };
@@ -702,6 +715,9 @@ function rebuild(keepChecks = true){
     const bestBuy  = levels.length ? levels[0].p : null;
     const bestSell = e.bestSell;
     const hist = histStatOf(e.hist, histDays, histMode);
+    const volDay = histVolOf(e.hist, histDays);
+    const buyDepth = levels.reduce((s, lv) => s + lv.v, 0);
+    const sellDepth = e.sellDepth ?? null;
 
     if (bestBuy == null && bestSell == null && hist == null){
       unpriced.push({ name: i.name, qty: i.qty, reason: 'no market orders or history at this hub', unsellable });
@@ -759,7 +775,7 @@ function rebuild(keepChecks = true){
 
     rows.push({
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
-      bestBuy, bestSell, hist, L,
+      bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
@@ -850,6 +866,14 @@ function render(){
       tr.appendChild(td);
     }
 
+    const tdVol = document.createElement('td');
+    tdVol.className = 'num';
+    tdVol.textContent = r.volDay == null ? '—' : fmt.format(r.volDay);
+    if (r.volDay != null) tdVol.dataset.copy = String(r.volDay);
+    if (r.buyDepth != null && r.sellDepth != null)
+      tdVol.title = `order book now: ${fmt.format(r.buyDepth)} u wanted (buy) · ${fmt.format(r.sellDepth)} u offered (sell)`;
+    tr.appendChild(tdVol);
+
     const tdStrat = document.createElement('td');
     const badge = document.createElement('span');
     badge.className = 'badge ' + (r.strategy === 'imm' ? 'imm' : r.strategy === 'split' ? 'split' : 'ord');
@@ -873,7 +897,7 @@ function render(){
     for (const [cls, text, copy] of [
       ['num', fmtIsk(r.exportPrice), priceCopy(r.exportPrice)],
       ['num', fmtIsk(r.totalNet), priceCopy(r.totalNet)],
-      ['num', r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal), priceCopy(r.advTotal)],
+      ['num' + (r.advTotal > 0 ? ' pos' : r.advTotal < 0 ? ' neg' : ''), r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal), priceCopy(r.advTotal)],
     ]){
       const td = document.createElement('td'); td.className = cls; td.textContent = text;
       if (copy) td.dataset.copy = copy;
@@ -894,7 +918,7 @@ function render(){
   if (!tbody.children.length){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 12; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
+    td.colSpan = 13; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
     td.textContent = !state.invCount ? 'Paste your inventory above to get started.'
       : !state.rows.length ? 'Fetch prices (ESI) to value and rank your items.'
       : 'No rows match the current filters.';
@@ -1009,12 +1033,13 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant leg qty','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Vol/day','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
       r.name, r.qty,
       r.bestBuy ?? '', r.bestSell ?? '', r.hist != null ? r.hist.toFixed(2) : '',
+      r.volDay ?? '',
       r.strategy === 'imm' ? 'INSTANT' : r.strategy === 'split' ? 'SPLIT' : 'ORDER',
       r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
       r.netInstant.toFixed(2),
@@ -1026,7 +1051,7 @@ function fullTsv(){
       r.checked ? 'yes' : 'no',
     ].join('\t'));
   }
-  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', 'UNPRICED', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
+  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', 'UNPRICED', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
   return lines.join('\n');
 }
 
@@ -1079,21 +1104,24 @@ function orderCoversHub(o, h){
 async function fetchBook(typeId, h){
   let page = 1;
   const buyLevels = [];
-  let bestSell = null;
+  let bestSell = null, sellDepth = 0;
   for (;;){
     const res = await esiFetch(`${ESI}/markets/${h.region}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
     const data = await res.json();
     for (const o of data){
       if (!orderCoversHub(o, h)) continue;
       if (o.is_buy_order) buyLevels.push({ p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
-      else if (o.location_id === h.station){ if (bestSell == null || o.price < bestSell) bestSell = o.price; }
+      else if (o.location_id === h.station){
+        if (bestSell == null || o.price < bestSell) bestSell = o.price;
+        sellDepth += o.volume_remain;
+      }
     }
     const pages = Number(res.headers.get('x-pages') || '1');
     if (page >= pages) break;
     page++;
   }
   buyLevels.sort((a, b) => b.p - a.p);
-  return { buyLevels, bestSell };
+  return { buyLevels, bestSell, sellDepth };
 }
 
 async function fetchHistory(typeId, h){
