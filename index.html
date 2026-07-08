@@ -41,6 +41,8 @@
   thead th{position:sticky;top:0;background:#182130;color:var(--dim);font-weight:600;text-align:left;
     padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap}
   thead th.num{text-align:right}
+  thead th.s-asc::after{content:' ▲';color:var(--cyan);font-size:10px}
+  thead th.s-desc::after{content:' ▼';color:var(--cyan);font-size:10px}
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
   tbody tr:hover{background:#161d2b}
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
@@ -117,74 +119,7 @@
 </section>
 
 <section>
-  <h2>2 · Summary</h2>
-  <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
-</section>
-
-<section>
-  <h2>3 · Items ranked by expected profit</h2>
-  <div class="rowline">
-    <label for="topN" style="margin:0">Select top</label>
-    <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
-    <button id="btnTop" type="button">Select top N</button>
-    <button id="btnAll" type="button">All</button>
-    <button id="btnNone" type="button">None</button>
-    <span class="sep"></span>
-    <label for="fltType" style="margin:0">show</label>
-    <select id="fltType" style="width:170px">
-      <option value="all">all types</option>
-      <option value="imm">INSTANT only</option>
-      <option value="ordsplit">ORDER + SPLIT only</option>
-    </select>
-    <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
-    <span class="hint" id="fltCount"></span>
-    <label for="decSep" style="margin:0">export decimals</label>
-    <select id="decSep" style="width:100px">
-      <option value="dot">1234.56</option>
-      <option value="comma">1234,56</option>
-    </select>
-  </div>
-  <div class="tablewrap">
-    <table id="tbl">
-      <thead><tr>
-        <th data-key="checked" title="include in export">✓</th>
-        <th data-key="rank" class="num">#</th>
-        <th data-key="name">Item</th>
-        <th data-key="qty" class="num">Qty</th>
-        <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy /u</th>
-        <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell /u</th>
-        <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist /u</th>
-        <th data-key="strategy" title="best plan by expected net">Plan</th>
-        <th data-key="exportPrice" class="num" title="price to import the item at">Import at /u</th>
-        <th data-key="totalNet" class="num">Expected net</th>
-        <th data-key="advTotal" class="num" title="extra ISK from the order/split plan vs pure instant (negative = instant is better)">Order Δ</th>
-        <th data-key="flags">Flags</th>
-      </tr></thead>
-      <tbody id="tblBody"></tbody>
-    </table>
-  </div>
-</section>
-
-<section>
-  <h2>4 · Export — copy into the game's multi-sell import</h2>
-  <div class="rowline">
-    <button id="btnCopy" type="button" class="primary">Copy import list</button>
-    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
-    <span id="copyStatus" class="hint"></span>
-  </div>
-  <p class="hint" style="margin:8px 0 4px">
-    Format: <code>Item name ⇥ Price</code> (the game sells the whole stack). The list contains the
-    ticked rows passing the filters above — filter to <b>INSTANT only</b> (priced to clear into the
-    buy book right now) or <b>ORDER + SPLIT only</b> (priced at the list price <code>L</code>; any buy
-    orders above <code>L</code> fill instantly on import, the rest lists) and copy each separately,
-    since the game handles one type at a time.</p>
-  <p id="mixWarn" class="hint" style="display:none;margin:0 0 4px;color:var(--amber)">
-    ⚠ this list mixes INSTANT and ORDER/SPLIT items — use the type filter to copy them separately.</p>
-  <textarea id="preview" readonly spellcheck="false"></textarea>
-</section>
-
-<section>
-  <h2>5 · Unpriced / not sellable</h2>
+  <h2>2 · Unpriced / not sellable &amp; notes</h2>
   <div id="unpricedBox"><span class="hint">Nothing yet.</span></div>
   <details>
     <summary>Notes &amp; assumptions</summary>
@@ -209,6 +144,76 @@
     </ul>
   </details>
 </section>
+
+<section>
+  <h2>3 · Summary</h2>
+  <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
+</section>
+
+<section>
+  <h2>4 · Items ranked by expected profit</h2>
+  <div class="rowline">
+    <label for="topN" style="margin:0">Select top</label>
+    <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
+    <button id="btnTop" type="button" title="ticks the top N ORDER/SPLIT rows — INSTANT items have no price to choose, sell them directly in game">Select top N</button>
+    <button id="btnAll" type="button" title="ticks every ORDER/SPLIT row passing the filters">All</button>
+    <button id="btnNone" type="button">None</button>
+    <span class="sep"></span>
+    <label for="fltType" style="margin:0">show</label>
+    <select id="fltType" style="width:170px">
+      <option value="all">all types</option>
+      <option value="imm">INSTANT only</option>
+      <option value="ordsplit">ORDER + SPLIT only</option>
+    </select>
+    <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
+    <span class="hint" id="fltCount"></span>
+    <label for="decSep" style="margin:0">export decimals</label>
+    <select id="decSep" style="width:100px">
+      <option value="dot">1234.56</option>
+      <option value="comma">1234,56</option>
+    </select>
+  </div>
+  <div class="tablewrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-key="checked" title="include in export">✓</th>
+        <th data-key="rank" class="num">#</th>
+        <th data-key="name">Item</th>
+        <th data-key="qty" class="num">Qty</th>
+        <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy ISK/u</th>
+        <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell ISK/u</th>
+        <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist ISK/u</th>
+        <th data-key="strategy" title="best plan by expected net">Plan</th>
+        <th data-key="exportPrice" class="num" title="price to import the item at">Import at ISK/u</th>
+        <th data-key="totalNet" class="num">Expected net ISK</th>
+        <th data-key="advTotal" class="num" title="extra ISK from the order/split plan vs pure instant (negative = instant is better)">Order Δ ISK</th>
+        <th data-key="flags">Flags</th>
+      </tr></thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>5 · Export — copy into the game's multi-sell import</h2>
+  <div class="rowline">
+    <button id="btnCopy" type="button" class="primary">Copy import list</button>
+    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
+    <span id="copyStatus" class="hint"></span>
+  </div>
+  <p class="hint" style="margin:8px 0 4px">
+    Format: <code>Item name ⇥ Price</code> — prices are ISK per unit; the game sells the whole stack.
+    The list contains the ticked rows passing the filters above. An import price only matters for
+    <b>ORDER</b> and <b>SPLIT</b> items (priced at the list price <code>L</code>; buy orders above
+    <code>L</code> fill instantly on import at their own price, the rest lists at <code>L</code>) —
+    so the selection buttons pick only those. <b>INSTANT</b> items have no price to choose: select
+    them in the hangar and sell directly. You can still tick one manually to import it at its
+    stack-clearing floor price.</p>
+  <p id="mixWarn" class="hint" style="display:none;margin:0 0 4px;color:var(--amber)">
+    ⚠ this list mixes INSTANT and ORDER/SPLIT items — use the type filter to copy them separately.</p>
+  <textarea id="preview" readonly spellcheck="false"></textarea>
+</section>
+
 
 </main>
 
@@ -702,10 +707,11 @@ function rebuild(keepChecks = true){
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
+      // instants default unticked: their price isn't a choice, so they don't belong in an import list
       checked: prevChecks.has(key) ? prevChecks.get(key)
         : state.savedSel.un.has(key) ? false
         : state.savedSel.re.has(key) ? true
-        : !unsellable,
+        : (!unsellable && strategy !== 'imm'),
     });
   }
 
@@ -787,6 +793,13 @@ function render(){
         ? `import at ${fmtIsk(r.L)}: ≈${fmt.format(r.splitFill)} of ${fmt.format(r.qty)} fill instantly, rest lists · net ${fmtIsk(r.netOrder)} > instant ${fmtIsk(r.netInstant)}`
         : `list at ${fmtIsk(r.L)} · net ${fmtIsk(r.netOrder)}${r.instFill > 0 ? ` > instant ${fmtIsk(r.netInstant)}` : ''}`;
     tdStrat.appendChild(badge);
+    if (r.strategy === 'split'){
+      const s = document.createElement('span');
+      s.className = 'hint';
+      s.style.marginLeft = '6px';
+      s.textContent = `${fmt.format(r.splitFill)} now · ${fmt.format(r.qty - r.splitFill)} listed`;
+      tdStrat.appendChild(s);
+    }
     tr.appendChild(tdStrat);
 
     for (const [cls, text] of [
@@ -808,6 +821,14 @@ function render(){
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('s-asc', 's-desc');
+    if (th.dataset.key === state.sortKey){
+      // string columns display A→Z on the default (-1) direction, numeric ones high→low
+      const asc = (state.sortKey === 'name' || state.sortKey === 'strategy') ? state.sortDir === -1 : state.sortDir === 1;
+      th.classList.add(asc ? 's-asc' : 's-desc');
+    }
+  });
   const shown = state.rows.filter(rowFilter).length;
   $('fltCount').textContent = shown === state.rows.length
     ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`;
@@ -887,7 +908,7 @@ async function copyText(text, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy/u','Best sell/u','Hist/u','Plan','Import price/u','Net instant','Net order plan','Expected net','Order Δ','Instant fill @ import','Flags','Selected'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant fill @ import','Flags','Selected'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
@@ -1047,8 +1068,9 @@ function persist(){
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('priceSrc').value, histMode: $('histMode').value, histDays: $('histDays').value,
-      unchecked: state.rows.filter(r => !r.checked && !r.unsellable).map(r => r.key),
-      rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
+      // store deviations from the default tick state (default on = sellable ORDER/SPLIT)
+      unchecked: state.rows.filter(r => !r.checked && !(r.unsellable || r.strategy === 'imm')).map(r => r.key),
+      rechecked: state.rows.filter(r => r.checked && (r.unsellable || r.strategy === 'imm')).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
@@ -1113,18 +1135,19 @@ $('btnClear').addEventListener('click', () => {
 });
 $('btnEsi').addEventListener('click', runEsi);
 
-// selection buttons act on the rows passing the current filters
+// selection buttons act on the rows passing the current filters, and only pick
+// ORDER/SPLIT rows — instant items have no price to choose, so importing them is pointless
 $('btnTop').addEventListener('click', () => {
   const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
   let left = n;
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     if (!rowFilter(r)) continue;
-    r.checked = !r.unsellable && left > 0;
+    r.checked = !r.unsellable && r.strategy !== 'imm' && left > 0;
     if (r.checked) left--;
   }
   render(); persist();
 });
-$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = !r.unsellable; render(); persist(); });
+$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = !r.unsellable && r.strategy !== 'imm'; render(); persist(); });
 $('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r)) r.checked = false; render(); persist(); });
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
