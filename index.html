@@ -825,6 +825,14 @@ function rebuild(keepChecks = true){
 
   state.rows = rows;
   state.unpriced = unpriced.sort((a, b) => a.name.localeCompare(b.name));
+  // pasting new names after a fetch leaves them priceless until the next fetch — say so
+  if (!state.esiRunning && state.esi.size){
+    const missing = unpriced.filter(u => u.reason.startsWith('no prices yet')).length;
+    if (missing){
+      $('esiStatus').textContent = `${missing} item${missing > 1 ? 's' : ''} without prices — Fetch prices (ESI) again`;
+      $('esiStatus').className = '';
+    }
+  }
   syncControls();
   render();
   persist();
