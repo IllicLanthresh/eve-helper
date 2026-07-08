@@ -25,6 +25,7 @@
   textarea:focus,input:focus,select:focus{outline:1px solid var(--cyan)}
   input[type=number],input[type=text],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
     border-radius:6px;padding:5px 8px;font:13px var(--mono);width:90px}
+  input:disabled,select:disabled{opacity:.4;cursor:not-allowed}
   button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
     padding:7px 14px;font-size:13px;cursor:pointer}
   button:hover{border-color:var(--cyan)}
@@ -97,15 +98,16 @@
       <option value="sell">current best sell</option>
       <option value="hist">history statistic</option>
     </select>
-    <label style="margin:0"><input type="checkbox" id="undercut"> −1 tick</label>
-    <select id="histMode" style="width:110px" title="statistic over the daily regional averages">
+    <label style="margin:0" title="undercut the current best sell by one tick — applies whenever an item's list price comes from the current sell, including history-mode items that have no history"><input type="checkbox" id="undercut"> −1 tick</label>
+    <select id="histMode" style="width:110px" title="statistic over the region's daily average prices — used as the list price in history mode, and always for the Hist column, the ≫/≪ history flags, and items with no sell orders">
       <option value="median">median</option>
       <option value="avg">average</option>
       <option value="p10">10th pctl</option>
       <option value="p90">90th pctl</option>
     </select>
     <label for="histDays" style="margin:0">of last</label>
-    <input id="histDays" type="number" min="1" max="400" step="1" value="30" style="width:64px">
+    <input id="histDays" type="number" min="1" max="400" step="1" value="30" style="width:64px"
+      title="day range for the history statistic — recomputed locally, no refetch needed">
     <label style="margin:0">days</label>
   </div>
   <p class="hint" style="margin:8px 0 0">
@@ -712,8 +714,17 @@ function rebuild(keepChecks = true){
 
   state.rows = rows;
   state.unpriced = unpriced.sort((a, b) => a.name.localeCompare(b.name));
+  syncControls();
   render();
   persist();
+}
+
+// grey out controls that currently cannot affect anything
+function syncControls(){
+  const anyHist = [...state.esi.values()].some(e => e && e.hist && e.hist.length);
+  const histUsable = $('histOn').checked || anyHist;   // stat/days feed the Hist column, flags and fallbacks once data exists
+  $('histMode').disabled = $('histDays').disabled = !histUsable;
+  if ($('priceSrc').value === 'hist' && !histUsable) $('priceSrc').value = 'sell';
 }
 
 /* ---------- rendering ---------- */
@@ -1085,6 +1096,7 @@ $('histOn').addEventListener('change', () => {
     $('esiStatus').textContent = 'history enabled — fetch prices again to pull it';
     $('esiStatus').className = '';
   }
+  syncControls();
   persist();
 });
 
