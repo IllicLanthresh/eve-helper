@@ -61,7 +61,12 @@
   .flag.info{color:var(--dim)}
   tr.excluded td{opacity:.45}
   .tablewrap{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
-  #preview{height:200px}
+  #preview,#previewInst{height:200px}
+  #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
+  #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
+  #fetchFill.ind{width:30%;animation:ind 1.1s linear infinite}
+  @keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
+  ul.plain{column-width:340px;column-gap:26px}
   ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
   code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
   details{margin-top:10px;color:var(--dim);font-size:13px}
@@ -93,6 +98,7 @@
     <button id="btnEsi" type="button" class="primary">Fetch prices (ESI)</button>
     <span id="esiStatus"></span>
   </div>
+  <div id="fetchBar" hidden><div id="fetchFill"></div></div>
   <div class="rowline" style="align-items:stretch">
     <fieldset class="grp">
       <legend>fees</legend>
@@ -142,7 +148,7 @@
 </section>
 
 <section>
-  <h2>2 · Unpriced / not sellable &amp; notes</h2>
+  <h2>2 · Check — unpriced &amp; not sellable</h2>
   <div id="unpricedBox"><span class="hint">Nothing yet.</span></div>
   <details>
     <summary>Notes &amp; assumptions</summary>
@@ -169,12 +175,8 @@
 </section>
 
 <section>
-  <h2>3 · Summary</h2>
+  <h2>3 · Review — items ranked by expected profit</h2>
   <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
-</section>
-
-<section>
-  <h2>4 · Items ranked by expected profit</h2>
   <div class="rowline">
     <label for="topN" style="margin:0">Select top</label>
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
@@ -190,16 +192,11 @@
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
-    <label for="decSep" style="margin:0">export decimals</label>
-    <select id="decSep" style="width:100px">
-      <option value="dot">1234.56</option>
-      <option value="comma">1234,56</option>
-    </select>
   </div>
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
-        <th data-key="checked" title="include in export">✓</th>
+        <th data-key="checked" title="include in the import list">✓</th>
         <th data-key="rank" class="num">#</th>
         <th data-key="name">Item</th>
         <th data-key="qty" class="num">Qty</th>
@@ -218,23 +215,41 @@
 </section>
 
 <section>
-  <h2>5 · Export — copy into the game's multi-sell import</h2>
-  <div class="rowline">
-    <button id="btnCopy" type="button" class="primary">Copy import list</button>
-    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
-    <span id="copyStatus" class="hint"></span>
+  <h2>4 · Export</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="rowline" style="margin-top:0">
+        <button id="btnCopy" type="button" class="primary">Copy import list</button>
+        <label for="decSep" style="margin:0">decimals</label>
+        <select id="decSep" style="width:100px">
+          <option value="dot">1234.56</option>
+          <option value="comma">1234,56</option>
+        </select>
+        <span id="copyStatusImp" class="hint"></span>
+      </div>
+      <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
+      <p class="hint" style="margin:0 0 4px">
+        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import: buy orders above
+        the price fill instantly at their own price, the rest lists. A manually ticked INSTANT row imports at its
+        stack-clearing floor price.</p>
+      <textarea id="preview" readonly spellcheck="false"></textarea>
+    </div>
+    <div class="col">
+      <div class="rowline" style="margin-top:0">
+        <button id="btnCopyInst" type="button">Copy instant checklist</button>
+        <span id="copyStatusInst" class="hint"></span>
+      </div>
+      <p class="hint" style="margin:8px 0 2px"><b>Instant checklist — sell directly in the hangar</b> · <span id="instEcho">nothing yet</span></p>
+      <p class="hint" style="margin:0 0 4px">
+        <code>Item name ⇥ Qty</code> — these net more sold straight into the buy orders (select them in the hangar
+        → Sell Items). No import needed; their price isn't a choice.</p>
+      <textarea id="previewInst" readonly spellcheck="false"></textarea>
+    </div>
   </div>
-  <p class="hint" style="margin:8px 0 4px">
-    Format: <code>Item name ⇥ Price</code> — prices are ISK per unit; the game sells the whole stack.
-    The list contains the ticked rows passing the filters above. An import price only matters for
-    <b>ORDER</b> and <b>SPLIT</b> items (priced at the list price <code>L</code>; buy orders above
-    <code>L</code> fill instantly on import at their own price, the rest lists at <code>L</code>) —
-    so the selection buttons pick only those. <b>INSTANT</b> items have no price to choose: select
-    them in the hangar and sell directly. You can still tick one manually to import it at its
-    stack-clearing floor price.</p>
-  <p id="mixWarn" class="hint" style="display:none;margin:0 0 4px;color:var(--amber)">
-    ⚠ this list mixes INSTANT and ORDER/SPLIT items — use the type filter to copy them separately.</p>
-  <textarea id="preview" readonly spellcheck="false"></textarea>
+  <div class="rowline">
+    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
+    <span id="copyStatusTsv" class="hint"></span>
+  </div>
 </section>
 
 
@@ -648,6 +663,11 @@ function currentChecks(){
 function rebuild(keepChecks = true){
   const prevChecks = keepChecks ? currentChecks() : new Map();
   const inv = parseInventory($('inv').value);
+  state.invCount = inv.size;
+  if (!state.esiRunning){
+    $('btnEsi').disabled = !inv.size;
+    $('btnEsi').title = inv.size ? '' : 'paste an inventory first';
+  }
   const broker = feePct('brokerFee');
   const tax    = feePct('salesTax');
   const useUndercut = $('undercut').checked;
@@ -792,7 +812,8 @@ function render(){
   const frag = document.createDocumentFragment();
   for (const r of sortedRows()){
     const tr = document.createElement('tr');
-    if (!r.checked) tr.className = 'excluded';
+    // dim only rows that end up in neither artifact (unticked instants go to the checklist)
+    if (!r.checked && !(r.strategy === 'imm' && !r.unsellable)) tr.className = 'excluded';
 
     const tdCheck = document.createElement('td');
     const cb = document.createElement('input');
@@ -850,6 +871,15 @@ function render(){
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  if (!tbody.children.length){
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 12; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
+    td.textContent = !state.invCount ? 'Paste your inventory above to get started.'
+      : !state.rows.length ? 'Fetch prices (ESI) to value and rank your items.'
+      : 'No rows match the current filters.';
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
   document.querySelectorAll('thead th').forEach(th => {
     th.classList.remove('s-asc', 's-desc');
     if (th.dataset.key === state.sortKey){
@@ -859,8 +889,10 @@ function render(){
     }
   });
   const shown = state.rows.filter(rowFilter).length;
-  $('fltCount').textContent = shown === state.rows.length
-    ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`;
+  const hiddenTicked = state.rows.filter(r => r.checked && !rowFilter(r)).length;
+  $('fltCount').textContent = (shown === state.rows.length
+    ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`)
+    + (hiddenTicked ? ` · ${hiddenTicked} ticked hidden — still in the import list` : '');
   renderSummary();
   renderPreview();
   renderUnpriced();
@@ -876,7 +908,7 @@ function renderSummary(){
   const all = state.rows;
   const imm = all.filter(r => r.strategy === 'imm');
   const os  = all.filter(r => r.strategy !== 'imm');
-  const sel = all.filter(r => rowFilter(r) && r.checked);   // = what the export list contains
+  const sel = all.filter(r => r.checked);   // = the import list, independent of view filters
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
   const mk = (label, value) => {
@@ -888,17 +920,31 @@ function renderSummary(){
   mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`instant (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`orders + splits (${os.length} items)`, fmtIsk(os.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`in export list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
+  mk(`in import list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
   if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
 }
 
 function renderPreview(){
-  const rows = state.rows
-    .filter(r => rowFilter(r) && r.checked && r.exportPrice != null)
+  // import list: every ticked row, independent of the view filters
+  const imp = state.rows
+    .filter(r => r.checked && r.exportPrice != null)
     .sort((a, b) => a.rank - b.rank);
-  $('preview').value = rows.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
-  const kinds = new Set(rows.map(r => r.strategy === 'imm' ? 'imm' : 'ord'));
-  $('mixWarn').style.display = kinds.size > 1 ? '' : 'none';
+  $('preview').value = imp.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
+  const impNet = imp.reduce((s, r) => s + r.totalNet, 0);
+  const floorN = imp.filter(r => r.strategy === 'imm').length;
+  $('impEcho').textContent = imp.length
+    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net${floorN ? ` · incl. ${floorN} instant @ floor price` : ''}`
+    : 'nothing ticked';
+
+  // instant checklist: unticked sellable INSTANT rows (ticked ones are handled via the import)
+  const inst = state.rows
+    .filter(r => r.strategy === 'imm' && !r.checked && !r.unsellable)
+    .sort((a, b) => a.rank - b.rank);
+  $('previewInst').value = inst.map(r => [r.name, r.qty].join('\t')).join('\n');
+  const instNet = inst.reduce((s, r) => s + r.totalNet, 0);
+  $('instEcho').textContent = inst.length
+    ? `${inst.length} items · ${fmtIsk(instNet)} ISK expected net`
+    : 'nothing yet';
 }
 
 function renderUnpriced(){
@@ -918,26 +964,25 @@ function renderUnpriced(){
 }
 
 /* ---------- clipboard ---------- */
-async function copyText(text, statusMsg){
-  const status = $('copyStatus');
+async function copyText(text, status, fallbackTa, statusMsg){
   try{
     await navigator.clipboard.writeText(text);
     status.textContent = statusMsg; status.className = 'hint ok';
   }catch(_e){
-    const ta = $('preview'); const old = ta.value;
-    ta.value = text; ta.select();
+    const old = fallbackTa.value;
+    fallbackTa.value = text; fallbackTa.select();
     try{
       if (!document.execCommand('copy')) throw new Error('execCommand refused');
       status.textContent = statusMsg; status.className = 'hint ok';
     }
     catch(_e2){ status.textContent = 'copy failed — select the text and copy manually'; status.className = 'hint err'; }
-    ta.value = old;
+    fallbackTa.value = old;
   }
   setTimeout(() => { status.textContent = ''; }, 4000);
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant fill @ import','Flags','Selected'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Hist ISK/u','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Instant fill @ import','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
@@ -1041,6 +1086,8 @@ async function runEsi(){
   const token = ++state.esiToken;   // Clear (or a newer run) bumps this and orphans us
   const btn = $('btnEsi'); btn.disabled = true;
   const status = $('esiStatus'); status.className = '';
+  const bar = $('fetchBar'), fill = $('fetchFill');
+  bar.hidden = false; fill.classList.add('ind');
   try{
     status.textContent = `resolving ${inv.size} item names…`;
     const ids = await resolveTypeIds([...inv.values()].map(v => v.name));
@@ -1050,6 +1097,7 @@ async function runEsi(){
 
     const todo = jobs.filter(j => j.typeId != null);
     const total = todo.length;
+    fill.classList.remove('ind'); fill.style.width = '0%';
     let done = 0, failed = 0;
     const workers = Array.from({ length: 8 }, async () => {
       for (;;){
@@ -1070,6 +1118,7 @@ async function runEsi(){
           state.esi.set(j.key, { typeId: j.typeId, status: 'failed' });
         }
         done++;
+        fill.style.width = Math.round(done / total * 100) + '%';
         status.textContent = `fetching ${h.label} ${withHist ? 'orders + history' : 'orders'}… ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
       }
     });
@@ -1084,6 +1133,8 @@ async function runEsi(){
   }finally{
     state.esiRunning = false;
     btn.disabled = false;
+    bar.hidden = true;
+    fill.classList.remove('ind'); fill.style.width = '0%';
     if (token === state.esiToken) rebuild();
   }
 }
@@ -1178,10 +1229,15 @@ $('fltText').addEventListener('input', () => { state.filterText = $('fltText').v
 
 $('btnCopy').addEventListener('click', () => {
   const text = $('preview').value;
-  if (!text){ $('copyStatus').textContent = 'nothing selected'; $('copyStatus').className = 'hint err'; return; }
-  copyText(text, `copied ${text.split('\n').length} lines`);
+  if (!text){ $('copyStatusImp').textContent = 'nothing ticked'; $('copyStatusImp').className = 'hint err'; return; }
+  copyText(text, $('copyStatusImp'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
-$('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), 'copied full table as TSV'));
+$('btnCopyInst').addEventListener('click', () => {
+  const text = $('previewInst').value;
+  if (!text){ $('copyStatusInst').textContent = 'nothing to copy'; $('copyStatusInst').className = 'hint err'; return; }
+  copyText(text, $('copyStatusInst'), $('previewInst'), `copied ${text.split('\n').length} lines`);
+});
+$('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), $('copyStatusTsv'), $('preview'), 'copied full table as TSV'));
 
 document.querySelectorAll('thead th').forEach(th => {
   th.addEventListener('click', () => {
@@ -1192,7 +1248,7 @@ document.querySelectorAll('thead th').forEach(th => {
   });
 });
 
-if (!restore()) syncControls();
+if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 </script>
 </body>
 </html>

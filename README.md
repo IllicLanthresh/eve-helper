@@ -29,12 +29,16 @@ else ever leaves your machine.
    - **SPLIT** — the best of both: when you import at `L`, the game automatically fills any
      buy orders priced ≥ `L` first (at *their* price, no broker fee) and lists the rest at
      `L`. SPLIT means that instant part is non-empty — no manual stack splitting needed.
-6. **Filter and sort**: click headers to sort, search by name, filter to **INSTANT only**
-   or **ORDER + SPLIT only**. Selection buttons (top N / all / none) act on filtered rows.
-7. **Copy import list** — `Item name ⇥ Price` lines for the game's multi-sell import
-   (the game sells whole stacks, so no quantity). INSTANT items are priced at the marginal
-   buy level needed to clear the whole stack; ORDER/SPLIT items at `L`. Copy each type
-   separately (the app warns when a list mixes them) since the game handles one at a time.
+6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
+   plan type. Filters are a viewing aid only — ticked rows hidden by a filter stay in the
+   import list (the toolbar says so). Selection buttons (top N / all / none) act on the
+   filtered rows and tick only ORDER/SPLIT items.
+7. **Export — two artifacts**:
+   - **Import list (orders & splits)**: every ticked row as `Item name ⇥ Price` for the
+     game's multi-sell import. A manually ticked INSTANT row joins it at its stack-clearing
+     floor price (the count echo calls this out).
+   - **Instant checklist**: the unticked INSTANT items as `Item name ⇥ Qty` — sell these
+     directly in the hangar; their price isn't a choice, so there's nothing to import.
 8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
 
 ## Flags
