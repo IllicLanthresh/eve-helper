@@ -49,6 +49,8 @@
   thead th.s-asc::after{content:' ▲';color:var(--cyan);font-size:10px}
   thead th.s-desc::after{content:' ▼';color:var(--cyan);font-size:10px}
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
+  tbody td:not(:first-child){cursor:copy}
+  tbody td.copied{box-shadow:inset 0 0 0 1px var(--cyan);background:#14344a}
   tbody tr:hover{background:#161d2b}
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
   td.name{max-width:320px}
@@ -192,6 +194,7 @@
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
+    <span class="hint">· click a cell to copy its value</span>
   </div>
   <div class="tablewrap">
     <table id="tbl">
@@ -822,15 +825,18 @@ function render(){
     tdCheck.appendChild(cb);
     tr.appendChild(tdCheck);
 
-    for (const [cls, text] of [
-      ['num', String(r.rank)],
-      ['name', r.name],
-      ['num', fmt.format(r.qty)],
-      ['num', fmtIsk(r.bestBuy)],
-      ['num', fmtIsk(r.bestSell)],
-      ['num', fmtIsk(r.hist)],
+    const priceCopy = n => n == null ? '' : fmtExport(n);
+    for (const [cls, text, copy] of [
+      ['num', String(r.rank), ''],
+      ['name', r.name, r.name],
+      ['num', fmt.format(r.qty), String(r.qty)],
+      ['num', fmtIsk(r.bestBuy), priceCopy(r.bestBuy)],
+      ['num', fmtIsk(r.bestSell), priceCopy(r.bestSell)],
+      ['num', fmtIsk(r.hist), priceCopy(r.hist)],
     ]){
-      const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.appendChild(td);
+      const td = document.createElement('td'); td.className = cls; td.textContent = text;
+      if (copy) td.dataset.copy = copy;
+      tr.appendChild(td);
     }
 
     const tdStrat = document.createElement('td');
@@ -842,6 +848,7 @@ function render(){
       : r.strategy === 'split'
         ? `import at ${fmtIsk(r.L)}: ≈${fmt.format(r.splitFill)} of ${fmt.format(r.qty)} fill instantly, rest lists · net ${fmtIsk(r.netOrder)} > instant ${fmtIsk(r.netInstant)}`
         : `list at ${fmtIsk(r.L)} · net ${fmtIsk(r.netOrder)}${r.instFill > 0 ? ` > instant ${fmtIsk(r.netInstant)}` : ''}`;
+    tdStrat.dataset.copy = badge.textContent;
     tdStrat.appendChild(badge);
     if (r.strategy === 'split'){
       const s = document.createElement('span');
@@ -852,12 +859,14 @@ function render(){
     }
     tr.appendChild(tdStrat);
 
-    for (const [cls, text] of [
-      ['num', fmtIsk(r.exportPrice)],
-      ['num', fmtIsk(r.totalNet)],
-      ['num', r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal)],
+    for (const [cls, text, copy] of [
+      ['num', fmtIsk(r.exportPrice), priceCopy(r.exportPrice)],
+      ['num', fmtIsk(r.totalNet), priceCopy(r.totalNet)],
+      ['num', r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal), priceCopy(r.advTotal)],
     ]){
-      const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.appendChild(td);
+      const td = document.createElement('td'); td.className = cls; td.textContent = text;
+      if (copy) td.dataset.copy = copy;
+      tr.appendChild(td);
     }
 
     const tdFlags = document.createElement('td');
@@ -1246,6 +1255,29 @@ document.querySelectorAll('thead th').forEach(th => {
     else { state.sortKey = k; state.sortDir = -1; }
     render();
   });
+});
+
+// one-click copy on table cells (raw values, not display formatting)
+async function cellCopy(text, td){
+  try{ await navigator.clipboard.writeText(text); }
+  catch(_e){
+    const ta = $('preview'); const old = ta.value;
+    ta.value = text; ta.select();
+    try{ document.execCommand('copy'); }catch(_e2){}
+    ta.value = old;
+  }
+  td.classList.add('copied');
+  setTimeout(() => td.classList.remove('copied'), 600);
+}
+$('tblBody').addEventListener('click', e => {
+  const td = e.target.closest('td');
+  if (!td || td.cellIndex === 0 || td.colSpan > 1) return;      // checkbox column / empty-state row
+  if (e.target.closest('input')) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed) return;                          // user is selecting text, don't hijack
+  const text = (td.dataset.copy ?? td.textContent).trim();
+  if (!text || text === '—') return;
+  cellCopy(text, td);
 });
 
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
