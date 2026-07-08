@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EVE Jita Sell Helper</title>
+<title>EVE Sell Helper</title>
 <style>
   :root{
     --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
     --text:#d5dce8; --dim:#8b96a8;
-    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
     --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
   }
   *{box-sizing:border-box}
@@ -16,11 +16,9 @@
   header{padding:18px 22px 10px}
   header h1{margin:0;font-size:20px;letter-spacing:.4px}
   header p{margin:4px 0 0;color:var(--dim);font-size:13px}
-  main{padding:0 22px 60px;max-width:1400px;margin:0 auto}
+  main{padding:0 22px 60px;max-width:1500px;margin:0 auto}
   section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
   section h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)}
-  .cols{display:flex;gap:14px;flex-wrap:wrap}
-  .col{flex:1 1 380px;min-width:300px}
   label{display:block;color:var(--dim);font-size:12px;margin-bottom:4px}
   textarea{width:100%;height:170px;background:var(--panel2);color:var(--text);border:1px solid var(--line);
     border-radius:8px;padding:8px;font:12px/1.4 var(--mono);resize:vertical;white-space:pre}
@@ -45,10 +43,11 @@
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
   tbody tr:hover{background:#161d2b}
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
-  td.name{max-width:340px}
+  td.name{max-width:320px}
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
   .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
   .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
   .flag{display:inline-block;font-size:11px;color:var(--red);margin-right:6px}
   .flag.warn{color:var(--amber)}
   .flag.info{color:var(--dim)}
@@ -61,50 +60,63 @@
   details summary{cursor:pointer;color:var(--text)}
   #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)}
-  @media (max-width:760px){ td.name{max-width:180px} }
+  @media (max-width:760px){ td.name{max-width:170px} }
 </style>
 </head>
 <body>
 <header>
-  <h1>EVE Jita Sell Helper</h1>
-  <p>Paste your inventory and a Janice appraisal (or fetch live Jita 4-4 prices from ESI — no login needed),
-     get every item ranked by expected net profit, see whether an instant sale beats a sell order after fees,
-     and copy the top-X list straight into the game's multi-sell import.</p>
+  <h1>EVE Sell Helper</h1>
+  <p>Paste your inventory, pick a trade hub, and pull live prices straight from ESI (no login).
+     Every item is valued against the actual buy-order book — depth, min-volume scams and all — and
+     ranked by expected net after fees, with the best plan per item: instant sale, sell order, or a split.</p>
 </header>
 <main>
 
 <section>
-  <h2>1 · Input</h2>
-  <div class="cols">
-    <div class="col">
-      <label for="inv">Inventory paste (Ctrl-A / Ctrl-C in a hangar or container — optional, used for quantities,
-        volumes and to catch items Janice dropped)</label>
-      <textarea id="inv" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Group&#9;…&#9;Volume&#9;Est. price"></textarea>
-    </div>
-    <div class="col">
-      <label for="janice">Janice appraisal paste (the per-unit <i>buy / sell</i> columns — optional if you fetch ESI prices)</label>
-      <textarea id="janice" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Volume&#9;Buy&#9;Sell"></textarea>
-    </div>
-  </div>
+  <h2>1 · Input &amp; prices</h2>
+  <label for="inv">Inventory paste (select items in a hangar or container → Ctrl-C)</label>
+  <textarea id="inv" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Group&#9;…&#9;Volume&#9;Est. price"></textarea>
   <div class="rowline">
     <button id="btnDemo" type="button">Load sample data</button>
     <button id="btnClear" type="button">Clear</button>
     <span class="sep"></span>
-    <button id="btnEsi" type="button" class="primary">Fetch live Jita 4-4 prices (ESI)</button>
+    <label for="market" style="margin:0">market</label>
+    <select id="market" style="width:210px"></select>
+    <label style="margin:0"><input type="checkbox" id="histOn" checked> also fetch price history</label>
+    <button id="btnEsi" type="button" class="primary">Fetch prices (ESI)</button>
     <span id="esiStatus"></span>
   </div>
   <div class="rowline">
-    <label for="brokerFee" style="margin:0">Broker fee % (sell orders only)</label>
+    <label for="brokerFee" style="margin:0">broker fee % (orders only)</label>
     <input id="brokerFee" type="number" step="0.01" min="0" max="20" value="2.1">
-    <label for="salesTax" style="margin:0">Sales tax % (all sales)</label>
+    <label for="salesTax" style="margin:0">sales tax % (all sales)</label>
     <input id="salesTax" type="number" step="0.01" min="0" max="20" value="7.5">
-    <span class="hint">Net/unit — instant: <code>buy × (1 − tax)</code> · order: <code>sell × (1 − tax − broker)</code></span>
+    <span class="sep"></span>
+    <label for="priceSrc" style="margin:0">list ORDER items at</label>
+    <select id="priceSrc" style="width:190px">
+      <option value="sell">current best sell</option>
+      <option value="hist">history statistic</option>
+    </select>
+    <label style="margin:0"><input type="checkbox" id="undercut"> −1 tick</label>
+    <select id="histMode" style="width:110px" title="statistic over the daily regional averages">
+      <option value="median">median</option>
+      <option value="avg">average</option>
+      <option value="p10">10th pctl</option>
+      <option value="p90">90th pctl</option>
+    </select>
+    <label for="histDays" style="margin:0">of last</label>
+    <input id="histDays" type="number" min="1" max="400" step="1" value="30" style="width:64px">
+    <label style="margin:0">days</label>
   </div>
+  <p class="hint" style="margin:8px 0 0">
+    Net/unit — instant: <code>price × (1 − tax)</code> against real book depth ·
+    listed: <code>L × (1 − tax − broker)</code>. Importing at <code>L</code> auto-fills any buy orders
+    priced ≥ <code>L</code> first (at their price), so SPLIT plans execute themselves.</p>
 </section>
 
 <section>
   <h2>2 · Summary</h2>
-  <div id="summary"><span class="hint">Paste data above to see results.</span></div>
+  <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
 </section>
 
 <section>
@@ -116,22 +128,19 @@
     <button id="btnAll" type="button">All</button>
     <button id="btnNone" type="button">None</button>
     <span class="sep"></span>
-    <label style="margin:0"><input type="checkbox" id="undercut"> undercut sell price by 1 tick</label>
+    <label for="fltType" style="margin:0">show</label>
+    <select id="fltType" style="width:170px">
+      <option value="all">all types</option>
+      <option value="imm">INSTANT only</option>
+      <option value="ordsplit">ORDER + SPLIT only</option>
+    </select>
+    <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
+    <span class="hint" id="fltCount"></span>
     <label for="decSep" style="margin:0">export decimals</label>
-    <select id="decSep" style="width:110px">
+    <select id="decSep" style="width:100px">
       <option value="dot">1234.56</option>
       <option value="comma">1234,56</option>
     </select>
-  </div>
-  <div class="rowline">
-    <label for="fltType" style="margin:0">show</label>
-    <select id="fltType" style="width:140px">
-      <option value="all">all types</option>
-      <option value="imm">INSTANT only</option>
-      <option value="ord">ORDER only</option>
-    </select>
-    <input id="fltText" type="text" placeholder="filter by name…" style="width:230px">
-    <span class="hint" id="fltCount"></span>
   </div>
   <div class="tablewrap">
     <table id="tbl">
@@ -140,12 +149,13 @@
         <th data-key="rank" class="num">#</th>
         <th data-key="name">Item</th>
         <th data-key="qty" class="num">Qty</th>
-        <th data-key="buy" class="num">Buy /u</th>
-        <th data-key="sell" class="num">Sell /u</th>
-        <th data-key="strategy">Best</th>
-        <th data-key="exportPrice" class="num">List at /u</th>
+        <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy /u</th>
+        <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell /u</th>
+        <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist /u</th>
+        <th data-key="strategy" title="best plan by expected net">Plan</th>
+        <th data-key="exportPrice" class="num" title="price to import the item at">Import at /u</th>
         <th data-key="totalNet" class="num">Expected net</th>
-        <th data-key="advTotal" class="num" title="extra ISK from using a sell order instead of instant-selling (negative = instant is better)">Order Δ</th>
+        <th data-key="advTotal" class="num" title="extra ISK from the order/split plan vs pure instant (negative = instant is better)">Order Δ</th>
         <th data-key="flags">Flags</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
@@ -161,13 +171,13 @@
     <span id="copyStatus" class="hint"></span>
   </div>
   <p class="hint" style="margin:8px 0 4px">
-    Format: <code>Item name ⇥ Price</code> (the game sells the whole stack, so no quantity).
-    The list contains the ticked rows that pass the filters above — set <i>show</i> to
-    <b>INSTANT only</b> (priced at best buy, fills immediately, no broker fee) or <b>ORDER only</b>
-    (priced at the sell price, optionally one tick under) and copy each list separately, since the
-    game handles one type at a time.</p>
+    Format: <code>Item name ⇥ Price</code> (the game sells the whole stack). The list contains the
+    ticked rows passing the filters above — filter to <b>INSTANT only</b> (priced to clear into the
+    buy book right now) or <b>ORDER + SPLIT only</b> (priced at the list price <code>L</code>; any buy
+    orders above <code>L</code> fill instantly on import, the rest lists) and copy each separately,
+    since the game handles one type at a time.</p>
   <p id="mixWarn" class="hint" style="display:none;margin:0 0 4px;color:var(--amber)">
-    ⚠ this list mixes INSTANT and ORDER items — use the type filter to copy them separately.</p>
+    ⚠ this list mixes INSTANT and ORDER/SPLIT items — use the type filter to copy them separately.</p>
   <textarea id="preview" readonly spellcheck="false"></textarea>
 </section>
 
@@ -177,18 +187,23 @@
   <details>
     <summary>Notes &amp; assumptions</summary>
     <ul class="plain">
-      <li>Broker fee is charged up front on the full order value when you list a sell order; it is <i>not</i> charged
-          when your sale fills an existing buy order (instant sale). Sales tax applies to every sale.</li>
-      <li>Relist fees from repricing later are not modelled — if you expect to have to undercut repeatedly, instant
-          selling gets relatively better.</li>
-      <li><span class="flag warn">suspect price</span> = buy &gt; sell. These are exactly the items Janice marks as
-          “missing or low quality price information” (thin markets) — double-check them in game before trusting the number.</li>
-      <li><span class="flag">unsellable?</span> = Ice Storm / Expired filaments etc. that the market won't accept;
-          they are auto-excluded from the export (you can re-tick them).</li>
-      <li>ESI prices are the live best buy / best sell at Jita IV-4 (buy orders that cover the station are included).
-          Public endpoints only — no ESI login required.</li>
-      <li>Quantities come from the inventory paste when both are given; mismatches are flagged.</li>
-      <li>EVE only accepts prices with 4 significant digits; the one-tick undercut respects that.</li>
+      <li>Instant valuation walks the real buy book top-down: order depth (<code>volume_remain</code>) and
+          <code>min_volume</code> (margin-scam bait) are respected, so one 1-unit buy order at a silly price
+          no longer values your whole stack.</li>
+      <li>The ORDER/SPLIT plan models what actually happens when you import at <code>L</code>: buy orders
+          priced ≥ <code>L</code> fill immediately at <i>their</i> price (no broker fee, tax only), the rest
+          is listed at <code>L</code> (broker fee + tax). SPLIT just means that first part is non-empty.</li>
+      <li>Order fills are not guaranteed — an order at a history-derived price may take days or never fill.
+          Relist fees from repricing are not modelled.</li>
+      <li>Price history is per <b>region</b> (ESI has no station-level history) using each day's average
+          price; the day range and statistic are applied locally, so changing them needs no refetch.</li>
+      <li><span class="flag warn">suspect price</span> = top buy above best sell (thin/odd market) ·
+          <span class="flag warn">≫/≪ history</span> = current sell far from the history statistic ·
+          <span class="flag warn">depth x/y</span> = the buy book can only absorb x of your y units.</li>
+      <li><span class="flag">unsellable?</span> = Ice Storm / Expired filaments the market won't accept;
+          auto-excluded from the export (you can re-tick them).</li>
+      <li>All ESI endpoints used are public — no login, nothing leaves your machine except the price queries.</li>
+      <li>Prices respect EVE's 4-significant-digit rule (undercut = one tick of the price's own band).</li>
     </ul>
   </details>
 </section>
@@ -446,269 +461,36 @@ Expired CMT-05N Nullsec Ice Storm Filament	2	Expired Jump Filaments			0,20 m3
 Expired BLTZN-05L Lowsec Ice Storm Filament	2	Expired Jump Filaments			0,20 m3
 DSHR-01H Highsec Ice Storm Filament	13	Jump Filaments			1,30 m3
 AIR Mining Range Booster I	1	Booster		2	1 m3</script>
-<script type="text/plain" id="demo-janice">'Notos' Compact Large Proton Smartbomb	14	50.00	486600.00	544800.00
-500MN Quad LiF Restrained Microwarpdrive	12	10.00	592400.00	606200.00
-Heavy Ghoul Compact Energy Nosferatu	13	5.00	427000.00	460000.00
-1600mm Crystalline Carbonide Restrained Plates	11	20.00	589000.00	633700.00
-'YF-12a' Compact Large Plasma Smartbomb	11	50.00	508000.00	540400.00
-True Sansha Explosive Armor Hardener	1	5.00	6129000.00	7184000.00
-500MN Cold-Gas Enduring Microwarpdrive	8	10.00	586000.00	600000.00
-800mm Rolled Tungsten Compact Plates	14	20.00	341100.00	354900.00
-Sansha Copper Tag	1	0.10	1507000.00	3554000.00
-Heavy Gunnar Compact Stasis Grappler	5	50.00	845100.00	849400.00
-Tachyon Modal Laser I	7	20.00	550000.00	550400.00
-Drone Damage Amplifier II	4	5.00	854600.00	924900.00
-Heavy Infectious Scoped Energy Neutralizer	13	5.00	255600.00	318100.00
-Heavy Jigoro Enduring Stasis Grappler	4	50.00	838600.00	873900.00
-Tachyon Anode Particle Stream I	6	20.00	551900.00	555900.00
-Tachyon Afocal Laser I	6	20.00	515800.00	550000.00
-Large Automated Structural Restoration	12	50.00	230000.00	201800.00
-Experimental Enduring Thermal Armor Hardener I	10	5.00	252700.00	260000.00
-Uncompromising Scarlet Gloss - Unlimited	1	0.10	340000.00	3199000.00
-Prototype Compact Kinetic Armor Hardener I	8	5.00	311100.00	348900.00
-800mm Crystalline Carbonide Restrained Plates	7	20.00	342000.00	342900.00
-Prototype Compact Explosive Armor Hardener I	7	5.00	326300.00	379700.00
-100MN Monopropellant Enduring Afterburner	17	5.00	145000.00	158300.00
-'YF-12a' Compact Medium Plasma Smartbomb	4	10.00	541200.00	541300.00
-IFFA Compact Damage Control	1	5.00	1488000.00	1656000.00
-Experimental Enduring EM Armor Hardener I	10	5.00	211000.00	218000.00
-Heavy Gremlin Compact Energy Neutralizer	8	5.00	240300.00	304500.00
-Large 'Hope' Hull Reconstructor I	8	50.00	232300.00	236600.00
-Prototype Compact EM Armor Hardener I	9	5.00	195700.00	223000.00
-Heavy F-RX Compact Capacitor Booster	13	20.00	133900.00	177100.00
-'Vehemence' Compact Medium EMP Smartbomb	3	10.00	552000.00	600000.00
-Fragmented Warp - Unlimited	1	0.10	1803000.00	5989000.00
-Tachyon Modulated Energy Beam I	3	20.00	552000.00	621400.00
-Experimental Enduring Kinetic Armor Hardener I	5	5.00	278900.00	317100.00
-Large I-b Polarized Structural Regenerator	6	50.00	240000.00	238000.00
-Experimental Enduring Explosive Armor Hardener I	4	5.00	320800.00	378000.00
-Mega Afocal Pulse Laser I	4	20.00	204100.00	338600.00
-100MN Y-S8 Compact Afterburner	10	5.00	150600.00	167000.00
-Mega Afocal Laser I	3	20.00	466000.00	457200.00
-Mega Modulated Pulse Energy Beam I	3	20.00	360500.00	464000.00
-Large Inefficient Hull Repair Unit	5	50.00	240000.00	219900.00
-Unstable Heavy Energy Nosferatu Mutaplasmid	1	1.00	661700.00	6982000.00
-Gamma L	18	1.00	71020.00	85000.00
-Mega Anode Pulse Particle Stream I	3	20.00	350800.00	352900.00
-5MN Y-T8 Compact Microwarpdrive	3	10.00	290500.00	317800.00
-Medium Armor Repairer II	1	10.00	828100.00	996700.00
-Multifrequency L	8	1.00	125200.00	132100.00
-Medium Cap Battery II	1	10.00	859500.00	894600.00
-Radio L	14	1.00	67020.00	90000.00
-Compact Multispectrum Energized Membrane	2	5.00	321400.00	459000.00
-Medium Inefficient Hull Repair Unit	3	10.00	240400.00	262700.00
-Prototype Compact Thermal Armor Hardener I	3	5.00	245500.00	285200.00
-Drone Link Augmentor I	2	25.00	315200.00	366900.00
-Large Radiative Scoped Remote Capacitor Transmitter	13	25.00	54220.00	59900.00
-Xray L	11	1.00	58000.00	61800.00
-Extruded Compact Heat Sink	8	5.00	60810.00	79940.00
-Small Focused Modulated Energy Beam I	1	5.00	351400.00	486800.00
-Medium Ghoul Compact Energy Nosferatu	4	5.00	117700.00	149000.00
-Microwave L	14	1.00	35020.00	58000.00
-Medium I-b Polarized Structural Regenerator	2	10.00	243900.00	246800.00
-Wartorn Electrum Metallic - Limited	3	0.10	120000.00	1500000.00
-Dual Anode Heavy Particle Stream I	2	20.00	259700.00	259800.00
-Simple Asteroid Mining Crystal Type B II	3	10.00	430000.00	483600.00
-Osmium Vine Metallic - Limited	5	0.10	40000.00	120000.00
-Large Inductive Compact Remote Capacitor Transmitter	6	25.00	50230.00	93680.00
-Fleeting Compact Stasis Webifier	5	5.00	44450.00	59740.00
-Cap Recharger II	1	5.00	401800.00	451300.00
-Metal Scraps	422	0.01	910.00	910.10
-Gravastar Black Metallic - Limited	5	0.10	20000.00	35000.00
-Ultraviolet L	13	1.00	22110.00	34200.00
-Infrared L	18	1.00	1001.00	39000.00
-Large Compact Pb-Acid Cap Battery	12	15.00	27680.00	42730.00
-Mega Modal Pulse Laser I	1	20.00	351400.00	367000.00
-Heavy Modulated Energy Beam I	2	10.00	131100.00	594900.00
-Symmetry Decryptor	1	0.10	356600.00	356700.00
-Initiated Compact Warp Scrambler	9	5.00	20510.00	43850.00
-Sansha Silver Tag	1	0.10	300100.00	598000.00
-Standard L	9	1.00	30000.00	35620.00
-400mm Crystalline Carbonide Restrained Plates	2	10.00	147500.00	189400.00
-Medium 'Hope' Hull Reconstructor I	1	10.00	245600.00	247300.00
-Dual Heavy Modal Pulse Laser I	4	20.00	70330.00	77000.00
-Signal-5 'Needlejack' Filament	1	0.10	182400.00	270000.00
-Medium Automated Structural Restoration	1	10.00	214700.00	214800.00
-Kerr Sequencer	1634	0.00	163.00	202.90
-Stellar White Satin - Unlimited	5	0.10	0.01	147900.00
-Compact Layered Energized Membrane	4	5.00	68100.00	112900.00
-True Sansha Thermal Energized Membrane	2	5.00	75330.00	399500.00
-Medium Gremlin Compact Energy Neutralizer	1	5.00	100000.00	115900.00
-Large I-a Enduring Armor Repairer	8	50.00	31300.00	31370.00
-Cult Cardinal Matte - Limited	6	0.10	10000.00	150000.00
-50MN Quad LiF Restrained Microwarpdrive	5	10.00	19600.00	23560.00
-Small Focused Anode Particle Stream I	2	5.00	33010.00	67870.00
-Compact Kinetic Energized Membrane	4	5.00	58050.00	79800.00
-Oceanic Serpent Matte - Unlimited	3	0.10	80000.00	109900.00
-Dual Modal Heavy Laser I	1	20.00	241100.00	254600.00
-Dual Modulated Light Energy Beam I	1	5.00	79540.00	162900.00
-Standard M	10	1.00	9070.00	16250.00
-200mm Rolled Tungsten Compact Plates	3	10.00	63370.00	79990.00
-Small Murky Compact Remote Shield Booster	5	5.00	36000.00	44990.00
-Dual Heavy Modulated Pulse Energy Beam I	3	20.00	9653.00	71000.00
-Dual Heavy Afocal Pulse Laser I	3	20.00	57100.00	62000.00
-Dual Heavy Anode Pulse Particle Stream I	3	20.00	30240.00	67000.00
-Medium Knave Scoped Energy Nosferatu	2	5.00	90730.00	103700.00
-Compact EM Energized Membrane	3	5.00	64320.00	68330.00
-Syndicated Teal Satin - Limited	3	0.10	20000.00	57960.00
-200mm Crystalline Carbonide Restrained Plates	3	10.00	60300.00	67000.00
-Heavy Modal Laser I	3	10.00	55160.00	55170.00
-1MN Y-S8 Compact Afterburner	4	5.00	29840.00	60770.00
-Alignment Sequencer	3411	0.00	38.00	38.04
-Synthetic Mocha Matte - Unlimited	5	0.10	10000.00	65000.00
-50MN Y-T8 Compact Microwarpdrive	3	10.00	18110.00	29000.00
-J5 Enduring Warp Disruptor	9	5.00	16190.00	20110.00
-Fermionic Sequencer	1514	0.00	85.00	85.01
-Heavy Afocal Pulse Laser I	3	10.00	45000.00	45010.00
-Emerald Boulevard Gloss - Limited	4	0.10	40000.00	980000.00
-Multifrequency M	6	1.00	14230.00	17300.00
-Grey Matter Matte - Limited	4	0.10	10000.00	89000.00
-Large ACM Compact Armor Repairer	4	50.00	31450.00	31460.00
-J5b Enduring Warp Scrambler	7	5.00	16380.00	21300.00
-Heavy Afocal Laser I	2	10.00	50020.00	57000.00
-Heavy Anode Particle Stream I	2	10.00	60350.00	64000.00
-Compact EM Shield Hardener	4	5.00	30330.00	32700.00
-Enfeebling Scoped Ladar ECM	6	5.00	14040.00	30000.00
-Small Focused Modal Laser I	2	5.00	15020.00	73250.00
-Mark I Compact Reactor Control Unit	2	5.00	43120.00	78790.00
-Medium Inductive Compact Remote Capacitor Transmitter	1	10.00	25040.00	36980.00
-Medium I-ax Enduring Remote Armor Repairer	3	10.00	15420.00	37880.00
-Sansha Platinum Tag	4	0.10	2800.00	9899.00
-Radio M	8	1.00	10040.00	16570.00
-Small Focused Anode Pulse Particle Stream I	3	5.00	19080.00	152000.00
-Medium Compact Pb-Acid Cap Battery	6	10.00	15760.00	22420.00
-5MN Quad LiF Restrained Microwarpdrive	1	10.00	68030.00	80660.00
-Crossroad - Unlimited	1	0.10	10000.00	789700.00
-Heavy Modal Pulse Laser I	2	10.00	45010.00	46510.00
-Medium I-a Enduring Armor Repairer	4	10.00	17470.00	26440.00
-Ultraviolet M	10	1.00	7358.00	12200.00
-100mm Rolled Tungsten Compact Plates	5	5.00	11960.00	11970.00
-Eutectic Compact Cap Recharger	10	5.00	4211.00	7967.00
-Languid Enduring Ladar ECM	6	5.00	12010.00	17000.00
-Small Asymmetric Enduring Remote Shield Booster	2	5.00	39420.00	79970.00
-Medium ACM Compact Armor Repairer	4	10.00	1013.00	48920.00
-Halting Compact Ladar ECM	6	5.00	11350.00	34760.00
-EFFA Compact Assault Damage Control	3	5.00	8560.00	29950.00
-Medium Solace Scoped Remote Armor Repairer	3	10.00	14030.00	87490.00
-100mm Crystalline Carbonide Restrained Plates	6	5.00	8032.00	16000.00
-Medium Infectious Scoped Energy Neutralizer	1	5.00	57450.00	76990.00
-Elder's Bone Satin - Unlimited	1	0.10	60000.00	695000.00
-Compact Explosive Energized Membrane	1	5.00	66960.00	119000.00
-Compact Thermal Energized Membrane	1	5.00	62590.00	71000.00
-Gamma M	8	1.00	1550.00	14590.00
-Xray S	10	1.00	650.60	4800.00
-Small Clarity Ward Enduring Shield Booster	11	5.00	4406.00	40970.00
-Medium Asymmetric Enduring Remote Shield Booster	5	10.00	10720.00	14990.00
-X5 Enduring Stasis Webifier	5	5.00	9990.00	12970.00
-Suppressed Lavender Gloss - Limited	4	0.10	40000.00	350000.00
-True Sansha Diamond Tag	1	0.10	50060.00	191300.00
-Noise-5 'Needlejack' Filament	1	0.10	55790.00	65810.00
-1MN Monopropellant Enduring Afterburner	3	5.00	3552.00	8650.00
-Heavy Anode Pulse Particle Stream I	1	10.00	40010.00	49990.00
-Mark I Compact Power Diagnostic System	5	5.00	7135.00	10490.00
-EP-S Gaussian Scoped Mining Laser	6	5.00	5201.00	9996.00
-Pillars of Inequality - Unlimited	1	0.10	10000.00	480000.00
-Medium Murky Compact Remote Shield Booster	2	10.00	12110.00	26910.00
-Small Compact Pb-Acid Cap Battery	2	5.00	17370.00	26580.00
-Sensor Booster I	1	5.00	15770.00	39350.00
-Small S95a Scoped Remote Shield Booster	1	5.00	43270.00	52900.00
-'YF-12a' Compact Small Plasma Smartbomb	3	5.00	15590.00	17480.00
-50MN Cold-Gas Enduring Microwarpdrive	3	10.00	9262.00	13850.00
-Strawberry Fedo Matte - Unlimited	5	0.10	0.01	79980.00
-Sanshas Microwave M	1	1.00	28650.00	44490.00
-Hollow Hex - Limited	2	0.10	10000.00	970000.00
-Initiated Compact Warp Disruptor	2	5.00	13520.00	21680.00
-Small Inefficient Hull Repair Unit	4	5.00	5001.00	28960.00
-Peripheral Compact Target Painter	2	5.00	9313.00	39970.00
-Medium C5-L Compact Shield Booster	2	10.00	16320.00	22830.00
-Sansha Diamond Tag	10	0.10	1000.00	9504.00
-Dual Afocal Light Laser I	1	5.00	508.30	14970.00
-Small Radiative Scoped Remote Capacitor Transmitter	4	5.00	6191.00	6193.00
-Xray M	4	1.00	3708.00	29700.00
-Reinforced Metal Scraps	5	0.01	4720.00	5749.00
-Microwave M	5	1.00	357.70	12320.00
-Multifrequency S	3	1.00	5701.00	9248.00
-Type-D Restrained Capacitor Flux Coil	5	5.00	438.20	6394.00
-Nanofiber Internal Structure I	3	5.00	5101.00	5899.00
-FFR Enduring Assault Damage Control	2	5.00	9033.00	35740.00
-Mark I Compact Capacitor Power Relay	8	5.00	1544.00	2879.00
-Small Coaxial Compact Remote Armor Repairer	3	5.00	6101.00	28790.00
-Small Infectious Scoped Energy Neutralizer	1	5.00	10010.00	22640.00
-Medium Radiative Scoped Remote Capacitor Transmitter	1	10.00	16020.00	34950.00
-Sansha Palladium Tag	2	0.10	1350.00	5000.00
-'Vehemence' Compact Small EMP Smartbomb	1	5.00	17160.00	79780.00
-Standard S	7	1.00	2125.00	2800.00
-Small Gremlin Compact Energy Neutralizer	1	5.00	9007.00	14720.00
-Ultraviolet S	7	1.00	1715.00	2400.00
-Upgraded Multispectrum Coating I	3	5.00	4896.00	10150.00
-Mark I Compact Capacitor Flux Coil	2	5.00	5015.00	9896.00
-F-90 Compact Sensor Booster	6	5.00	1506.00	3547.00
-Emerald Boulevard Satin - Limited	5	0.10	1000.00	52000.00
-Targeting Range Script	1	1.00	9853.00	14620.00
-Small Solace Scoped Remote Armor Repairer	1	5.00	4289.00	25690.00
-Synthetic Mocha Matte - Limited	1	0.10	10000.00	43000.00
-Small Automated Structural Restoration	3	5.00	1386.00	7550.00
-'Concussion' Compact Small Graviton Smartbomb	1	5.00	13490.00	18980.00
-Infrared M	9	1.00	379.00	3849.00
-Medium F-RX Compact Capacitor Booster	1	10.00	7526.00	25850.00
-ML-3 Compact Mining Survey Chipset	5	5.00	2662.00	4001.00
-Diffracted Rejoinder - Limited	2	0.10	10000.00	980000.00
-10MN Monopropellant Enduring Afterburner	1	5.00	5905.00	8899.00
-Auto Targeting System I	1	5.00	2520.00	12470.00
-True Sansha Brass Tag	1	0.10	15030.00	35490.00
-Microwave S	5	1.00	1905.00	2620.00
-Type-D Restrained Capacitor Power Relay	7	5.00	532.50	2678.00
-Radio S	3	1.00	530.10	9494.00
-Compact Explosive Shield Amplifier	5	5.00	1966.00	4740.00
-Small Ghoul Compact Energy Nosferatu	1	5.00	6351.00	13000.00
-Particle Bore Compact Mining Laser	3	5.00	1026.00	3292.00
-Upgraded EM Coating I	2	5.00	4242.00	5482.00
-Small I-b Polarized Structural Regenerator	2	5.00	4023.00	5999.00
-Small I-ax Enduring Remote Armor Repairer	2	5.00	4111.00	19010.00
-Small Knave Scoped Energy Nosferatu	2	5.00	3690.00	29990.00
-Mark I Compact Reinforced Bulkheads	1	5.00	507.30	5939.00
-Type-D Restrained Reinforced Bulkheads	2	5.00	3002.00	3100.00
-Dual Modal Light Laser I	1	5.00	618.30	22000.00
-Small Inductive Compact Remote Capacitor Transmitter	1	5.00	5734.00	8400.00
-Small Focused Afocal Laser I	1	5.00	117.50	25000.00
-Elder's Bone Satin - Limited	5	0.10	1000.00	8400.00
-Upgraded Kinetic Coating I	2	5.00	3045.00	5837.00
-Gamma S	2	1.00	1909.00	6994.00
-Upgraded Explosive Coating I	1	5.00	4201.00	13990.00
-M51 Benefactor Compact Shield Recharger	1	5.00	3728.00	3990.00
-Gallente Frigate	1	0.01	204.00	5800.00
-Small ACM Compact Armor Repairer	1	5.00	3359.00	10360.00
-Infrared S	3	1.00	950.00	2276.00
-Ta3 Compact Ship Scanner	6	5.00	529.20	1000.00
-F-89 Compact Signal Amplifier	1	5.00	2456.00	8999.00
-Suppressed Targeting System I	2	5.00	1911.00	2250.00
-Type-E Enduring Cargo Scanner	6	5.00	310.00	1940.00
-Plutonium Charge S	100	0.00	8.80	21.73
-Sanshas Infrared L	1	1.00	1250.00	21190.00
-Lead Charge S	100	0.00	8.12	8.13
-Isotopic Iodide Satin - Limited	1	0.10	1000.00	990000.00
-DSHR-01H Highsec Ice Storm Filament	13	0.10	101.50	31990.00</script>
 
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
 const ESI = 'https://esi.evetech.net/latest';
-const REGION_FORGE = 10000002, JITA_44 = 60003760, JITA_SYSTEM = 30000142;
+const HUBS = {
+  jita:    { label: 'Jita IV-4 · The Forge',        region: 10000002, system: 30000142, station: 60003760 },
+  amarr:   { label: 'Amarr VIII · Domain',          region: 10000043, system: 30002187, station: 60008494 },
+  dodixie: { label: 'Dodixie IX-20 · Sinq Laison',  region: 10000032, system: 30002659, station: 60011866 },
+  rens:    { label: 'Rens VI-8 · Heimatar',         region: 10000030, system: 30002510, station: 60004588 },
+  hek:     { label: 'Hek VIII-12 · Metropolis',     region: 10000042, system: 30002053, station: 60005686 },
+};
 const UNSELLABLE = [/^expired\s/i, /ice storm filament/i];
-const LS_KEY = 'eveSellHelper.v1';
+const LS_KEY = 'eveSellHelper.v2';
 
 const state = {
-  rows: [],            // sellable items
+  rows: [],            // priced items
   unpriced: [],        // {name, qty, reason}
-  esi: new Map(),      // lowercased name -> {buy, sell, typeId, status}
+  esi: new Map(),      // lowercased name -> {status, buyLevels, bestSell, hist, typeId}
   esiRunning: false,
   esiToken: 0,         // bumped to invalidate an in-flight fetch
+  fetchedHist: false,  // whether the last fetch included history
+  savedSel: { un: new Set(), re: new Set() },  // saved selection deviations, applied when rows (re)appear
   sortKey: 'totalNet', sortDir: -1,
   filterType: 'all', filterText: '',
 };
 
 function rowFilter(r){
-  if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
+  if (state.filterType === 'imm' && r.strategy !== 'imm') return false;
+  if (state.filterType === 'ordsplit' && r.strategy === 'imm') return false;
   if (state.filterText && !r.name.toLowerCase().includes(state.filterText)) return false;
   return true;
 }
@@ -740,7 +522,7 @@ function parseQty(raw){
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/* ---------- input parsers ---------- */
+/* ---------- inventory parser ---------- */
 // EVE inventory copy: Name \t Qty \t Group \t Size \t Slot \t Volume \t Est.Price (tabs may trail off)
 function parseInventory(text){
   const map = new Map();
@@ -750,7 +532,7 @@ function parseInventory(text){
     const name = (c[0] || '').trim();
     if (!name) continue;
     const qty = parseQty(c[1]);
-    if (qty == null) continue;
+    if (qty == null || qty <= 0) continue;
     let volPerUnit = null;
     for (const cell of c.slice(2)){
       if (/m3\s*$|m³\s*$/i.test(cell.trim())){
@@ -766,38 +548,16 @@ function parseInventory(text){
   }
   return map;
 }
-// Janice: Name \t Qty \t Vol/u \t Buy/u \t Sell/u
-function parseJanice(text){
-  const map = new Map();
-  for (const line of (text || '').split('\n')){
-    if (!line.trim()) continue;
-    const c = line.split('\t');
-    if (c.length < 5) continue;
-    if (/isk\s*$/i.test(line.trim())) continue;          // looks like an inventory line
-    const name = (c[0] || '').trim();
-    if (!name) continue;
-    const qty  = parseQty(c[1]);
-    const vol  = parseNum(c[2]);
-    if (!Number.isFinite(vol)) continue;   // Janice always has a numeric volume column — anything else is a foreign line
-    const buy  = parseNum(c[3]);
-    const sell = parseNum(c[4]);
-    const key = name.toLowerCase();
-    const prev = map.get(key);
-    if (prev){ prev.qty += qty ?? 1; continue; }   // concatenated appraisals: aggregate quantity
-    map.set(key, {
-      name, qty: qty ?? 1,
-      volPerUnit: vol,
-      buy:  Number.isFinite(buy)  && buy  > 0 ? buy  : null,
-      sell: Number.isFinite(sell) && sell > 0 ? sell : null,
-    });
-  }
-  return map;
-}
 
 /* ---------- EVE price ticks (4 significant digits) ---------- */
 function tickFor(p){
   if (!(p > 0)) return 0.01;
   return Math.max(Math.pow(10, Math.floor(Math.log10(p)) - 3), 0.01);
+}
+function round4sig(p){
+  if (!(p > 0)) return p;
+  const t = tickFor(p);
+  return Number((Math.round(p / t) * t).toFixed(2));
 }
 function undercut(p){
   if (!(p > 0.01)) return p;
@@ -810,13 +570,37 @@ function undercut(p){
   return u > 0 ? Number(u.toFixed(2)) : p;
 }
 
-/* ---------- core rebuild ---------- */
-function currentChecks(){
-  const m = new Map();
-  for (const r of state.rows) m.set(r.key, r.checked);
-  return m;
+/* ---------- valuation ---------- */
+// Fill qty into the buy book (levels sorted by price desc), optionally only at prices >= floor.
+function walkBook(levels, qty, floor){
+  let remaining = qty, proceeds = 0, filled = 0, marginal = null;
+  for (const lv of levels){
+    if (remaining <= 0) break;
+    if (floor != null && lv.p < floor) break;
+    const take = Math.min(lv.v, remaining);
+    if (take < (lv.minv || 1)) continue;    // can't meet this order's minimum with what's left
+    proceeds += take * lv.p; filled += take; remaining -= take; marginal = lv.p;
+  }
+  return { proceeds, filled, marginal };
 }
 
+function quantile(sorted, q){
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function histStatOf(hist, days, mode){
+  if (!hist || !hist.length) return null;
+  const cutoff = Date.now() - days * 86400e3;
+  const vals = hist.filter(h => Date.parse(h.date) >= cutoff).map(h => h.average);
+  if (!vals.length) return null;
+  if (mode === 'avg') return vals.reduce((s, x) => s + x, 0) / vals.length;
+  const s = [...vals].sort((a, b) => a - b);
+  return quantile(s, mode === 'median' ? 0.5 : mode === 'p10' ? 0.1 : 0.9);
+}
+
+/* ---------- core rebuild ---------- */
 const lastValidFee = { brokerFee: 2.1, salesTax: 7.5 };
 function feePct(id){
   const v = parseFloat($(id).value);
@@ -825,69 +609,101 @@ function feePct(id){
   return lastValidFee[id] / 100;
 }
 
+function currentChecks(){
+  const m = new Map();
+  for (const r of state.rows) m.set(r.key, r.checked);
+  return m;
+}
+
 function rebuild(keepChecks = true){
   const prevChecks = keepChecks ? currentChecks() : new Map();
   const inv = parseInventory($('inv').value);
-  const jan = parseJanice($('janice').value);
   const broker = feePct('brokerFee');
   const tax    = feePct('salesTax');
   const useUndercut = $('undercut').checked;
+  const priceSrc = $('priceSrc').value;
+  const histMode = $('histMode').value;
+  const histDays = Math.min(400, Math.max(1, Math.round(parseFloat($('histDays').value) || 30)));
 
-  const keys = new Set([...inv.keys(), ...jan.keys()]);
   const rows = [], unpriced = [];
 
-  for (const key of keys){
-    const i = inv.get(key), j = jan.get(key), e = state.esi.get(key);
-    const name = (i || j).name;
-    const qty  = i ? i.qty : j.qty;
-    const volPerUnit = (i && i.volPerUnit != null) ? i.volPerUnit : (j ? j.volPerUnit : null);
+  for (const [key, i] of inv){
+    const e = state.esi.get(key);
     const flags = [];
-
-    let buy = null, sell = null, src = '—';
-    if (j){ buy = j.buy; sell = j.sell; src = 'J'; }
-    if (e){
-      if (e.status === 'ok'){
-        buy = e.buy; sell = e.sell; src = 'E';
-        if (e.buy == null && e.sell == null) flags.push({t:'no Jita orders', cls:'warn'});
-      } else if (e.status === 'failed' && j){
-        flags.push({t:'ESI fetch failed — Janice price kept', cls:'info'});
-      } else if (e.status === 'unresolved' && j){
-        flags.push({t:'name not recognized by ESI', cls:'info'});
-      }
-    }
-
-    const unsellable = UNSELLABLE.some(rx => rx.test(name));
+    const unsellable = UNSELLABLE.some(rx => rx.test(i.name));
     if (unsellable) flags.push({t:'unsellable?', cls:'bad'});
-    if (i && j && j.qty !== i.qty) flags.push({t:`Janice qty ${j.qty} ≠ ${i.qty}`, cls:'warn'});
-    if (buy != null && sell != null && buy > sell) flags.push({t:'suspect price', cls:'warn'});
 
-    if (buy == null && sell == null){
-      let reason = 'no price data (not in Janice paste)';
-      if (e && e.status === 'ok') reason = 'no market orders at Jita 4-4';
-      else if (e && e.status === 'failed') reason = 'ESI lookup failed';
-      else if (e && e.status === 'unresolved') reason = 'name not recognized by ESI';
-      unpriced.push({ name, qty, reason, unsellable });
+    if (!e || e.status === 'unresolved' || e.status === 'failed'){
+      const reason = !e ? 'no prices yet — fetch from ESI'
+        : e.status === 'unresolved' ? 'name not recognized by ESI' : 'ESI lookup failed — try fetching again';
+      unpriced.push({ name: i.name, qty: i.qty, reason, unsellable });
       continue;
     }
 
-    // when undercutting, the order really lists (and nets) one tick under the market sell
-    const orderPrice = sell != null ? (useUndercut ? undercut(sell) : sell) : null;
-    const netImm = buy        != null ? buy        * (1 - tax)          : null;
-    const netOrd = orderPrice != null ? orderPrice * (1 - tax - broker) : null;
-    let strategy;
-    if (netImm != null && netOrd != null) strategy = netImm >= netOrd ? 'imm' : 'ord';
-    else if (netImm != null){ strategy = 'imm'; flags.push({t:'no sell orders', cls:'info'}); }
-    else { strategy = 'ord'; if (src === 'E') flags.push({t:'no buy orders', cls:'info'}); }
+    const levels = e.buyLevels || [];
+    const bestBuy  = levels.length ? levels[0].p : null;
+    const bestSell = e.bestSell;
+    const hist = histStatOf(e.hist, histDays, histMode);
 
-    const bestNet = strategy === 'imm' ? netImm : netOrd;
-    const exportPrice = strategy === 'imm' ? buy : orderPrice;
-    const advTotal = (netImm != null && netOrd != null) ? (netOrd - netImm) * qty : null;
+    if (bestBuy == null && bestSell == null && hist == null){
+      unpriced.push({ name: i.name, qty: i.qty, reason: 'no market orders or history at this hub', unsellable });
+      continue;
+    }
+
+    // L: the price ORDER/SPLIT items are imported at
+    let L = null, lFlag = null;
+    if (priceSrc === 'sell'){
+      if (bestSell != null) L = useUndercut ? undercut(bestSell) : bestSell;
+      else if (hist != null){ L = round4sig(hist); lFlag = 'no sell orders — using history price'; }
+    } else {
+      if (hist != null) L = round4sig(hist);
+      else if (bestSell != null){ L = useUndercut ? undercut(bestSell) : bestSell; lFlag = 'no history — using current sell'; }
+    }
+    if (lFlag) flags.push({t: lFlag, cls:'info'});
+
+    // plan A: pure instant — dump the whole stack into the book right now
+    const inst = walkBook(levels, i.qty, null);
+    const netInstant = inst.proceeds * (1 - tax);   // units the book can't absorb are valued at 0
+    // plan B: import at L — buys >= L fill at their price, the rest lists at L
+    let netOrder = null, ordFill = null;
+    if (L != null && L > 0){
+      ordFill = walkBook(levels, i.qty, L);
+      netOrder = ordFill.proceeds * (1 - tax) + (i.qty - ordFill.filled) * L * (1 - tax - broker);
+    }
+
+    let strategy;
+    if (netOrder == null && inst.filled === 0){
+      unpriced.push({ name: i.name, qty: i.qty, reason: 'no usable buy orders and no list price', unsellable });
+      continue;
+    }
+    if (netOrder == null) strategy = 'imm';
+    else if (inst.filled === 0) strategy = 'ord';
+    else strategy = netInstant >= netOrder ? 'imm' : (ordFill.filled > 0 ? 'split' : 'ord');
+
+    const totalNet = strategy === 'imm' ? netInstant : netOrder;
+    const exportPrice = strategy === 'imm' ? inst.marginal : L;
+    const advTotal = (netOrder != null) ? netOrder - netInstant : null;
+
+    if (bestBuy != null && bestSell != null && bestBuy > bestSell) flags.push({t:'suspect price', cls:'warn'});
+    if (hist != null && bestSell != null){
+      if (bestSell > hist * 1.5) flags.push({t:'sell ≫ history', cls:'warn'});
+      else if (bestSell < hist / 1.5) flags.push({t:'sell ≪ history', cls:'warn'});
+    }
+    if (strategy === 'imm' && inst.filled < i.qty) flags.push({t:`depth ${fmt.format(inst.filled)}/${fmt.format(i.qty)}`, cls:'warn'});
+    if (L != null && bestSell != null && L > bestSell) flags.push({t:'above best sell', cls:'info'});
+    if (bestBuy == null) flags.push({t:'no buy orders', cls:'info'});
+    if (bestSell == null) flags.push({t:'no sell orders', cls:'info'});
 
     rows.push({
-      key, name, qty, volPerUnit, buy, sell, src,
-      netImm, netOrd, strategy, bestNet, exportPrice,
-      totalNet: bestNet * qty, advTotal, flags, unsellable,
-      checked: prevChecks.has(key) ? prevChecks.get(key) : !unsellable,
+      key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
+      bestBuy, bestSell, hist, L,
+      netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
+      splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
+      flags, unsellable,
+      checked: prevChecks.has(key) ? prevChecks.get(key)
+        : state.savedSel.un.has(key) ? false
+        : state.savedSel.re.has(key) ? true
+        : !unsellable,
     });
   }
 
@@ -915,7 +731,7 @@ function sortedRows(){
   const rows = state.rows.filter(rowFilter);
   rows.sort((a, b) => {
     let x = a[k], y = b[k];
-    if (k === 'strategy' || k === 'name' || k === 'src'){ return String(x).localeCompare(String(y)) * -d; }
+    if (k === 'strategy' || k === 'name'){ return String(x).localeCompare(String(y)) * -d; }
     if (k === 'flags'){ return (a.flags.length - b.flags.length) * d; }
     if (k === 'checked'){ return ((a.checked === true) - (b.checked === true)) * d; }
     x = x == null ? -Infinity : x; y = y == null ? -Infinity : y;
@@ -939,24 +755,26 @@ function render(){
     tdCheck.appendChild(cb);
     tr.appendChild(tdCheck);
 
-    const cells = [
+    for (const [cls, text] of [
       ['num', String(r.rank)],
       ['name', r.name],
       ['num', fmt.format(r.qty)],
-      ['num', fmtIsk(r.buy)],
-      ['num', fmtIsk(r.sell)],
-    ];
-    for (const [cls, text] of cells){
+      ['num', fmtIsk(r.bestBuy)],
+      ['num', fmtIsk(r.bestSell)],
+      ['num', fmtIsk(r.hist)],
+    ]){
       const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.appendChild(td);
     }
 
     const tdStrat = document.createElement('td');
     const badge = document.createElement('span');
-    badge.className = 'badge ' + (r.strategy === 'imm' ? 'imm' : 'ord');
-    badge.textContent = r.strategy === 'imm' ? 'INSTANT' : 'ORDER';
+    badge.className = 'badge ' + (r.strategy === 'imm' ? 'imm' : r.strategy === 'split' ? 'split' : 'ord');
+    badge.textContent = r.strategy === 'imm' ? 'INSTANT' : r.strategy === 'split' ? 'SPLIT' : 'ORDER';
     badge.title = r.strategy === 'imm'
-      ? `instant net/u ${fmtIsk(r.netImm)} ≥ order net/u ${fmtIsk(r.netOrd)}`
-      : `order net/u ${fmtIsk(r.netOrd)} > instant net/u ${fmtIsk(r.netImm)}`;
+      ? `sell into the buy book now · net ${fmtIsk(r.netInstant)}${r.netOrder != null ? ` ≥ order plan ${fmtIsk(r.netOrder)}` : ''}`
+      : r.strategy === 'split'
+        ? `import at ${fmtIsk(r.L)}: ≈${fmt.format(r.splitFill)} of ${fmt.format(r.qty)} fill instantly, rest lists · net ${fmtIsk(r.netOrder)} > instant ${fmtIsk(r.netInstant)}`
+        : `list at ${fmtIsk(r.L)} · net ${fmtIsk(r.netOrder)}${r.instFill > 0 ? ` > instant ${fmtIsk(r.netInstant)}` : ''}`;
     tdStrat.appendChild(badge);
     tr.appendChild(tdStrat);
 
@@ -975,9 +793,6 @@ function render(){
       s.textContent = f.t;
       tdFlags.appendChild(s);
     }
-    if (r.src === 'E'){
-      const s = document.createElement('span'); s.className = 'flag info'; s.textContent = 'ESI'; tdFlags.appendChild(s);
-    }
     tr.appendChild(tdFlags);
     frag.appendChild(tr);
   }
@@ -994,12 +809,12 @@ function renderSummary(){
   const box = $('summary');
   box.textContent = '';
   if (!state.rows.length && !state.unpriced.length){
-    box.innerHTML = '<span class="hint">Paste data above to see results.</span>';
+    box.innerHTML = '<span class="hint">Paste your inventory and fetch prices to see results.</span>';
     return;
   }
   const all = state.rows;
   const imm = all.filter(r => r.strategy === 'imm');
-  const ord = all.filter(r => r.strategy === 'ord');
+  const os  = all.filter(r => r.strategy !== 'imm');
   const sel = all.filter(r => rowFilter(r) && r.checked);   // = what the export list contains
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
@@ -1010,8 +825,8 @@ function renderSummary(){
     d.appendChild(b); d.appendChild(s); box.appendChild(d);
   };
   mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`instant sale (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`sell orders (${ord.length} items)`, fmtIsk(ord.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`instant (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
+  mk(`orders + splits (${os.length} items)`, fmtIsk(os.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
   mk(`in export list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
   if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
 }
@@ -1021,8 +836,8 @@ function renderPreview(){
     .filter(r => rowFilter(r) && r.checked && r.exportPrice != null)
     .sort((a, b) => a.rank - b.rank);
   $('preview').value = rows.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
-  const mixed = new Set(rows.map(r => r.strategy)).size > 1;
-  $('mixWarn').style.display = mixed ? '' : 'none';
+  const kinds = new Set(rows.map(r => r.strategy === 'imm' ? 'imm' : 'ord'));
+  $('mixWarn').style.display = kinds.size > 1 ? '' : 'none';
 }
 
 function renderUnpriced(){
@@ -1061,23 +876,24 @@ async function copyText(text, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Buy/u','Sell/u','Net instant/u','Net order/u','Best','List at/u','Expected net','Order Δ','Flags','Selected'];
+  const head = ['Item','Qty','Top buy/u','Best sell/u','Hist/u','Plan','Import price/u','Net instant','Net order plan','Expected net','Order Δ','Instant fill @ import','Flags','Selected'];
   const lines = [head.join('\t')];
-  for (const r of [...state.rows].sort((a,b) => a.rank - b.rank)){
+  for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
       r.name, r.qty,
-      r.buy ?? '', r.sell ?? '',
-      r.netImm != null ? r.netImm.toFixed(2) : '',
-      r.netOrd != null ? r.netOrd.toFixed(2) : '',
-      r.strategy === 'imm' ? 'INSTANT' : 'ORDER',
+      r.bestBuy ?? '', r.bestSell ?? '', r.hist != null ? r.hist.toFixed(2) : '',
+      r.strategy === 'imm' ? 'INSTANT' : r.strategy === 'split' ? 'SPLIT' : 'ORDER',
       r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
+      r.netInstant.toFixed(2),
+      r.netOrder != null ? r.netOrder.toFixed(2) : '',
       r.totalNet.toFixed(2),
       r.advTotal != null ? r.advTotal.toFixed(2) : '',
+      r.strategy === 'imm' ? '' : r.splitFill,
       r.flags.map(f => f.t).join('; '),
       r.checked ? 'yes' : 'no',
     ].join('\t'));
   }
-  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', 'UNPRICED', '', '', '', u.reason, 'no'].join('\t'));
+  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', 'UNPRICED', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
   return lines.join('\n');
 }
 
@@ -1117,76 +933,90 @@ async function resolveTypeIds(names){
   return out;
 }
 
-function orderCoversJita(o){
-  if (o.location_id === JITA_44) return true;
+function hub(){ return HUBS[$('market').value] || HUBS.jita; }
+
+function orderCoversHub(o, h){
+  if (o.location_id === h.station) return true;
   if (!o.is_buy_order) return false;
   if (o.range === 'region') return true;
-  if (o.system_id === JITA_SYSTEM && o.range !== 'station') return true;
+  if (o.system_id === h.system && o.range !== 'station') return true;
   return false;
 }
 
-async function fetchJitaPrices(typeId, qty){
-  let page = 1, buy = null, sell = null;
+async function fetchBook(typeId, h){
+  let page = 1;
+  const buyLevels = [];
+  let bestSell = null;
   for (;;){
-    const res = await esiFetch(`${ESI}/markets/${REGION_FORGE}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
+    const res = await esiFetch(`${ESI}/markets/${h.region}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
     const data = await res.json();
     for (const o of data){
-      if (!orderCoversJita(o)) continue;
-      if (o.is_buy_order){
-        if ((o.min_volume || 1) > qty) continue;   // margin-scam guard: we can't fill this order with our stack
-        if (buy == null || o.price > buy) buy = o.price;
-      }
-      else if (o.location_id === JITA_44){ if (sell == null || o.price < sell) sell = o.price; }
+      if (!orderCoversHub(o, h)) continue;
+      if (o.is_buy_order) buyLevels.push({ p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
+      else if (o.location_id === h.station){ if (bestSell == null || o.price < bestSell) bestSell = o.price; }
     }
     const pages = Number(res.headers.get('x-pages') || '1');
     if (page >= pages) break;
     page++;
   }
-  return { buy, sell };
+  buyLevels.sort((a, b) => b.p - a.p);
+  return { buyLevels, bestSell };
+}
+
+async function fetchHistory(typeId, h){
+  const res = await esiFetch(`${ESI}/markets/${h.region}/history/?datasource=tranquility&type_id=${typeId}`);
+  const data = await res.json();
+  return data.map(d => ({ date: d.date, average: d.average, volume: d.volume }));
 }
 
 async function runEsi(){
   if (state.esiRunning) return;
   const inv = parseInventory($('inv').value);
-  const jan = parseJanice($('janice').value);
-  const items = new Map([...jan, ...inv].map(([k, v]) => [k, { name: v.name, qty: v.qty ?? 1 }])); // inventory wins
-  if (!items.size){ $('esiStatus').textContent = 'paste an inventory or appraisal first'; $('esiStatus').className = 'err'; return; }
+  if (!inv.size){ $('esiStatus').textContent = 'paste an inventory first'; $('esiStatus').className = 'err'; return; }
+  const withHist = $('histOn').checked;
+  const h = hub();
 
   state.esiRunning = true;
   const token = ++state.esiToken;   // Clear (or a newer run) bumps this and orphans us
   const btn = $('btnEsi'); btn.disabled = true;
   const status = $('esiStatus'); status.className = '';
   try{
-    status.textContent = `resolving ${items.size} item names…`;
-    const ids = await resolveTypeIds([...items.values()].map(v => v.name));
+    status.textContent = `resolving ${inv.size} item names…`;
+    const ids = await resolveTypeIds([...inv.values()].map(v => v.name));
     if (token !== state.esiToken) return;
-    const jobs = [...items.entries()].map(([key, it]) => ({ key, name: it.name, qty: it.qty, typeId: ids.get(key) ?? null }));
-    for (const j of jobs) if (j.typeId == null) state.esi.set(j.key, { buy: null, sell: null, status: 'unresolved' });
+    const jobs = [...inv.entries()].map(([key, it]) => ({ key, name: it.name, typeId: ids.get(key) ?? null }));
+    for (const j of jobs) if (j.typeId == null) state.esi.set(j.key, { status: 'unresolved' });
 
     const todo = jobs.filter(j => j.typeId != null);
+    const total = todo.length;
     let done = 0, failed = 0;
     const workers = Array.from({ length: 8 }, async () => {
       for (;;){
         const j = todo.shift();
         if (!j || token !== state.esiToken) return;
         try{
-          const p = await fetchJitaPrices(j.typeId, j.qty);
+          const book = await fetchBook(j.typeId, h);
+          let hist = null;
+          if (withHist){
+            try{ hist = await fetchHistory(j.typeId, h); }
+            catch(_e){ /* history missing for some types — non-fatal */ }
+          }
           if (token !== state.esiToken) return;
-          state.esi.set(j.key, { buy: p.buy, sell: p.sell, typeId: j.typeId, status: 'ok' });
+          state.esi.set(j.key, { ...book, hist, typeId: j.typeId, status: 'ok' });
         }catch(_e){
           if (token !== state.esiToken) return;
           failed++;
-          state.esi.set(j.key, { buy: null, sell: null, typeId: j.typeId, status: 'failed' });
+          state.esi.set(j.key, { typeId: j.typeId, status: 'failed' });
         }
         done++;
-        status.textContent = `fetching Jita orders… ${done}/${jobs.length}${failed ? ` (${failed} failed)` : ''}`;
+        status.textContent = `fetching ${h.label} ${withHist ? 'orders + history' : 'orders'}… ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
       }
     });
     await Promise.all(workers);
     if (token !== state.esiToken) return;
-    const when = new Date();
-    status.textContent = `live Jita 4-4 prices loaded ${when.toLocaleTimeString()}` +
-      (failed ? ` — ${failed} lookups failed (kept previous price)` : '');
+    state.fetchedHist = withHist;
+    status.textContent = `${h.label} prices loaded ${new Date().toLocaleTimeString()}` +
+      (failed ? ` — ${failed} lookups failed` : '');
     status.className = failed ? 'err' : 'ok';
   }catch(e){
     if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
@@ -1201,9 +1031,11 @@ async function runEsi(){
 function persist(){
   try{
     localStorage.setItem(LS_KEY, JSON.stringify({
-      inv: $('inv').value, janice: $('janice').value,
+      inv: $('inv').value,
       brokerFee: $('brokerFee').value, salesTax: $('salesTax').value,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
+      market: $('market').value, histOn: $('histOn').checked,
+      priceSrc: $('priceSrc').value, histMode: $('histMode').value, histDays: $('histDays').value,
       unchecked: state.rows.filter(r => !r.checked && !r.unsellable).map(r => r.key),
       rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
     }));
@@ -1214,38 +1046,54 @@ function restore(){
   try{ saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(_e){}
   if (!saved) return false;
   $('inv').value = saved.inv || '';
-  $('janice').value = saved.janice || '';
   if (saved.brokerFee != null) $('brokerFee').value = saved.brokerFee;
   if (saved.salesTax  != null) $('salesTax').value  = saved.salesTax;
   $('undercut').checked = !!saved.undercut;
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
-  rebuild(false);
-  if (Array.isArray(saved.unchecked) || Array.isArray(saved.rechecked)){
-    const un = new Set(saved.unchecked || []);
-    const re = new Set(saved.rechecked || []);
-    for (const r of state.rows){
-      if (un.has(r.key)) r.checked = false;
-      if (re.has(r.key)) r.checked = true;
-    }
-    render();
-    persist();   // rebuild() above already wrote state; re-save with selections applied
-  }
+  if (saved.market && HUBS[saved.market]) $('market').value = saved.market;
+  if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
+  if (saved.priceSrc) $('priceSrc').value = saved.priceSrc;
+  if (saved.histMode) $('histMode').value = saved.histMode;
+  if (saved.histDays) $('histDays').value = saved.histDays;
+  state.savedSel = { un: new Set(saved.unchecked || []), re: new Set(saved.rechecked || []) };
+  rebuild(false);   // applies savedSel via the checked fallback — also after a later refetch
   return true;
 }
 
 /* ---------- wiring ---------- */
-for (const id of ['inv', 'janice']) $(id).addEventListener('input', () => rebuild());
-for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep']) $(id).addEventListener('change', () => rebuild());
+for (const [k, h] of Object.entries(HUBS)){
+  const opt = document.createElement('option');
+  opt.value = k; opt.textContent = h.label;
+  $('market').appendChild(opt);
+}
+
+$('inv').addEventListener('input', () => rebuild());
+for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'priceSrc', 'histMode', 'histDays'])
+  $(id).addEventListener('change', () => rebuild());
 $('topN').addEventListener('change', persist);
+
+$('market').addEventListener('change', () => {
+  state.esi.clear();
+  state.esiToken++;
+  $('esiStatus').textContent = 'market changed — fetch prices again';
+  $('esiStatus').className = '';
+  rebuild();
+});
+$('histOn').addEventListener('change', () => {
+  if ($('histOn').checked && state.esi.size && !state.fetchedHist){
+    $('esiStatus').textContent = 'history enabled — fetch prices again to pull it';
+    $('esiStatus').className = '';
+  }
+  persist();
+});
 
 $('btnDemo').addEventListener('click', () => {
   $('inv').value = document.getElementById('demo-inv').textContent.trim();
-  $('janice').value = document.getElementById('demo-janice').textContent.trim();
   rebuild(false);
 });
 $('btnClear').addEventListener('click', () => {
-  $('inv').value = ''; $('janice').value = '';
+  $('inv').value = '';
   state.esi.clear();
   state.esiToken++;               // cancel any in-flight fetch
   $('esiStatus').textContent = '';

@@ -1,68 +1,75 @@
-# EVE Jita Sell Helper
+# EVE Sell Helper
 
 A single-file, locally-run webapp that turns a hangar full of loot into a ready-to-paste
-sell list for Jita 4-4 — ranked by expected profit, with instant-sale vs sell-order
-decisions made for you after fees.
+sell list for any major trade hub — valued against the real order book, ranked by expected
+net profit after fees, with the best plan per item: instant sale, sell order, or a split.
 
 ## Run it
 
-Open `index.html` in any modern browser. That's it — no install, no server, no ESI login.
-Your data never leaves your machine (the only network call is the optional, public ESI
-price fetch).
+Open `index.html` in any modern browser (or use the hosted copy on GitHub Pages).
+No install, no server, no ESI login — prices come from ESI's public endpoints and nothing
+else ever leaves your machine.
 
 ## Workflow
 
-1. **Paste your inventory** (select items in a hangar/container → Ctrl-C) into the left box.
-   Optional, but it supplies quantities/volumes and catches items your appraisal dropped.
-2. **Paste a [Janice](https://janice.e-351.com/) appraisal** (the per-unit buy/sell columns)
-   into the right box — **or** click **Fetch live Jita 4-4 prices (ESI)** to pull the
-   current best buy/best sell straight from CCP's public API. If you do both, ESI wins.
-3. Check your **broker fee** and **sales tax** percentages (defaults: 2.1% / 7.5%).
-4. Every item is ranked by expected net ISK and tagged:
-   - **INSTANT** — selling into buy orders nets more than a sell order once you account
-     for the broker fee you'd pay to list (`buy × (1 − tax)` ≥ `sell × (1 − tax − broker)`).
-   - **ORDER** — listing at the sell price nets more, even after the broker fee.
-5. **Filter and sort** the table: click column headers to sort, search by name, and use the
-   *show* filter to view **INSTANT only** or **ORDER only**. The selection buttons
-   (top N / all / none) act on the filtered rows.
-6. **Select top N** (or hand-pick rows), then **Copy import list** — the preview is
-   `Item name ⇥ Price` (the game sells whole stacks, so no quantity), ready for the game's
-   multi-sell import. Since the game handles one order type at a time, filter to INSTANT
-   (priced at the current best buy — fills the moment you import) and copy, then filter to
-   ORDER (priced at the sell price, optionally one tick under) and copy again; the app warns
-   if a copied list mixes both.
-7. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
+1. **Paste your inventory** (select items in a hangar/container → Ctrl-C).
+2. **Pick a market**: Jita 4-4, Amarr, Dodixie, Rens, or Hek.
+3. **Fetch prices (ESI)** — pulls the live order book per item (optionally plus ~13 months
+   of daily price history) for the chosen hub.
+4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%) and choose how ORDER
+   items get their list price `L`:
+   - **current best sell** (optionally one tick under), or
+   - **history statistic** — median / average / 10th / 90th percentile of the region's
+     daily average price over the last N days. N and the statistic apply instantly, no refetch.
+5. Every item is valued against the actual buy book and gets a plan:
+   - **INSTANT** — dumping the stack into the buy book right now nets the most. Depth-aware:
+     the walk respects each order's remaining volume and `min_volume` (margin-scam bait is
+     ignored), so one 1-unit buy order at a silly price no longer values your whole stack.
+   - **ORDER** — listing at `L` nets more: `L × (1 − tax − broker)` per unit.
+   - **SPLIT** — the best of both: when you import at `L`, the game automatically fills any
+     buy orders priced ≥ `L` first (at *their* price, no broker fee) and lists the rest at
+     `L`. SPLIT means that instant part is non-empty — no manual stack splitting needed.
+6. **Filter and sort**: click headers to sort, search by name, filter to **INSTANT only**
+   or **ORDER + SPLIT only**. Selection buttons (top N / all / none) act on filtered rows.
+7. **Copy import list** — `Item name ⇥ Price` lines for the game's multi-sell import
+   (the game sells whole stacks, so no quantity). INSTANT items are priced at the marginal
+   buy level needed to clear the whole stack; ORDER/SPLIT items at `L`. Copy each type
+   separately (the app warns when a list mixes them) since the game handles one at a time.
+8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
 
 ## Flags
 
 | Flag | Meaning |
 | --- | --- |
-| `suspect price` | Buy > sell — a thin or broken market. These are the same items Janice marks as "missing or low quality price information". Check them in game before trusting the number. |
-| `unsellable?` | Ice Storm / Expired filaments that the in-game market refuses to list. Auto-excluded from the export (you can re-tick them). |
-| `Janice qty ≠ N` | The appraisal quantity disagrees with your inventory paste; the inventory wins. |
-| `no buy orders` / `no sell orders` | Only one strategy is possible for this item. |
+| `suspect price` | Top buy above best sell — a thin or broken market. Check in game. |
+| `sell ≫ / ≪ history` | Current best sell is far (±50%) from the chosen history statistic. |
+| `depth x/y` | The buy book can only absorb x of your y units at any price. |
+| `no history — using current sell` / `no sell orders — using history price` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `unsellable?` | Ice Storm / Expired filaments the market refuses. Auto-excluded from the export (re-tickable). |
 
-Items with no price at all (not in the appraisal, no Jita orders) are listed separately in
-section 5 so they never pollute the ranking.
+Items with no orders and no history at the hub are listed separately and never pollute the ranking.
 
 ## Details & assumptions
 
-- Broker fee applies only when listing a sell order (charged up front on order value);
-  sales tax applies to every sale. Relist fees from later repricing are not modelled — if
-  a market is a 0.01-ISK-undercut war, instant selling is relatively better than shown.
-- The ESI fetch uses only public endpoints: `POST /universe/ids` to resolve names, then
-  `GET /markets/10000002/orders?type_id=…` per item, keeping orders at Jita IV-4
-  (station `60003760`) — including buy orders placed elsewhere whose range covers the
-  station. Buy orders whose `min_volume` exceeds your stack (margin-trading scam bait) are
-  ignored. It paginates, honours the ESI error-limit headers, and retries transient errors;
-  items that fail keep their appraisal price and get flagged.
-- Exported prices respect EVE's 4-significant-digit price rule (the one-tick undercut is
-  one unit of the price's own magnitude, e.g. `544 800 → 544 700`).
+- Instant valuation walks buy orders top-down, taking `volume_remain` per level and skipping
+  orders whose `min_volume` can't be met — units the book can't absorb are valued at zero
+  (and flagged).
+- The ORDER/SPLIT plan models the real import mechanics: fills above `L` execute at the
+  resting buy order's price and pay only sales tax; the listed remainder pays broker + tax.
+  Order fills are not guaranteed, and relist fees from later repricing are not modelled.
+- Price history is per **region** (ESI has no station-level history), using each day's
+  average price.
+- ESI usage: `POST /universe/ids`, `GET /markets/{region}/orders?type_id=…` (paginated,
+  filtered to the hub station; buy orders count if their range covers it), and optionally
+  `GET /markets/{region}/history?type_id=…`. Error-limit headers are honoured, transient
+  errors retried; failed items are listed as unpriced.
+- Prices respect EVE's 4-significant-digit rule; the one-tick undercut steps into the finer
+  band below round numbers (1 000 000 → 999 900).
 - Number parsing accepts both `1.234.567,89` (EVE client, EU locale) and `1234567.89`
-  (Janice) formats; the export decimal separator is switchable for comma-locale clients.
-- Inputs, fees, and row selections persist in `localStorage`, so closing the tab loses nothing.
+  formats; the export decimal separator is switchable.
+- Inputs, fees, market, pricing options, and row selections persist in `localStorage`.
 
 ## Development
 
-Plain HTML/CSS/JS in one file — no build step. `Load sample data` fills the inputs with a
-real 250-item hangar + matching appraisal for instant experimentation.
+Plain HTML/CSS/JS in one file — no build step. `Load sample data` fills the input with a
+real 250-item hangar for instant experimentation (fetch prices to value it).
