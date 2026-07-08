@@ -35,10 +35,10 @@ else ever leaves your machine.
    filtered rows and tick only ORDER/SPLIT items.
 7. **Export — two artifacts**:
    - **Import list (orders & splits)**: every ticked row as `Item name ⇥ Price` for the
-     game's multi-sell import. A manually ticked INSTANT row joins it at its stack-clearing
-     floor price (the count echo calls this out).
-   - **Instant checklist**: the unticked INSTANT items as `Item name ⇥ Qty` — sell these
-     directly in the hangar; their price isn't a choice, so there's nothing to import.
+     game's multi-sell import. The tick column is labelled *Import* and only ORDER/SPLIT
+     rows have a checkbox — INSTANT rows show ⚡ instead, since there is nothing to import.
+   - **Instant checklist**: the INSTANT items as `Item name ⇥ Qty` (plus the instant legs
+     of ticked SPLITs as partial stacks) — sell these directly in the hangar.
 8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
 
 ## Flags
