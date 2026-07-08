@@ -66,14 +66,6 @@
   tr.excluded td{opacity:.45}
   .tablewrap{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
   #preview{height:200px}
-  #instList{max-height:200px;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
-  .inst-item{display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:copy;
-    border-bottom:1px solid #1a2233;font:12px/1.5 var(--mono)}
-  .inst-item:hover{background:#161d2b}
-  .inst-item.done{opacity:.45;text-decoration:line-through}
-  .inst-item.copied{box-shadow:inset 0 0 0 1px var(--cyan)}
-  .inst-item .tick{width:14px;color:var(--green);flex:none}
-  .inst-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .flag.wait{color:var(--violet)}
   #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
   #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
@@ -220,7 +212,11 @@
       <option value="imm">INSTANT only</option>
       <option value="ord">ORDER only</option>
       <option value="split">SPLIT only</option>
-      <option value="wait">⏳ wait only</option>
+    </select>
+    <select id="fltWait" style="width:120px" title="filter by the ⏳ wait tag — composes with the type filter (e.g. ORDER + hide ⏳ = list these now)">
+      <option value="all">⏳ show all</option>
+      <option value="only">⏳ only</option>
+      <option value="hide">⏳ hide</option>
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
@@ -253,40 +249,28 @@
 
 <section>
   <h2>4 · Export</h2>
-  <div class="cols">
-    <div class="col">
-      <div class="rowline" style="margin-top:0">
-        <button id="btnCopy" type="button" class="primary">Copy import list</button>
-        <label for="decSep" style="margin:0">decimals</label>
-        <select id="decSep" style="width:100px">
-          <option value="dot">1234.56</option>
-          <option value="comma">1234,56</option>
-        </select>
-        <span id="copyStatusImp" class="hint"></span>
-      </div>
-      <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
-      <p class="hint" style="margin:0 0 4px">
-        <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import — the ticked
-        rows in the table. For SPLIT items, sell the checklist leg first and this lists the remainder; importing
-        without doing so is still safe (buy orders above the price fill instantly at their own price).
-        INSTANT rows (⚡) never appear here — they have nothing to import.</p>
-      <textarea id="preview" readonly spellcheck="false"></textarea>
-    </div>
-    <div class="col">
-      <div class="rowline" style="margin-top:0">
-        <button id="btnCopyInst" type="button">Copy instant checklist</button>
-        <button id="btnInstReset" type="button">Reset ticks</button>
-        <span id="copyStatusInst" class="hint"></span>
-      </div>
-      <p class="hint" style="margin:8px 0 2px"><b>Instant checklist — sell directly in the hangar</b> · <span id="instEcho">nothing yet</span></p>
-      <p class="hint" style="margin:0 0 4px">
-        <b>Click an item to copy its name</b> for the in-game inventory search — it gets ticked off so you can
-        work down the list. The quantity is how many to sell; for SPLIT items it's the <b>instant leg only</b>
-        (split the stack, sell just that many — the rest is in the import list).</p>
-      <div id="instList"></div>
-    </div>
+  <div class="rowline" style="margin-top:0">
+    <button id="btnCopy" type="button" class="primary">Copy import list</button>
+    <label for="decSep" style="margin:0">decimals</label>
+    <select id="decSep" style="width:100px">
+      <option value="dot">1234.56</option>
+      <option value="comma">1234,56</option>
+    </select>
+    <span id="copyStatusImp" class="hint"></span>
   </div>
+  <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
+  <p class="hint" style="margin:0 0 4px">
+    <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import — the ticked
+    rows in the table. For SPLIT items you can first sell the instant leg (the Plan column shows
+    "N now · M listed"), then import the remainder; importing the whole stack directly is safe too (buy
+    orders above the price fill instantly at their own price). INSTANT rows (⚡) never appear here —
+    sell them straight from the hangar: filter the table to INSTANT and click a name cell to copy it
+    for the in-game inventory search.</p>
+  <textarea id="preview" readonly spellcheck="false"></textarea>
   <div class="rowline">
+    <button id="btnCopyInst" type="button" title="all INSTANT items plus the instant legs of ticked SPLITs, as Name ⇥ Qty text">Copy instant list (name ⇥ qty)</button>
+    <span id="copyStatusInst" class="hint"></span>
+    <span class="sep"></span>
     <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
     <span id="copyStatusTsv" class="hint"></span>
   </div>
@@ -569,14 +553,14 @@ const state = {
   esiToken: 0,         // bumped to invalidate an in-flight fetch
   fetchedHist: false,  // whether the last fetch included history
   savedSel: { un: new Set(), re: new Set() },  // saved selection deviations, applied when rows (re)appear
-  instDone: new Set(),  // checklist items ticked off this session (by row key)
   sortKey: 'totalNet', sortDir: -1,
-  filterType: 'all', filterText: '',
+  filterType: 'all', filterWait: 'all', filterText: '',
 };
 
 function rowFilter(r){
-  if (state.filterType === 'wait'){ if (!r.waitFlag) return false; }
-  else if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
+  if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
+  if (state.filterWait === 'only' && !r.waitFlag) return false;
+  if (state.filterWait === 'hide' && r.waitFlag) return false;
   if (state.filterText && !r.name.toLowerCase().includes(state.filterText)) return false;
   return true;
 }
@@ -1033,45 +1017,16 @@ function renderPreview(){
     ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net`
     : 'nothing ticked';
 
-  // instant checklist: sellable INSTANT rows (full stack)
-  // plus the instant legs of ticked SPLIT rows (sell only that many, the rest is imported)
-  const inst = state.rows
+}
+
+// instant items (plus instant legs of ticked SPLITs) as Name⇥Qty lines
+function instantListText(){
+  return state.rows
     .filter(r => (r.strategy === 'imm' && !r.unsellable)
               || (r.strategy === 'split' && r.inImport))
-    .sort((a, b) => a.rank - b.rank);
-  const box = $('instList');
-  box.textContent = '';
-  if (!inst.length){
-    const d = document.createElement('div');
-    d.className = 'hint'; d.style.padding = '8px 10px'; d.textContent = 'nothing yet';
-    box.appendChild(d);
-  }
-  for (const r of inst){
-    const qty = r.strategy === 'split' ? r.splitFill : r.qty;
-    const div = document.createElement('div');
-    div.className = 'inst-item' + (state.instDone.has(r.key) ? ' done' : '');
-    div.dataset.name = r.name; div.dataset.qty = String(qty);
-    const tick = document.createElement('span'); tick.className = 'tick';
-    tick.textContent = state.instDone.has(r.key) ? '✓' : '';
-    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = r.name;
-    const q = document.createElement('span'); q.className = 'hint';
-    q.textContent = r.strategy === 'split'
-      ? `× ${fmt.format(qty)} of ${fmt.format(r.qty)} · split leg` : `× ${fmt.format(qty)}`;
-    div.append(tick, nm, q);
-    div.addEventListener('click', () => {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) return;
-      state.instDone.add(r.key);
-      div.classList.add('done'); tick.textContent = '✓';
-      cellCopy(r.name, div);   // clicking again re-copies and stays done
-    });
-    box.appendChild(div);
-  }
-  const instNet = inst.reduce((s, r) => s + (r.strategy === 'split' ? r.instLegNet : r.totalNet), 0);
-  const legN = inst.filter(r => r.strategy === 'split').length;
-  $('instEcho').textContent = inst.length
-    ? `${inst.length} items · ${fmtIsk(instNet)} ISK expected net${legN ? ` · incl. ${legN} split leg${legN > 1 ? 's' : ''} (partial stacks)` : ''}`
-    : 'nothing yet';
+    .sort((a, b) => a.rank - b.rank)
+    .map(r => `${r.name}\t${r.strategy === 'split' ? r.splitFill : r.qty}`)
+    .join('\n');
 }
 
 function renderUnpriced(){
@@ -1339,7 +1294,6 @@ $('btnDemo').addEventListener('click', () => {
 $('btnClear').addEventListener('click', () => {
   $('inv').value = '';
   state.esi.clear();
-  state.instDone.clear();
   state.esiToken++;               // cancel any in-flight fetch
   $('esiStatus').textContent = '';
   rebuild(false);
@@ -1362,6 +1316,7 @@ $('btnAll').addEventListener('click', () => { for (const r of state.rows) if (ro
 $('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = false; render(); persist(); });
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
+$('fltWait').addEventListener('change', () => { state.filterWait = $('fltWait').value; render(); });
 $('fltText').addEventListener('input', () => { state.filterText = $('fltText').value.trim().toLowerCase(); render(); });
 
 $('btnCopy').addEventListener('click', () => {
@@ -1369,10 +1324,8 @@ $('btnCopy').addEventListener('click', () => {
   if (!text){ $('copyStatusImp').textContent = 'nothing ticked'; $('copyStatusImp').className = 'hint err'; return; }
   copyText(text, $('copyStatusImp'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
-$('btnInstReset').addEventListener('click', () => { state.instDone.clear(); renderPreview(); });
 $('btnCopyInst').addEventListener('click', () => {
-  const text = [...document.querySelectorAll('#instList .inst-item')]
-    .map(el => `${el.dataset.name}\t${el.dataset.qty}`).join('\n');
+  const text = instantListText();
   if (!text){ $('copyStatusInst').textContent = 'nothing to copy'; $('copyStatusInst').className = 'hint err'; return; }
   copyText(text, $('copyStatusInst'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
