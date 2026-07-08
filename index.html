@@ -51,6 +51,8 @@
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
   tbody td:not(:first-child){cursor:copy}
   tbody td.copied{box-shadow:inset 0 0 0 1px var(--cyan);background:#14344a}
+  tbody tr.wait{background:rgba(180,140,232,.07)}
+  tbody tr.wait td:first-child{box-shadow:inset 3px 0 0 var(--violet)}
   tbody tr:hover{background:#161d2b}
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
   td.pos{color:var(--green)}
@@ -179,7 +181,9 @@
       <li>Vol/day is the mean of the region's daily traded units over the same "last N days" window as the
           history statistic (buys and sells combined — no API has per-side <i>traded</i> volume). The Buy/Sell
           depth columns are the live order book per side — outstanding orders right now, not traded volume.
-          Margin % is <code>(sell − buy) ÷ buy</code>; negative (red) means a crossed market.</li>
+          Margin % is <code>(sell − buy) ÷ buy</code> (negative only in crossed markets, which are already
+          flagged). Sell/Hist % compares the live best sell to the history statistic — green above history,
+          red below; ⏳-highlighted rows are the ones worth holding.</li>
       <li><span class="flag wait">⏳ wait? +X%</span> = an order at the <b>p90</b> of the history window would net
           X% more than this row's current plan — potential worth waiting for, shown whatever your list-price
           source. It assumes that order eventually fills at p90 (one of the window's best days returns); judge the
@@ -204,7 +208,7 @@
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
     <button id="btnTop" type="button" title="ticks the top N ORDER/SPLIT rows for the import list">Tick top N</button>
     <button id="btnAll" type="button" title="ticks every ORDER/SPLIT row passing the filters">All</button>
-    <button id="btnNone" type="button">None</button>
+    <button id="btnNone" type="button" title="empties the whole import list, regardless of filters">None</button>
     <span class="sep"></span>
     <label for="fltType" style="margin:0">show</label>
     <select id="fltType" style="width:170px">
@@ -233,6 +237,7 @@
         <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell ISK/u</th>
         <th data-key="margin" class="num" title="spread between best sell and top buy: (sell − buy) ÷ buy — negative means a crossed market">Margin %</th>
         <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist ISK/u</th>
+        <th data-key="sellVsHist" class="num" title="current best sell vs the history statistic: (sell − hist) ÷ hist — green above history (good time to sell), red below (market is low right now; see the ⏳ tag)">Sell/Hist %</th>
         <th data-key="volDay" class="num" title="average units traded per day over the history window (regional; trades have no per-side split in any API)">Vol/day</th>
         <th data-key="buyDepth" class="num" title="units currently wanted by buy orders covering the hub station">Buy depth</th>
         <th data-key="sellDepth" class="num" title="units currently offered by sell orders at the hub station">Sell depth</th>
@@ -552,7 +557,7 @@ const state = {
   esiRunning: false,
   esiToken: 0,         // bumped to invalidate an in-flight fetch
   fetchedHist: false,  // whether the last fetch included history
-  savedSel: { un: new Set(), re: new Set() },  // saved selection deviations, applied when rows (re)appear
+  savedTicked: new Set(),  // ticks restored from storage, applied when rows (re)appear
   sortKey: 'totalNet', sortDir: -1,
   filterType: 'all', filterWait: 'all', filterText: '',
 };
@@ -732,6 +737,8 @@ function rebuild(keepChecks = true){
     const sellDepth = e.sellDepth ?? null;
     const margin = (bestBuy != null && bestBuy > 0 && bestSell != null)
       ? (bestSell - bestBuy) / bestBuy * 100 : null;
+    const sellVsHist = (bestSell != null && hist != null && hist > 0)
+      ? (bestSell - hist) / hist * 100 : null;
 
     if (bestBuy == null && bestSell == null && hist == null){
       unpriced.push({ name: i.name, qty: i.qty, reason: 'no market orders or history at this hub', unsellable });
@@ -800,18 +807,16 @@ function rebuild(keepChecks = true){
 
     rows.push({
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
-      bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin,
+      bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
       waitPct, waitFlag,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
       // latent tick state — survives strategy flips; instants are excluded from the
-      // import list at use-time (inImport) so a transient flip never wipes a tick
-      checked: prevChecks.has(key) ? prevChecks.get(key)
-        : state.savedSel.un.has(key) ? false
-        : state.savedSel.re.has(key) ? true
-        : !unsellable,
+      // import list at use-time (inImport) so a transient flip never wipes a tick.
+      // Default is UNTICKED: the import list only ever contains deliberate picks.
+      checked: prevChecks.has(key) ? prevChecks.get(key) : state.savedTicked.has(key),
     });
   }
 
@@ -872,7 +877,8 @@ function render(){
   for (const r of sortedRows()){
     const tr = document.createElement('tr');
     // dim only rows that end up in neither artifact (instants always go to the checklist)
-    if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)) tr.className = 'excluded';
+    if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)) tr.classList.add('excluded');
+    if (r.waitFlag) tr.classList.add('wait');
 
     const tdCheck = document.createElement('td');
     if (r.strategy === 'imm'){
@@ -898,8 +904,9 @@ function render(){
       ['num', fmt.format(r.qty), String(r.qty)],
       ['num', fmtIsk(r.bestBuy), priceCopy(r.bestBuy)],
       ['num', fmtIsk(r.bestSell), priceCopy(r.bestSell)],
-      ['num' + signCls(r.margin), r.margin == null ? '—' : r.margin.toFixed(1) + '%', r.margin == null ? '' : r.margin.toFixed(2)],
+      ['num', r.margin == null ? '—' : r.margin.toFixed(1) + '%', r.margin == null ? '' : r.margin.toFixed(2)],
       ['num', fmtIsk(r.hist), priceCopy(r.hist)],
+      ['num' + signCls(r.sellVsHist), r.sellVsHist == null ? '—' : (r.sellVsHist > 0 ? '+' : '') + r.sellVsHist.toFixed(1) + '%', r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2)],
       ['num', r.volDay == null ? '—' : fmt.format(r.volDay), r.volDay == null ? '' : String(r.volDay)],
       ['num', r.buyDepth == null ? '—' : fmt.format(r.buyDepth), r.buyDepth == null ? '' : String(r.buyDepth)],
       ['num', r.sellDepth == null ? '—' : fmt.format(r.sellDepth), r.sellDepth == null ? '' : String(r.sellDepth)],
@@ -953,7 +960,7 @@ function render(){
   if (!tbody.children.length){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 16; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
+    td.colSpan = 17; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
     td.textContent = !state.invCount ? 'Paste your inventory above to get started.'
       : !state.rows.length ? 'Fetch prices (ESI) to value and rank your items.'
       : 'No rows match the current filters.';
@@ -1013,9 +1020,10 @@ function renderPreview(){
     .sort((a, b) => a.rank - b.rank);
   $('preview').value = imp.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
   const impNet = imp.reduce((s, r) => s + (r.strategy === 'split' ? r.orderLegNet : r.totalNet), 0);
+  const hiddenImp = imp.filter(r => !rowFilter(r)).length;
   $('impEcho').textContent = imp.length
-    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net`
-    : 'nothing ticked';
+    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net${hiddenImp ? ` · ⚠ ${hiddenImp} of them hidden by the current filters` : ''}`
+    : 'nothing ticked — build the list with Tick top N / All or the row ticks';
 
 }
 
@@ -1064,7 +1072,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Wait upside %','Instant leg qty','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Net instant ISK','Net order plan ISK','Expected net ISK','Order Δ ISK','Wait upside %','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
     lines.push([
@@ -1072,6 +1080,7 @@ function fullTsv(){
       r.bestBuy ?? '', r.bestSell ?? '',
       r.margin != null ? r.margin.toFixed(2) : '',
       r.hist != null ? r.hist.toFixed(2) : '',
+      r.sellVsHist != null ? r.sellVsHist.toFixed(2) : '',
       r.volDay ?? '', r.buyDepth ?? '', r.sellDepth ?? '',
       r.strategy === 'imm' ? 'INSTANT' : r.strategy === 'split' ? 'SPLIT' : 'ORDER',
       r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
@@ -1085,7 +1094,7 @@ function fullTsv(){
       r.inImport ? 'yes' : 'no',
     ].join('\t'));
   }
-  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', '', '', '', 'UNPRICED', '', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
+  for (const u of state.unpriced) lines.push([u.name, u.qty, '', '', '', '', '', '', '', '', 'UNPRICED', '', '', '', '', '', '', '', u.reason, 'no'].join('\t'));
   return lines.join('\n');
 }
 
@@ -1238,9 +1247,7 @@ function persist(){
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
       waitPct: $('waitPct').value,
-      // store deviations from the default tick state (default on = sellable ORDER/SPLIT)
-      unchecked: state.rows.filter(r => !r.checked && !(r.unsellable || r.strategy === 'imm')).map(r => r.key),
-      rechecked: state.rows.filter(r => r.checked && r.unsellable).map(r => r.key),
+      ticked: state.rows.filter(r => r.checked).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
@@ -1260,8 +1267,8 @@ function restore(){
   if (saved.histMode) $('histMode').value = saved.histMode;
   if (saved.histDays) $('histDays').value = saved.histDays;
   if (saved.waitPct != null) $('waitPct').value = saved.waitPct;
-  state.savedSel = { un: new Set(saved.unchecked || []), re: new Set(saved.rechecked || []) };
-  rebuild(false);   // applies savedSel via the checked fallback — also after a later refetch
+  state.savedTicked = new Set(saved.ticked || []);
+  rebuild(false);   // applies savedTicked via the checked fallback — also after a later refetch
   return true;
 }
 
@@ -1313,7 +1320,8 @@ $('btnTop').addEventListener('click', () => {
   render(); persist();
 });
 $('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = !r.unsellable; render(); persist(); });
-$('btnNone').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = false; render(); persist(); });
+// None empties the entire import list — filters don't scope it, that's what "None" means
+$('btnNone').addEventListener('click', () => { for (const r of state.rows) r.checked = false; render(); persist(); });
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
 $('fltWait').addEventListener('change', () => { state.filterWait = $('fltWait').value; render(); });
