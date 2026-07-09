@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVE Moon Helper</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,'Segoe UI',Roboto,sans-serif}
+  #topbar{display:flex;gap:4px;align-items:center;padding:8px 22px;background:#0e131d;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  #topbar .brand{font-weight:600;font-size:14px;letter-spacing:.5px;color:var(--cyan);margin-right:14px}
+  #topbar a{color:var(--dim);text-decoration:none;font-size:13px;padding:4px 12px;border-radius:6px}
+  #topbar a:hover{color:var(--text);background:#1b2434}
+  #topbar a.active{color:var(--text);background:#1b2434;box-shadow:inset 0 -2px 0 var(--cyan)}
+  header{padding:18px 22px 10px}
+  header h1{margin:0;font-size:20px;letter-spacing:.4px}
+  header p{margin:4px 0 0;color:var(--dim);font-size:13px}
+  main{padding:0 22px 60px;max-width:1500px;margin:0 auto}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+  section h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)}
+  section h2 .subttl{text-transform:none;letter-spacing:.3px;color:var(--dim);font-weight:400}
+  label{display:block;color:var(--dim);font-size:12px;margin-bottom:4px}
+  textarea{width:100%;height:170px;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:8px;font:12px/1.4 var(--mono);resize:vertical;white-space:pre}
+  textarea:focus,input:focus,select:focus,button:focus-visible{outline:1px solid var(--cyan)}
+  input[type=number],input[type=text],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;font:13px var(--mono);width:90px}
+  input:disabled,select:disabled{opacity:.4;cursor:not-allowed}
+  fieldset.grp{border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+    padding:6px 12px 10px;margin:0;min-width:210px}
+  fieldset.grp legend{color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:0 6px}
+  fieldset.grp legend.tl{color:var(--tc)}
+  button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
+    padding:7px 14px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--cyan)}
+  button.primary{background:#14344a;border-color:#2a6d92;color:#cfeefb}
+  button:disabled{opacity:.5;cursor:default}
+  .rowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .rowline .sep{flex:1}
+  .hint{color:var(--dim);font-size:12px}
+  .flag{display:inline-block;font-size:11px;color:var(--red)}
+  .flag.warn{color:var(--amber)}
+  code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
+  details{margin-top:10px;color:var(--dim);font-size:13px}
+  details summary{cursor:pointer;color:var(--text)}
+  ul.plain{column-width:340px;column-gap:26px}
+  ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
+  #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .ok{color:var(--green)} .err{color:var(--red)}
+  #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
+  #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
+  #fetchFill.ind{width:30%;animation:ind 1.1s linear infinite}
+  @keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
+
+  /* tier palette — class sets the vars, everything tier-coloured consumes them */
+  .t-r64{--tc:#e8b45b;--tbg:#3a2f14;--tbd:#6b571f}   /* amber  */
+  .t-r32{--tc:#b48ce8;--tbg:#2b1f3c;--tbd:#533c74}   /* violet */
+  .t-r16{--tc:#6fb1f0;--tbg:#14293f;--tbd:#2a5580}   /* sky    */
+  .t-r8 {--tc:#a8d65e;--tbg:#25330f;--tbd:#4c6620}   /* lime   */
+  .t-r4 {--tc:#5bd8b9;--tbg:#11322c;--tbd:#23615b}   /* teal   */
+  .t-min{--tc:#e8895b;--tbg:#3a2414;--tbd:#6b4420}   /* orange */
+
+  .tierrow{display:flex;gap:12px;align-items:baseline;margin-top:8px;flex-wrap:wrap}
+  .tierlab{flex:none;width:135px;text-align:right;font-size:11px;text-transform:uppercase;
+    letter-spacing:1px;color:var(--tc);opacity:.9}
+  .chipset{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:999px;
+    padding:4px 12px;font-size:12px;cursor:pointer}
+  .chip:hover{color:var(--text);border-color:#3a4a66}
+  .chip.on{background:var(--tbg);border-color:var(--tbd);color:var(--tc)}
+  .chip.on:hover{border-color:var(--tc)}
+  .tierbadge{display:inline-block;flex:none;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;
+    background:var(--tbg);color:var(--tc);border:1px solid var(--tbd);white-space:nowrap}
+  .tiertag{color:var(--tc);font-weight:600}
+
+  #priceGrid{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;align-items:stretch}
+  .prow{display:flex;align-items:center;gap:8px;margin-top:6px}
+  .prow label{width:130px;margin:0;color:var(--text);font-size:12px}
+  .prow .pf{font-family:var(--mono);font-size:11px;white-space:nowrap}
+  #priceGrid input.edited{border-color:var(--amber)}
+
+  #panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  #panels section{margin-top:0}
+  @media (max-width:1000px){#panels{grid-template-columns:1fr}}
+
+  .ranklist{border:1px solid var(--line);border-radius:8px;background:var(--panel2);overflow:hidden;margin-top:10px}
+  .ranklist>.hint{display:block;padding:14px;text-align:center}
+  .rankrow{position:relative;display:flex;gap:10px;align-items:center;padding:7px 10px;
+    border-bottom:1px solid #1a2233;font-size:13px}
+  .rankrow.zero>*:not(.bar){opacity:.45}
+  .rankrow .bar{position:absolute;left:0;top:2px;bottom:2px;background:rgba(91,200,232,.09);
+    border-radius:0 6px 6px 0;pointer-events:none}
+  .rankrow>*:not(.bar){position:relative}
+  .rankrow .rname{font-weight:600;white-space:nowrap}
+  .rankrow .ymats,.rankrow .mtags{flex:1;display:flex;flex-wrap:wrap;gap:2px 12px;color:var(--dim);font-size:12px}
+  .rankrow .ym{white-space:nowrap}
+  .rankrow .ym.sel{color:var(--tc);font-weight:600}
+  .rankrow .mtags .tiertag{font-size:12px;white-space:nowrap}
+  .rankrow .rscore{margin-left:auto;font-family:var(--mono);white-space:nowrap}
+  .ranklist .rankrow:last-child{border-bottom:0}
+  button.moonbtn{width:100%;display:flex;text-align:left;background:transparent;border:0;border-radius:0;
+    border-bottom:1px solid #1a2233;color:var(--text);font-size:13px;padding:7px 10px}
+  button.moonbtn:hover{background:#161d2b;border-color:#1a2233}
+  .moonbtn .caret{flex:none;width:12px;color:var(--dim)}
+  .moondetail{padding:6px 12px 10px 32px;border-bottom:1px solid #1a2233;background:#0d1119}
+  .moondetail .dhead{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:7px 0 3px}
+  .moondetail .dline{margin:2px 0;font-family:var(--mono);font-size:12px}
+  .moondetail .dline.warn{color:var(--amber)}
+  .moondetail .comp{margin-right:14px;white-space:nowrap}
+  .moonitem:last-child .moonbtn{border-bottom:0}
+  .moonitem:last-child .moondetail{border-bottom:0;border-top:1px solid #1a2233}
+</style>
+</head>
+<body>
+<nav id="topbar">
+  <span class="brand">EVE Helper</span>
+  <a href="index.html">Sell</a>
+  <a href="ore.html">Ore</a>
+  <a href="moon.html" class="active">Moon</a>
+</nav>
+<header>
+  <h1>EVE Moon Goo Console</h1>
+  <p>Pick the moon materials you actually want, pull live Jita prices straight from ESI (no login),
+     and see which moon ores are worth mining — then paste a survey scan to rank your own moons by
+     output per drill-hour.</p>
+</header>
+<main>
+
+<section>
+  <h2>1 · Target materials &amp; prices</h2>
+  <div id="chips"></div>
+  <div class="rowline">
+    <label for="scoreBasis" style="margin:0">score by</label>
+    <select id="scoreBasis" style="width:120px">
+      <option value="isk">ISK value</option>
+      <option value="units">raw units</option>
+    </select>
+    <span id="basisWarn" class="flag warn" hidden>raw-units basis with several materials selected
+      over-weights R4 gases and Pyerite — ISK value is usually what you want</span>
+    <span class="sep"></span>
+    <label for="priceBasis" style="margin:0">price basis</label>
+    <select id="priceBasis" style="width:110px">
+      <option value="sell">Jita sell</option>
+      <option value="buy">Jita buy</option>
+    </select>
+    <button id="btnEsi" type="button" class="primary">Fetch Jita prices (ESI)</button>
+    <span id="esiStatus"></span>
+  </div>
+  <div id="fetchBar" hidden><div id="fetchFill"></div></div>
+  <details id="priceEditor">
+    <summary>Prices per unit — <span id="priceSrcNote" class="hint">placeholders until fetched</span></summary>
+    <div id="priceGrid"></div>
+    <div class="rowline">
+      <button id="btnResetPrices" type="button">Reset edits</button>
+      <span class="hint">an edited field (amber border) keeps your value until the next fetch ·
+        untouched fields follow the price-basis selector once fetched, placeholders before that</span>
+    </div>
+  </details>
+</section>
+
+<div id="panels">
+<section>
+  <h2>2 · Best moon ores <span class="subttl">· yield per 1,000 m³ of chunk</span></h2>
+  <div id="oreList" class="ranklist"></div>
+  <div class="rowline">
+    <button id="btnAllOres" type="button">show all 20</button>
+    <span class="hint" id="oreNote"></span>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Best moons <span class="subttl">· from your survey scan</span></h2>
+  <label for="scan">Survey scan paste (probe window → Copy to Clipboard)</label>
+  <textarea id="scan" spellcheck="false"
+    placeholder="Moon name&#10;&#9;Ore&#9;0.3925…&#9;typeID&#9;systemID&#9;planetID&#9;moonID"></textarea>
+  <div class="rowline">
+    <button id="btnDemoScan" type="button">Load demo scan</button>
+    <button id="btnClearScan" type="button">Clear</button>
+    <span class="hint" id="scanNote"></span>
+    <span class="sep"></span>
+    <span class="hint">click a moon to expand</span>
+  </div>
+  <div id="moonList" class="ranklist"></div>
+</section>
+</div>
+
+<section>
+  <h2>4 · Notes &amp; assumptions</h2>
+  <ul class="plain">
+    <li>Yields are <b>gross, basic-quality</b> ore output per 1,000 m³ of chunk. Improved variants
+        (e.g. Brimful, Glistening) give +15%, jackpot variants ×2.</li>
+    <li>Multiply by your <b>net refine rate</b> for sellable units — the ranking itself is unaffected,
+        since refining scales every ore the same way.</li>
+    <li>Moon rates assume <code>30,000 m³</code> of chunk per hour of drill prep (Athanor/Tatara).
+        A Metenox Moon Drill is slower and auto-refines at a fixed efficiency.</li>
+    <li>R8 and better materials only occur on <b>lowsec/nullsec</b> moons; highsec and wormhole moons
+        cap at R4 ubiquitous ores.</li>
+    <li>Live prices are best Jita 4-4 station orders from public ESI (The Forge region) — no login,
+        nothing leaves your machine except the price queries.</li>
+    <li>Ore/yield data: EVE University Wiki — Moon mining → Moon Ore Refining.</li>
+  </ul>
+</section>
+
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const ESI = 'https://esi.evetech.net/latest';
+const REGION = 10000002, SYSTEM = 30000142, STATION = 60003760;   // The Forge / Jita / Jita 4-4
+const LS_KEY = 'eveHelper.moon.v1';
+const M3_PER_HOUR = 30000;   // moon extraction: 30k m3 of chunk per hour of drill prep
+
+/* ---------- data (EVE University Wiki — Moon Ore Refining) ---------- */
+const MOON_ORES = {
+  Zeolites:   { tier: 'R4',  yield: { 'Atmospheric Gases': 65, Pyerite: 8000, Mexallon: 400 } },
+  Sylvite:    { tier: 'R4',  yield: { 'Evaporite Deposits': 65, Pyerite: 4000, Mexallon: 400 } },
+  Bitumens:   { tier: 'R4',  yield: { Hydrocarbons: 65, Pyerite: 6000, Mexallon: 400 } },
+  Coesite:    { tier: 'R4',  yield: { Silicates: 65, Pyerite: 2000, Mexallon: 400 } },
+  Cobaltite:  { tier: 'R8',  yield: { Cobalt: 40 } },
+  Euxenite:   { tier: 'R8',  yield: { Scandium: 40 } },
+  Titanite:   { tier: 'R8',  yield: { Titanium: 40 } },
+  Scheelite:  { tier: 'R8',  yield: { Tungsten: 40 } },
+  Otavite:    { tier: 'R16', yield: { Cadmium: 40, 'Atmospheric Gases': 10 } },
+  Sperrylite: { tier: 'R16', yield: { Platinum: 40, 'Evaporite Deposits': 10 } },
+  Chromite:   { tier: 'R16', yield: { Chromium: 40, Hydrocarbons: 10 } },
+  Vanadinite: { tier: 'R16', yield: { Vanadium: 40, Silicates: 10 } },
+  Carnotite:  { tier: 'R32', yield: { Technetium: 50, Cobalt: 10, 'Atmospheric Gases': 15 } },
+  Pollucite:  { tier: 'R32', yield: { Caesium: 50, Scandium: 10, Hydrocarbons: 15 } },
+  Zircon:     { tier: 'R32', yield: { Hafnium: 50, Titanium: 10, Silicates: 15 } },
+  Cinnabar:   { tier: 'R32', yield: { Mercury: 50, Tungsten: 10, 'Evaporite Deposits': 15 } },
+  Xenotime:   { tier: 'R64', yield: { Dysprosium: 22, Vanadium: 10, Cobalt: 20, 'Atmospheric Gases': 20 } },
+  Monazite:   { tier: 'R64', yield: { Neodymium: 22, Chromium: 10, Tungsten: 20, 'Evaporite Deposits': 20 } },
+  Loparite:   { tier: 'R64', yield: { Promethium: 22, Platinum: 10, Scandium: 20, Hydrocarbons: 20 } },
+  Ytterbite:  { tier: 'R64', yield: { Thulium: 22, Cadmium: 10, Titanium: 20, Silicates: 20 } },
+};
+
+const GROUPS = [
+  { label: 'R64 Exceptional', tier: 'R64', mats: ['Dysprosium', 'Neodymium', 'Promethium', 'Thulium'] },
+  { label: 'R32 Rare',        tier: 'R32', mats: ['Technetium', 'Caesium', 'Hafnium', 'Mercury'] },
+  { label: 'R16 Uncommon',    tier: 'R16', mats: ['Platinum', 'Chromium', 'Cadmium', 'Vanadium'] },
+  { label: 'R8 Common',       tier: 'R8',  mats: ['Cobalt', 'Scandium', 'Titanium', 'Tungsten'] },
+  { label: 'R4 Ubiquitous',   tier: 'R4',  mats: ['Atmospheric Gases', 'Evaporite Deposits', 'Hydrocarbons', 'Silicates'] },
+  { label: 'Normal minerals', tier: 'MIN', mats: ['Pyerite', 'Mexallon'] },
+];
+
+const SHORT = {
+  'Atmospheric Gases': 'Atmo Gas', 'Evaporite Deposits': 'Evaporite', Hydrocarbons: 'Hydrocarb', Silicates: 'Silicates',
+  Cobalt: 'Cobalt', Scandium: 'Scandium', Titanium: 'Titanium', Tungsten: 'Tungsten',
+  Cadmium: 'Cadmium', Chromium: 'Chromium', Platinum: 'Platinum', Vanadium: 'Vanadium',
+  Caesium: 'Caesium', Hafnium: 'Hafnium', Mercury: 'Mercury', Technetium: 'Technetium',
+  Dysprosium: 'Dyspro', Neodymium: 'Neodym', Promethium: 'Prometh', Thulium: 'Thulium',
+  Pyerite: 'Pye', Mexallon: 'Mex',
+};
+
+// wiki-era placeholders (ISK/unit) — replaced per material by live ESI prices once fetched
+const DEFAULT_PRICE = {
+  'Atmospheric Gases': 900, 'Evaporite Deposits': 400, Hydrocarbons: 300, Silicates: 400,
+  Cobalt: 1500, Scandium: 2500, Titanium: 1500, Tungsten: 1000,
+  Cadmium: 3000, Chromium: 3500, Platinum: 4000, Vanadium: 2500,
+  Caesium: 12000, Hafnium: 15000, Mercury: 10000, Technetium: 20000,
+  Dysprosium: 100000, Neodymium: 70000, Promethium: 45000, Thulium: 30000,
+  Pyerite: 14, Mexallon: 80,
+};
+
+const MATS = Object.keys(DEFAULT_PRICE);
+const TIER_OF = {};
+for (const g of GROUPS) for (const m of g.mats) TIER_OF[m] = g.tier;
+const tierCls = t => 't-' + String(t).toLowerCase();
+
+const ORE_NAMES = Object.keys(MOON_ORES);
+const ORE_LOWER = new Map(ORE_NAMES.map(o => [o.toLowerCase(), o]));
+// fallback for space-mangled pastes (tabs lost): known ore name followed by a fraction
+const ORE_RX = new RegExp('\\b(' + ORE_NAMES.join('|') + ')\\b[\\s:]*([0-9]*\\.?[0-9]+)', 'i');
+
+const DEMO_SCAN = [
+  'Tarta IX - Moon 1\t\t\t\t',
+  '\tBitumens\t0.392515897751\t45492\t30005205\t40329125\t40329126',
+  '\tSylvite\t0.21729759872\t45491\t30005205\t40329125\t40329126',
+  '\tZeolites\t0.390186518431\t45490\t30005205\t40329125\t40329126',
+  'Tarta IX - Moon 2\t\t\t\t',
+  '\tCoesite\t0.25006622076\t45493\t30005205\t40329125\t40329127',
+  '\tZeolites\t0.74993377924\t45490\t30005205\t40329125\t40329127',
+  'Demo R64 Moon (synthetic)\t\t\t\t',
+  '\tXenotime\t0.31\t45510\t0\t0\t0',
+  '\tVanadinite\t0.28\t45500\t0\t0\t0',
+  '\tZeolites\t0.41\t45490\t0\t0\t0',
+].join('\n');
+
+/* ---------- state ---------- */
+const state = {
+  selected: new Set(['Dysprosium']),
+  // per material: override = user-edited value since the last fetch, fetched = {sell, buy}
+  prices: Object.fromEntries(MATS.map(m => [m, { override: null, fetched: null }])),
+  fetchedAt: null,
+  showAllOres: false,
+  moonOpen: new Set(),       // expanded moon names (not persisted)
+  esiRunning: false, esiToken: 0,
+};
+
+/* ---------- formatting ---------- */
+const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const fmtOrDash = v => v == null ? '—' : fmt.format(v);
+const trimNum = v => Number.isFinite(v) ? String(Math.round(v * 100) / 100) : '';
+const iskBasis = () => $('scoreBasis').value === 'isk';
+const scoreText = (v, per) => fmt.format(Math.round(v)) + (iskBasis() ? ' ISK' : ' u') + per;
+
+/* ---------- prices ---------- */
+// effective price: user override (since last fetch) → fetched value for the chosen basis → placeholder
+function priceOf(m){
+  const p = state.prices[m];
+  if (p.override != null) return p.override;
+  if (p.fetched){
+    const v = $('priceBasis').value === 'buy' ? p.fetched.buy : p.fetched.sell;
+    if (v != null) return v;
+  }
+  return DEFAULT_PRICE[m];
+}
+const weight = m => iskBasis() ? priceOf(m) : 1;
+
+/* ---------- survey-scan parser ---------- */
+// Accepts the in-game probe window "Copy to Clipboard" export: a moon-name row, then indented
+// tab-delimited rows of ore name + fraction (0..1] + ids. A known ore name in any tab column with a
+// following float 0 < f <= 1.0001 makes an ore row; anything else with a non-empty first column
+// becomes the current moon name. Handles CRLF and NBSP; falls back to a regex for space-mangled rows.
+function parseScan(text){
+  const moons = [];
+  let cur = null;
+  const lines = String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').split('\n');
+  for (const line of lines){
+    if (!line.trim()) continue;
+    const cells = line.split('\t').map(c => c.trim());
+    let found = null;
+    for (let i = 0; i < cells.length && !found; i++){
+      const ore = ORE_LOWER.get(cells[i].toLowerCase());
+      if (!ore) continue;
+      for (let j = i + 1; j < cells.length; j++){
+        const f = parseFloat(cells[j]);
+        if (Number.isFinite(f) && f > 0 && f <= 1.0001){ found = { ore, frac: f }; break; }
+      }
+    }
+    if (!found){
+      const m = ORE_RX.exec(line);
+      if (m){
+        const f = parseFloat(m[2]);
+        if (Number.isFinite(f) && f > 0 && f <= 1.0001)
+          found = { ore: ORE_LOWER.get(m[1].toLowerCase()), frac: f };
+      }
+    }
+    if (found){
+      if (!cur){ cur = { name: 'Unnamed moon', ores: [] }; moons.push(cur); }
+      cur.ores.push(found);
+    } else if (cells[0]){
+      cur = { name: cells[0], ores: [] };
+      moons.push(cur);
+    }
+  }
+  return moons.filter(m => m.ores.length);
+}
+
+// units of each material per hour of drilling, chunk fill, and the selected-material score
+function moonStats(moon){
+  const out = {};
+  let fill = 0;
+  for (const { ore, frac } of moon.ores){
+    fill += frac;
+    const def = MOON_ORES[ore];
+    for (const [mat, units] of Object.entries(def.yield))
+      out[mat] = (out[mat] || 0) + frac * M3_PER_HOUR * units / 1000;
+  }
+  let score = 0;
+  for (const m of state.selected) score += (out[m] || 0) * weight(m);
+  return { out, fill, score };
+}
+
+/* ---------- chips ---------- */
+function buildChips(){
+  const box = $('chips');
+  for (const g of GROUPS){
+    const row = document.createElement('div'); row.className = 'tierrow';
+    const lab = document.createElement('span');
+    lab.className = 'tierlab ' + tierCls(g.tier);
+    lab.textContent = g.label;
+    row.appendChild(lab);
+    const set = document.createElement('div'); set.className = 'chipset';
+    for (const m of g.mats){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip ' + tierCls(g.tier);
+      b.dataset.mat = m;
+      b.textContent = m;
+      b.setAttribute('aria-pressed', 'false');
+      set.appendChild(b);
+    }
+    row.appendChild(set);
+    box.appendChild(row);
+  }
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button.chip');
+    if (!b) return;
+    const m = b.dataset.mat;
+    if (state.selected.has(m)) state.selected.delete(m); else state.selected.add(m);
+    renderAll(); persist();
+  });
+}
+function updateChips(){
+  for (const b of document.querySelectorAll('#chips .chip')){
+    const on = state.selected.has(b.dataset.mat);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+    b.title = fmt.format(Math.round(priceOf(b.dataset.mat) * 100) / 100) + ' ISK/u';
+  }
+  $('basisWarn').hidden = !(!iskBasis() && state.selected.size > 1);
+}
+
+/* ---------- price editor ---------- */
+function buildPriceGrid(){
+  const box = $('priceGrid');
+  for (const g of GROUPS){
+    const fs = document.createElement('fieldset'); fs.className = 'grp';
+    const lg = document.createElement('legend');
+    lg.className = 'tl ' + tierCls(g.tier);
+    lg.textContent = g.label;
+    fs.appendChild(lg);
+    for (const m of g.mats){
+      const row = document.createElement('div'); row.className = 'prow';
+      const id = 'p_' + m.replace(/\W+/g, '_');
+      const lab = document.createElement('label'); lab.htmlFor = id; lab.textContent = m;
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = 'any'; inp.id = id; inp.dataset.mat = m;
+      const pf = document.createElement('span'); pf.className = 'hint pf'; pf.textContent = 'placeholder';
+      row.appendChild(lab); row.appendChild(inp); row.appendChild(pf);
+      fs.appendChild(row);
+    }
+    box.appendChild(fs);
+  }
+  box.addEventListener('input', e => {
+    const inp = e.target.closest('input[data-mat]');
+    if (!inp) return;
+    const v = inp.valueAsNumber;
+    state.prices[inp.dataset.mat].override = (Number.isFinite(v) && v >= 0) ? v : null;
+    inp.classList.toggle('edited', state.prices[inp.dataset.mat].override != null);
+    renderAll(); persist();
+  });
+}
+function renderPrices(){
+  for (const inp of document.querySelectorAll('#priceGrid input[data-mat]')){
+    const m = inp.dataset.mat, p = state.prices[m];
+    if (document.activeElement !== inp) inp.value = trimNum(priceOf(m));
+    inp.classList.toggle('edited', p.override != null);
+    const pf = inp.nextElementSibling;
+    pf.textContent = p.fetched
+      ? 'sell ' + fmtOrDash(p.fetched.sell) + ' · buy ' + fmtOrDash(p.fetched.buy)
+      : 'placeholder';
+  }
+  $('priceSrcNote').textContent = state.fetchedAt
+    ? 'live Jita ' + $('priceBasis').value + ' · fetched ' + new Date(state.fetchedAt).toLocaleString()
+    : 'placeholders until fetched';
+}
+
+/* ---------- ore ranking ---------- */
+function emptyHint(text){
+  const s = document.createElement('span');
+  s.className = 'hint';
+  s.textContent = text;
+  return s;
+}
+
+function renderOres(){
+  const box = $('oreList');
+  box.textContent = '';
+  if (!state.selected.size){
+    box.appendChild(emptyHint('select at least one material above'));
+    $('btnAllOres').hidden = true;
+    $('oreNote').textContent = '';
+    return;
+  }
+  $('btnAllOres').hidden = false;
+  const rows = ORE_NAMES.map(ore => {
+    const def = MOON_ORES[ore];
+    let score = 0;
+    for (const m of state.selected) score += (def.yield[m] || 0) * weight(m);
+    return { ore, def, score };
+  }).sort((a, b) => b.score - a.score || a.ore.localeCompare(b.ore));
+  const max = Math.max(rows[0].score, 1e-9);
+  const shown = state.showAllOres ? rows : rows.slice(0, 8);
+  for (const r of shown){
+    const row = document.createElement('div');
+    row.className = 'rankrow' + (r.score > 0 ? '' : ' zero');
+    const bar = document.createElement('span');
+    bar.className = 'bar';
+    bar.style.width = (Math.max(r.score, 0) / max * 100).toFixed(1) + '%';
+    row.appendChild(bar);
+    const badge = document.createElement('span');
+    badge.className = 'tierbadge ' + tierCls(r.def.tier);
+    badge.textContent = r.def.tier;
+    row.appendChild(badge);
+    const nm = document.createElement('span'); nm.className = 'rname'; nm.textContent = r.ore;
+    row.appendChild(nm);
+    const ym = document.createElement('span'); ym.className = 'ymats';
+    for (const [mat, units] of Object.entries(r.def.yield)){
+      const s = document.createElement('span');
+      s.className = 'ym' + (state.selected.has(mat) ? ' sel ' + tierCls(TIER_OF[mat]) : '');
+      s.textContent = (SHORT[mat] || mat) + ' ' + fmt.format(units);
+      s.title = mat + ' — ' + fmt.format(units) + ' units per 1,000 m³ (basic ore, before refining)';
+      ym.appendChild(s);
+    }
+    row.appendChild(ym);
+    const sc = document.createElement('span'); sc.className = 'rscore';
+    sc.textContent = scoreText(r.score, '/1k m³');
+    row.appendChild(sc);
+    box.appendChild(row);
+  }
+  $('btnAllOres').textContent = state.showAllOres ? 'top 8' : 'show all ' + rows.length;
+  $('oreNote').textContent = (state.showAllOres ? rows.length + ' ores' : 'top 8 of ' + rows.length)
+    + ' · score = Σ yield of selected × ' + (iskBasis() ? 'Jita ' + $('priceBasis').value + ' price' : '1');
+}
+
+/* ---------- moon ranking ---------- */
+function renderMoons(){
+  const box = $('moonList');
+  box.textContent = '';
+  const raw = $('scan').value;
+  const moons = parseScan(raw);
+  if (!raw.trim()){
+    $('scanNote').textContent = '';
+    box.appendChild(emptyHint('paste a survey scan — or load the demo — to rank your moons'));
+    return;
+  }
+  if (!moons.length){
+    $('scanNote').textContent = '';
+    box.appendChild(emptyHint('no known moon-ore rows found in the paste'));
+    return;
+  }
+  const nOres = moons.reduce((s, m) => s + m.ores.length, 0);
+  $('scanNote').textContent = moons.length + (moons.length > 1 ? ' moons · ' : ' moon · ') + nOres + ' ore rows';
+  if (!state.selected.size){
+    box.appendChild(emptyHint('select at least one material above'));
+    return;
+  }
+  const rows = moons.map(mo => ({ mo, ...moonStats(mo) })).sort((a, b) => b.score - a.score);
+  const max = Math.max(rows[0].score, 1e-9);
+  for (const r of rows){
+    const item = document.createElement('div'); item.className = 'moonitem';
+    const open = state.moonOpen.has(r.mo.name);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rankrow moonbtn' + (r.score > 0 ? '' : ' zero');
+    btn.setAttribute('aria-expanded', String(open));
+    const bar = document.createElement('span');
+    bar.className = 'bar';
+    bar.style.width = (Math.max(r.score, 0) / max * 100).toFixed(1) + '%';
+    btn.appendChild(bar);
+    const caret = document.createElement('span'); caret.className = 'caret';
+    caret.textContent = open ? '▾' : '▸';
+    btn.appendChild(caret);
+    const nm = document.createElement('span'); nm.className = 'rname'; nm.textContent = r.mo.name;
+    btn.appendChild(nm);
+    const tags = document.createElement('span'); tags.className = 'mtags';
+    for (const { ore, frac } of r.mo.ores){
+      const t = document.createElement('span');
+      t.className = 'tiertag ' + tierCls(MOON_ORES[ore].tier);
+      t.textContent = ore + ' ' + (frac * 100).toFixed(0) + '%';
+      tags.appendChild(t);
+    }
+    btn.appendChild(tags);
+    const sc = document.createElement('span'); sc.className = 'rscore';
+    sc.textContent = scoreText(r.score, '/h');
+    btn.appendChild(sc);
+
+    const det = document.createElement('div');
+    det.className = 'moondetail';
+    det.hidden = !open;
+    const dhead = t => { const h = document.createElement('div'); h.className = 'dhead'; h.textContent = t; det.appendChild(h); };
+    const dline = (t, warn) => {
+      const d = document.createElement('div');
+      d.className = 'dline' + (warn ? ' warn' : '');
+      d.textContent = t;
+      det.appendChild(d);
+      return d;
+    };
+
+    dhead('Selected-material output per hour');
+    const sel = [...state.selected].sort((a, b) => (r.out[b] || 0) - (r.out[a] || 0));
+    let any = false;
+    for (const m of sel){
+      const u = r.out[m] || 0;
+      if (u <= 0) continue;
+      any = true;
+      const d = document.createElement('div'); d.className = 'dline';
+      const tag = document.createElement('span');
+      tag.className = 'tiertag ' + tierCls(TIER_OF[m]);
+      tag.textContent = m;
+      d.appendChild(tag);
+      d.appendChild(document.createTextNode(
+        ' ' + fmt.format(Math.round(u * 10) / 10) + ' u/h · '
+        + fmt.format(Math.round(u * priceOf(m))) + ' ISK/h'));
+      det.appendChild(d);
+    }
+    if (!any) dline('none of the selected materials in this moon’s ores');
+
+    dhead('Chunk composition');
+    const comp = document.createElement('div'); comp.className = 'dline';
+    for (const { ore, frac } of r.mo.ores){
+      const c = document.createElement('span');
+      c.className = 'comp ' + tierCls(MOON_ORES[ore].tier);
+      const bd = document.createElement('span');
+      bd.className = 'tierbadge ' + tierCls(MOON_ORES[ore].tier);
+      bd.textContent = MOON_ORES[ore].tier;
+      c.appendChild(bd);
+      c.appendChild(document.createTextNode(' ' + ore + ' ' + (frac * 100).toFixed(1) + '%'));
+      comp.appendChild(c);
+    }
+    det.appendChild(comp);
+    if (r.fill < 0.99)
+      dline('ore fractions cover only ' + (r.fill * 100).toFixed(0)
+        + '% of the chunk — scan may be incomplete; rates use the listed fractions of 30,000 m³/h', true);
+
+    btn.addEventListener('click', () => {
+      const nowOpen = det.hidden;
+      det.hidden = !nowOpen;
+      btn.setAttribute('aria-expanded', String(nowOpen));
+      caret.textContent = nowOpen ? '▾' : '▸';
+      if (nowOpen) state.moonOpen.add(r.mo.name); else state.moonOpen.delete(r.mo.name);
+    });
+
+    item.appendChild(btn);
+    item.appendChild(det);
+    box.appendChild(item);
+  }
+}
+
+function renderAll(){
+  updateChips();
+  renderPrices();
+  renderOres();
+  renderMoons();
+}
+
+/* ---------- ESI ---------- */
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+async function esiFetch(url, opts){
+  for (let attempt = 0; attempt < 3; attempt++){
+    let res;
+    try{ res = await fetch(url, opts); }
+    catch(e){ if (attempt === 2) throw e; await sleep(1500 * (attempt + 1)); continue; }
+    const remain = Number(res.headers.get('x-esi-error-limit-remain') || '100');
+    if (res.status === 420 || remain < 10){
+      const reset = Number(res.headers.get('x-esi-error-limit-reset') || '10');
+      await sleep((reset + 1) * 1000);
+      if (res.status === 420) continue;
+    }
+    if (res.ok) return res;
+    if (res.status >= 500 && attempt < 2){ await sleep(1500 * (attempt + 1)); continue; }
+    throw new Error('ESI HTTP ' + res.status);
+  }
+  throw new Error('ESI retries exhausted');
+}
+
+// best Jita 4-4 prices for one type: cheapest station sell, highest buy covering the station
+async function fetchJita(typeId){
+  let page = 1, bestSell = null, bestBuy = null;
+  for (;;){
+    const res = await esiFetch(`${ESI}/markets/${REGION}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
+    const data = await res.json();
+    for (const o of data){
+      if (o.is_buy_order){
+        if (o.location_id === STATION || o.range === 'region'
+            || (o.system_id === SYSTEM && o.range !== 'station')){
+          if (bestBuy == null || o.price > bestBuy) bestBuy = o.price;
+        }
+      } else if (o.location_id === STATION){
+        if (bestSell == null || o.price < bestSell) bestSell = o.price;
+      }
+    }
+    const pages = Number(res.headers.get('x-pages') || '1');
+    if (page >= pages) break;
+    page++;
+  }
+  return { bestSell, bestBuy };
+}
+
+async function runEsi(){
+  if (state.esiRunning) return;
+  state.esiRunning = true;
+  const token = ++state.esiToken;
+  const btn = $('btnEsi'); btn.disabled = true;
+  const status = $('esiStatus'); status.className = '';
+  const bar = $('fetchBar'), fill = $('fetchFill');
+  bar.hidden = false; fill.classList.add('ind');
+  let failed = 0;
+  try{
+    status.textContent = `resolving ${MATS.length} type names…`;
+    const res = await esiFetch(ESI + '/universe/ids/?datasource=tranquility', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(MATS),
+    });
+    const data = await res.json();
+    if (token !== state.esiToken) return;
+    const byLower = new Map(MATS.map(m => [m.toLowerCase(), m]));
+    const queue = [];
+    for (const t of (data.inventory_types || [])){
+      const mat = byLower.get(String(t.name).toLowerCase());
+      if (mat) queue.push({ mat, typeId: t.id });
+    }
+    failed = MATS.length - queue.length;    // names ESI didn't resolve
+    const total = queue.length;
+    if (!total) throw new Error('no type names resolved');
+    fill.classList.remove('ind'); fill.style.width = '0%';
+    let done = 0;
+    const workers = Array.from({ length: 6 }, async () => {
+      for (;;){
+        const j = queue.shift();
+        if (!j || token !== state.esiToken) return;
+        try{
+          const p = await fetchJita(j.typeId);
+          if (token !== state.esiToken) return;
+          state.prices[j.mat].fetched = p;
+          state.prices[j.mat].override = null;   // a fresh fetch supersedes older edits
+        }catch(_e){
+          if (token !== state.esiToken) return;
+          failed++;                              // keep whatever value the material had
+        }
+        done++;
+        fill.style.width = Math.round(done / total * 100) + '%';
+        status.textContent = `fetching Jita 4-4 orders… ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
+      }
+    });
+    await Promise.all(workers);
+    if (token !== state.esiToken) return;
+    state.fetchedAt = Date.now();
+    status.textContent = `Jita 4-4 prices loaded ${new Date().toLocaleTimeString()}`
+      + (failed ? ` — ${failed} lookups failed (old values kept)` : '');
+    status.className = failed ? 'err' : 'ok';
+  }catch(e){
+    if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
+  }finally{
+    state.esiRunning = false;
+    btn.disabled = false;
+    bar.hidden = true;
+    fill.classList.remove('ind'); fill.style.width = '0%';
+    if (token === state.esiToken){ renderAll(); persist(); }
+  }
+}
+
+/* ---------- persistence ---------- */
+function persist(){
+  try{
+    const prices = {};
+    for (const m of MATS){
+      const p = state.prices[m];
+      if (p.override != null || p.fetched) prices[m] = { o: p.override, f: p.fetched };
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      selected: [...state.selected],
+      scoreBasis: $('scoreBasis').value,
+      priceBasis: $('priceBasis').value,
+      prices,
+      fetchedAt: state.fetchedAt,
+      scan: $('scan').value,
+      showAllOres: state.showAllOres,
+      editorOpen: $('priceEditor').open,
+    }));
+  }catch(_e){ /* storage full or blocked — non-fatal */ }
+}
+const numOrNull = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+function restore(){
+  let s = null;
+  try{ s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(_e){}
+  if (!s) return;
+  if (Array.isArray(s.selected)) state.selected = new Set(s.selected.filter(m => MATS.includes(m)));
+  if (s.scoreBasis === 'units' || s.scoreBasis === 'isk') $('scoreBasis').value = s.scoreBasis;
+  if (s.priceBasis === 'buy' || s.priceBasis === 'sell') $('priceBasis').value = s.priceBasis;
+  if (s.prices && typeof s.prices === 'object'){
+    for (const m of MATS){
+      const p = s.prices[m];
+      if (!p) continue;
+      state.prices[m].override = numOrNull(p.o);
+      if (p.f && typeof p.f === 'object')
+        state.prices[m].fetched = { sell: numOrNull(p.f.sell), buy: numOrNull(p.f.buy) };
+    }
+  }
+  if (typeof s.fetchedAt === 'number') state.fetchedAt = s.fetchedAt;
+  if (typeof s.scan === 'string') $('scan').value = s.scan;
+  state.showAllOres = !!s.showAllOres;
+  if (s.editorOpen != null) $('priceEditor').open = !!s.editorOpen;
+  if (state.fetchedAt)
+    $('esiStatus').textContent = 'using Jita prices fetched ' + new Date(state.fetchedAt).toLocaleString();
+}
+
+/* ---------- wiring ---------- */
+buildChips();
+buildPriceGrid();
+
+$('scoreBasis').addEventListener('change', () => { renderAll(); persist(); });
+$('priceBasis').addEventListener('change', () => { renderAll(); persist(); });
+$('btnResetPrices').addEventListener('click', () => {
+  for (const m of MATS) state.prices[m].override = null;
+  renderAll(); persist();
+});
+$('btnEsi').addEventListener('click', runEsi);
+$('btnAllOres').addEventListener('click', () => { state.showAllOres = !state.showAllOres; renderOres(); persist(); });
+$('scan').addEventListener('input', () => { renderMoons(); persist(); });
+$('btnDemoScan').addEventListener('click', () => { $('scan').value = DEMO_SCAN; renderMoons(); persist(); });
+$('btnClearScan').addEventListener('click', () => {
+  $('scan').value = '';
+  state.moonOpen.clear();
+  renderMoons(); persist();
+});
+$('priceEditor').addEventListener('toggle', persist);
+
+restore();
+renderAll();
+</script>
+</body>
+</html>
