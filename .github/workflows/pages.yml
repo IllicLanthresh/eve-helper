@@ -3,8 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - claude/eve-jita-inventory-sale-su0n85
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
