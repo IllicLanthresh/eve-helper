@@ -1,14 +1,18 @@
-# EVE Sell Helper
+# EVE Helper
 
-A single-file, locally-run webapp that turns a hangar full of loot into a ready-to-paste
-sell list for any major trade hub — valued against the real order book, ranked by expected
-net profit after fees, with the best plan per item: instant sale, sell order, or a split.
+A collection of single-file, locally-run EVE Online tools with a shared top bar. No install,
+no server, no ESI login — live data comes from ESI's public endpoints and nothing else ever
+leaves your machine. Open any page in a browser or use the GitHub Pages deployment.
 
-## Run it
+| Tool | Page | What it does |
+| --- | --- | --- |
+| **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
+| **Ore** | `ore.html` | Mineral → best rock → best sov prospecting-array deposit, weighted by live Jita prices. |
+| **Moon** | `moon.html` | Moon material → best moon ore → best scanned moon (paste your survey scan), weighted by live Jita prices. |
 
-Open `index.html` in any modern browser (or use the hosted copy on GitHub Pages).
-No install, no server, no ESI login — prices come from ESI's public endpoints and nothing
-else ever leaves your machine.
+---
+
+# Sell Helper (`index.html`)
 
 ## Workflow
 
