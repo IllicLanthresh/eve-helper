@@ -62,7 +62,7 @@
       clientId = (window.prompt(
         'EVE SSO Client ID needed (one-time setup):\n\n' +
         '1. https://developers.eveonline.com → Create application\n' +
-        '2. Connection type: Authentication & API Access\n' +
+        '2. Client/app type: public NATIVE (PKCE) — NOT web/confidential\n' +
         '3. Scope: esi-skills.read_skills.v1\n' +
         `4. Callback URL exactly: ${callbackUrl()}\n\n` +
         'Paste the Client ID here (stored only in your browser):') || '').trim();
@@ -91,7 +91,15 @@
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(body),
     });
-    if (!res.ok) throw new Error('SSO token endpoint: HTTP ' + res.status);
+    if (!res.ok){
+      let detail = '';
+      try{ const j = await res.json(); detail = j.error_description || j.error || ''; }catch(_e){}
+      // 401/invalid_client with PKCE = the SSO wanted a client secret, i.e. the app is
+      // registered as a confidential (web) client instead of a public/native one
+      if (res.status === 401) detail += (detail ? ' — ' : '') +
+        'the app must be a PUBLIC/NATIVE (PKCE) client in the EVE developer portal; a web/confidential app requires its secret key, which a browser-only site cannot use';
+      throw new Error('SSO token endpoint: HTTP ' + res.status + (detail ? ' (' + detail + ')' : ''));
+    }
     return res.json();
   }
 

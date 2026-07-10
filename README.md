@@ -20,11 +20,15 @@ logged-out fallback). Everything stays client-side: it's the OAuth2
 **PKCE** flow, so there is no server, no database, and no secret — tokens live in your
 browser's localStorage only.
 
-One-time setup (needed because EVE SSO requires a registered app):
+The deployed site at `illiclanthresh.github.io` ships with its own registered app, so login
+just works there. Running a fork on another domain needs a one-time app registration
+(EVE SSO matches the callback URL exactly):
 1. Go to <https://developers.eveonline.com> → *Create new application*.
-2. Connection type: **Authentication & API Access**; scope: `esi-skills.read_skills.v1`.
-3. Callback URL — exactly your deployed index page, e.g.
-   `https://illiclanthresh.github.io/eve-helper/index.html`.
+2. Client/app type: **public native (PKCE)** — *not* web/confidential. A web-type app
+   demands its secret key at the token exchange, which a browser-only site cannot (and
+   should not) hold — the SSO then rejects the login with HTTP 401.
+3. Scope: `esi-skills.read_skills.v1`; callback URL — exactly your deployed index page,
+   e.g. `https://your-name.github.io/eve-helper/index.html`.
 4. Click *Log in with EVE* in the tool and paste the app's **Client ID** when prompted
    (stored locally; the secret key is never used).
 
