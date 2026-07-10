@@ -224,9 +224,31 @@
     <span id="basisWarn" class="flag warn" hidden>raw-units basis with several targets over-weights bulk
       materials — 1 Tritanium counts as much as 1 Dysprosium; ISK compares fairly</span>
     <span class="sep"></span>
-    <label for="refine" style="margin:0">refine efficiency %</label>
+    <label for="facStruct" style="margin:0">refine at</label>
+    <select id="facStruct" style="width:150px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility">
+      <option value="npc">NPC station · 50%</option>
+      <option value="athanor">Athanor · 52%</option>
+      <option value="tatara">Tatara · 55%</option>
+    </select>
+    <select id="facRig" style="width:105px" disabled title="reprocessing rig on the structure">
+      <option value="none">no rig</option>
+      <option value="t1">T1 rig +1%</option>
+      <option value="t2">T2 rig +3%</option>
+    </select>
+    <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier">
+      <option value="hs">highsec ×1.00</option>
+      <option value="ls">lowsec ×1.06</option>
+      <option value="ns">null/WH ×1.12</option>
+    </select>
+    <select id="facImp" style="width:112px" disabled title="Zainou 'Beancounter' RX reprocessing implant">
+      <option value="0">no implant</option>
+      <option value="1">RX-801 +1%</option>
+      <option value="2">RX-802 +2%</option>
+      <option value="4">RX-804 +4%</option>
+    </select>
+    <label for="refine" style="margin:0">flat refine %</label>
     <input id="refine" type="number" min="30" max="95" step="1" value="75" style="width:70px"
-      title="net reprocessing yield incl. skills, structure and rigs — applied to the mining plan only, not to the density rankings">
+      title="fallback yield used when not logged in — once logged in, refine is computed per ore from your actual skills and the facility selectors">
     <label for="priceBasis" style="margin:0">price basis</label>
     <select id="priceBasis" style="width:110px" title="which side of the Jita book a fetch feeds into the prices">
       <option value="sell">Jita sell</option>
@@ -435,13 +457,62 @@ const state = {
   priceBasis: 'sell',        // 'sell' | 'buy'  — which fetched Jita price feeds the grid
   prices: Object.fromEntries(MATS.map(m => [m, { override: null, fetched: null }])),
   fetchedAt: null,
-  refine: 75,                // net refine efficiency %, applied to the mining plan only
+  refine: 75,                // flat fallback yield % — used only when not logged in
+  fac: { struct: 'npc', rig: 'none', sec: 'hs', imp: 0 },   // refining facility (skill mode)
   showAllRanks: false,
   arrayView: 'site',         // 'site' | 'm3'
   openDeposits: new Set(),
   moonOpen: new Set(),       // expanded moon keys (not persisted)
   esiRunning: false, esiToken: 0,
 };
+
+/* ---------- refining model (skill mode) ---------- */
+// yield = facilityBase × (1 + 3%×Reprocessing) × (1 + 2%×Reproc.Efficiency)
+//         × (1 + 2%×ore-group skill) × (1 + implant)
+// facilityBase = structure base × (1 + rigBonus × securityMultiplier)
+const FACILITY_BASE = { npc: 50, athanor: 52, tatara: 55 };
+const RIG_BONUS = { none: 0, t1: 0.01, t2: 0.03 };
+const SEC_MULT = { hs: 1, ls: 1.06, ns: 1.12 };
+// asteroid ore → reprocessing skill group (post-2021 consolidated skills);
+// entries in ASSUMED_GROUP have no published mapping — flagged in tooltips
+const ORE_SKILL_GROUP = {
+  Veldspar: 'Simple Ore Processing', Scordite: 'Simple Ore Processing',
+  Pyroxeres: 'Simple Ore Processing', Plagioclase: 'Simple Ore Processing',
+  Mordunium: 'Simple Ore Processing', Kylixium: 'Simple Ore Processing',
+  Omber: 'Coherent Ore Processing', Kernite: 'Coherent Ore Processing',
+  Jaspet: 'Coherent Ore Processing', Hemorphite: 'Coherent Ore Processing',
+  Hedbergite: 'Coherent Ore Processing', Ytirium: 'Coherent Ore Processing',
+  Griemeer: 'Coherent Ore Processing', Nocxite: 'Coherent Ore Processing',
+  Gneiss: 'Variegated Ore Processing', 'Dark Ochre': 'Variegated Ore Processing',
+  Crokite: 'Variegated Ore Processing', Hezorime: 'Variegated Ore Processing',
+  Bistot: 'Complex Ore Processing', Arkonor: 'Complex Ore Processing',
+  Spodumain: 'Complex Ore Processing', Eifyrium: 'Complex Ore Processing',
+  Ducinium: 'Complex Ore Processing', Ueganite: 'Complex Ore Processing',
+  Bezdnacine: 'Abyssal Ore Processing', Rakovene: 'Abyssal Ore Processing',
+  Talassonite: 'Abyssal Ore Processing', Mercoxit: 'Mercoxit Ore Processing',
+};
+const ASSUMED_GROUP = new Set(['Mordunium', 'Kylixium', 'Ytirium', 'Griemeer', 'Nocxite',
+  'Hezorime', 'Eifyrium', 'Ducinium', 'Ueganite']);
+const MOON_TIER_SKILL = { R4: 'Ubiquitous Moon Ore Processing', R8: 'Common Moon Ore Processing',
+  R16: 'Uncommon Moon Ore Processing', R32: 'Rare Moon Ore Processing', R64: 'Exceptional Moon Ore Processing' };
+
+let charSkills = null;   // set once EVE login + skills are available
+
+function skillGroupOf(source){
+  return source.kind === 'moon' ? MOON_TIER_SKILL[source.tier] : ORE_SKILL_GROUP[source.name];
+}
+// returns { pct, detail } — the refine yield used for this source in the plan
+function refineFor(source){
+  if (!charSkills || !charSkills.groups || !Object.keys(charSkills.groups).length)
+    return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
+  const grp = skillGroupOf(source);
+  const gl = charSkills.groups[grp] || 0;
+  const base = FACILITY_BASE[state.fac.struct] * (1 + RIG_BONUS[state.fac.rig] * SEC_MULT[state.fac.sec]);
+  const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
+    * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
+  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grp} ${gl}${ASSUMED_GROUP.has(source.name) ? ' (group assumed — unpublished mapping)' : ''}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
+  return { pct, detail };
+}
 
 /* ---------- formatting ---------- */
 const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
@@ -872,7 +943,6 @@ function renderPlan(){
       'Give at least one target a quantity — paste “Name  qty” lines or fill a chip’s qty box — to get a plan.'));
     return;
   }
-  const eff = state.refine / 100;
   const tbl = el('table', 'plan');
   const thead = el('thead'), trh = el('tr');
   for (const h of ['material', 'needed', 'best source', 'm³ to mine', 'drill hours', 'runner-up sources'])
@@ -881,9 +951,12 @@ function renderPlan(){
   const tb = el('tbody'); tb.id = 'planBody';
   let totM3 = 0, totH = 0;
   for (const [m, qty] of withQty){
-    const alts = SOURCES.filter(s => s.dens[m]).map(s => ({ s, d: s.dens[m] }))
-      .sort((a, b) => b.d - a.d || a.s.name.localeCompare(b.s.name)).slice(0, 3)
-      .map(x => ({ ...x, m3: qty / (x.d * eff) }));
+    // effective yield density = ore density × that ore's OWN refine rate, so a worse rock
+    // with a maxed skill group can legitimately beat a denser one with an untrained group
+    const alts = SOURCES.filter(s => s.dens[m]).map(s => {
+      const r = refineFor(s);
+      return { s, d: s.dens[m], r, m3: qty / (s.dens[m] * r.pct / 100) };
+    }).sort((a, b) => a.m3 - b.m3 || a.s.name.localeCompare(b.s.name)).slice(0, 3);
     if (!alts.length) continue;
     const best = alts[0];
     const hours = best.s.kind === 'moon' ? best.m3 / M3_PER_HOUR : null;
@@ -902,7 +975,7 @@ function renderPlan(){
     tr.appendChild(tds);
     const td3 = el('td', 'num pm3', fmt.format(Math.round(best.m3)) + ' m³');
     td3.dataset.copy = String(Math.round(best.m3));
-    td3.title = qty + ' ÷ (' + fmtSig.format(best.d) + ' u/m³ × ' + state.refine + '%)';
+    td3.title = qty + ' ÷ (' + fmtSig.format(best.d) + ' u/m³ × ' + (Math.round(best.r.pct * 10) / 10) + '%) · ' + best.r.detail;
     tr.appendChild(td3);
     const tdh = el('td', 'num phrs', hours == null ? '—' : (Math.round(hours * 10) / 10) + ' h');
     if (hours != null){
@@ -914,7 +987,8 @@ function renderPlan(){
     for (const a of alts.slice(1)){
       const sp = el('span', 'alt', a.s.name + ' ' + fmt.format(Math.round(a.m3)) + ' m³');
       sp.dataset.copy = String(Math.round(a.m3));
-      sp.title = 'runner-up — ' + fmtSig.format(a.d) + ' u/m³' + (a.s.kind === 'moon' ? ' (' + a.s.tier + ' moon ore)' : ' (asteroid)');
+      sp.title = 'runner-up — ' + fmtSig.format(a.d) + ' u/m³ @ ' + (Math.round(a.r.pct * 10) / 10) + '% refine'
+        + (a.s.kind === 'moon' ? ' (' + a.s.tier + ' moon ore)' : ' (asteroid)');
       tda.appendChild(sp);
     }
     if (alts.length === 1) tda.appendChild(el('span', 'hint', '—'));
@@ -1295,6 +1369,7 @@ function persist(){
       prices,
       fetchedAt: state.fetchedAt,
       refine: state.refine,
+      fac: state.fac,
       moonText: $('moons').value,
       showAllRanks: state.showAllRanks,
       arrayView: state.arrayView,
@@ -1331,6 +1406,16 @@ function restore(){
   if (typeof s.fetchedAt === 'number') state.fetchedAt = s.fetchedAt;
   if (typeof s.refine === 'number' && Number.isFinite(s.refine))
     state.refine = Math.min(95, Math.max(30, s.refine));
+  if (s.fac && typeof s.fac === 'object'){
+    if (FACILITY_BASE[s.fac.struct] != null) state.fac.struct = s.fac.struct;
+    if (RIG_BONUS[s.fac.rig] != null) state.fac.rig = s.fac.rig;
+    if (SEC_MULT[s.fac.sec] != null) state.fac.sec = s.fac.sec;
+    if ([0, 1, 2, 4].includes(s.fac.imp)) state.fac.imp = s.fac.imp;
+  }
+  $('facStruct').value = state.fac.struct;
+  $('facRig').value = state.fac.rig;
+  $('facSec').value = state.fac.sec;
+  $('facImp').value = String(state.fac.imp);
   if (typeof s.moonText === 'string') $('moons').value = s.moonText;
   state.showAllRanks = !!s.showAllRanks;
   if (s.arrayView === 'site' || s.arrayView === 'm3') state.arrayView = s.arrayView;
@@ -1358,6 +1443,23 @@ $('refine').addEventListener('input', () => {
   renderPlan(); persist();
 });
 $('refine').addEventListener('change', () => { $('refine').value = String(state.refine); });
+$('facStruct').addEventListener('change', () => {
+  if (FACILITY_BASE[$('facStruct').value] != null) state.fac.struct = $('facStruct').value;
+  renderPlan(); persist();
+});
+$('facRig').addEventListener('change', () => {
+  if (RIG_BONUS[$('facRig').value] != null) state.fac.rig = $('facRig').value;
+  renderPlan(); persist();
+});
+$('facSec').addEventListener('change', () => {
+  if (SEC_MULT[$('facSec').value] != null) state.fac.sec = $('facSec').value;
+  renderPlan(); persist();
+});
+$('facImp').addEventListener('change', () => {
+  const v = Number($('facImp').value);
+  if ([0, 1, 2, 4].includes(v)) state.fac.imp = v;
+  renderPlan(); persist();
+});
 $('priceBasis').addEventListener('change', () => {
   state.priceBasis = $('priceBasis').value === 'buy' ? 'buy' : 'sell';
   renderAll(); persist();
@@ -1382,25 +1484,31 @@ $('priceBox').addEventListener('toggle', persist);
 restore();
 renderAll();
 
-// refine % from the logged-in character: NPC-station base 50% × (1 + 3%×Reprocessing)
-// × (1 + 2%×Reprocessing Efficiency) × (1 + 2%×ore-specific, assumed level IV) —
-// auto-applied on load, still editable (structure users: bump it yourself)
+// logged in → per-ore refine from real skills (incl. the ore-group skills) + the
+// facility selectors; the flat refine input becomes a disabled bystander
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
   if (!EveAuth.isLoggedIn()) return;
   try{
     let sk = EveAuth.skills();
-    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-    const eff = 50 * (1 + 0.03 * sk.reprocessing) * (1 + 0.02 * sk.reprocessingEfficiency) * 1.08;
-    state.refine = Math.min(95, Math.max(30, Math.round(eff * 10) / 10));
-    $('refine').value = String(state.refine);
+    if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)
+      sk = await EveAuth.fetchSkills();
+    if (!sk.groups || !Object.keys(sk.groups).length)
+      throw new Error('ore-group skill levels unavailable');
+    charSkills = sk;
+    for (const id of ['facStruct', 'facRig', 'facSec', 'facImp']){
+      $(id).disabled = false;
+      $(id).title = '';
+    }
+    $('refine').disabled = true;
+    $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
     const who = EveAuth.character();
     const note = document.createElement('span');
     note.className = 'hint';
-    note.textContent = ` ⚡ from ${who.name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency}, ore skill assumed IV, NPC base) — edit for structures`;
-    $('refine').insertAdjacentElement('afterend', note);
-    renderPlan(); persist();
+    note.textContent = ` ⚡ per-ore refine from ${who.name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
+    $('facImp').insertAdjacentElement('afterend', note);
+    renderPlan();
   }catch(e){
     console.error('skill auto-fill failed:', e);
   }

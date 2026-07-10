@@ -13,8 +13,10 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 
 "Log in with EVE" in the top bar pulls your skill levels to auto-fill what you'd otherwise
 type by hand: **Accounting → sales tax**, **Broker Relations → broker fee** (Sell tool),
-**Reprocessing / Reprocessing Efficiency → refine %** (Mine tool; ore-specific skill assumed
-IV, NPC-station base — edit for structures). Everything stays client-side: it's the OAuth2
+**Reprocessing / Reprocessing Efficiency + the ore-group processing skills → per-ore refine
+yields** (Mine tool; pick your facility — NPC station / Athanor / Tatara, rig tier, security
+band, implant — and each ore gets its own rate; the flat refine % input is only the
+logged-out fallback). Everything stays client-side: it's the OAuth2
 **PKCE** flow, so there is no server, no database, and no secret — tokens live in your
 browser's localStorage only.
 

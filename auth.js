@@ -16,6 +16,15 @@
     reprocessing: 3385,
     reprocessingEfficiency: 3389,
   };
+  // ore-group reprocessing skills (post-2021 consolidation) — resolved by NAME at fetch
+  // time via /universe/ids so no hardcoded type-id can rot
+  const ORE_GROUP_SKILLS = [
+    'Simple Ore Processing', 'Coherent Ore Processing', 'Variegated Ore Processing',
+    'Complex Ore Processing', 'Abyssal Ore Processing', 'Mercoxit Ore Processing',
+    'Ubiquitous Moon Ore Processing', 'Common Moon Ore Processing',
+    'Uncommon Moon Ore Processing', 'Rare Moon Ore Processing',
+    'Exceptional Moon Ore Processing',
+  ];
 
   function load(){
     try{ return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); }catch(_e){ return {}; }
@@ -143,7 +152,20 @@
     for (const s of data.skills) byId[s.skill_id] = s.active_skill_level;
     const skills = {};
     for (const [k, id] of Object.entries(SKILL_IDS)) skills[k] = byId[id] || 0;
-    auth.skills = { ...skills, fetched: new Date().toISOString() };
+    // resolve the ore-group skill ids by name (public endpoint), then read the levels
+    const groups = {};
+    try{
+      const r2 = await fetch('https://esi.evetech.net/latest/universe/ids/?datasource=tranquility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ORE_GROUP_SKILLS),
+      });
+      if (r2.ok){
+        for (const t of ((await r2.json()).inventory_types || []))
+          if (ORE_GROUP_SKILLS.includes(t.name)) groups[t.name] = byId[t.id] || 0;
+      }
+    }catch(_e){ /* groups stay empty — pages fall back to the flat refine input */ }
+    auth.skills = { ...skills, groups, fetched: new Date().toISOString() };
     save(auth);
     return auth.skills;
   }
