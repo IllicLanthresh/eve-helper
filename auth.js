@@ -50,8 +50,14 @@
     return location.origin + location.pathname.replace(/[^/]*$/, '') + 'index.html';
   }
 
+  // the site's own SSO app — used automatically on the canonical deployment; a fork on
+  // another domain needs its own app (the callback URL must match) and gets the prompt
+  const DEFAULT_CLIENT_ID = 'dc5bfbf28db646b48553946fbfcde17c';
+  const CANONICAL_HOST = 'illiclanthresh.github.io';
+
   async function login(){
     let clientId = auth.clientId;
+    if (!clientId && location.hostname === CANONICAL_HOST) clientId = DEFAULT_CLIENT_ID;
     if (!clientId){
       clientId = (window.prompt(
         'EVE SSO Client ID needed (one-time setup):\n\n' +
