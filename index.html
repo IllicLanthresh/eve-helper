@@ -1486,7 +1486,7 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
       try{ own = await stationOwner(hub().station); }
       catch(e){ console.warn('station owner lookup failed, standings ignored:', e); }
       if (my !== seq) return;
-      const usable = st && !st.needsRelogin ? st : null;
+      const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
       const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
       const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
       const tax = 7.5 * (1 - 0.11 * sk.accounting);
@@ -1494,9 +1494,11 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
       $('salesTax').value = tax.toFixed(2);
       $('brokerFee').value = broker.toFixed(2);
       const r2 = x => Math.round(x * 100) / 100;
-      const standingsBit = st && st.needsRelogin
-        ? 'standings n/a — log in again to grant standings access'
-        : `${(own && own.corpName) || 'corp'} ${r2(corpEff)} eff / ${(own && own.factionName) || 'faction'} ${r2(factionEff)} eff`;
+      const standingsBit = st && st.unavailable
+        ? 'standings scope no longer exists on EVE SSO — edit the broker fee by hand if you have standings'
+        : st && st.needsRelogin
+          ? 'standings n/a — log in again to grant standings access'
+          : `${(own && own.corpName) || 'corp'} ${r2(corpEff)} eff / ${(own && own.factionName) || 'faction'} ${r2(factionEff)} eff`;
       note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · broker ${broker.toFixed(2)} (Broker ${sk.brokerRelations}, ${standingsBit}) — NPC-station broker; structures differ, edit freely`;
       rebuild();
     }catch(e){

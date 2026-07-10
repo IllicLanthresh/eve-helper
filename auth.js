@@ -4,13 +4,15 @@
    ACTIVE and drives every page (fees/standings on Sell, refine skills on Mine).
    Requires a (free) app at https://developers.eveonline.com with:
    - Callback URL: this site's index page URL (exactly, incl. trailing slash)
-   - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1
+   - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1 (scopes the SSO
+     no longer publishes are dropped from the login request automatically)
 */
 'use strict';
 (function(){
   const LS_KEY = 'eveHelper.auth.v1';
   const SSO = 'https://login.eveonline.com/v2/oauth';
-  const SCOPES = 'esi-skills.read_skills.v1 esi-characters.read_standings.v1';
+  const STANDINGS_SCOPE = 'esi-characters.read_standings.v1';
+  const SCOPES = 'esi-skills.read_skills.v1 ' + STANDINGS_SCOPE;
 
   const SKILL_IDS = {
     accounting: 16622,
@@ -88,21 +90,46 @@
     return auth.clientId || (location.hostname === CANONICAL_HOST ? DEFAULT_CLIENT_ID : null);
   }
 
+  // EVE's published OAuth metadata: CCP removes scopes server-side now and then (e.g.
+  // esi-characterstats.read.v1 in mid-2025), and the authorize step then rejects the
+  // WHOLE login with invalid_scope — so ask which scopes still exist, cached for a day
+  const META_KEY = 'eveHelper.ssoMeta.v1';
+  async function ssoScopes(){
+    let meta = null;
+    try{ meta = JSON.parse(localStorage.getItem(META_KEY) || 'null'); }catch(_e){}
+    const cached = meta && Array.isArray(meta.scopes) ? meta.scopes : null;
+    if (cached && Date.now() - meta.at < 86400e3) return cached;
+    try{
+      const res = await fetch('https://login.eveonline.com/.well-known/oauth-authorization-server');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const scopes = (await res.json()).scopes_supported;
+      if (!Array.isArray(scopes)) return cached;
+      try{ localStorage.setItem(META_KEY, JSON.stringify({ at: Date.now(), scopes })); }catch(_e){}
+      return scopes;
+    }catch(_e){ return cached; }   // metadata unavailable → caller requests the full list
+  }
+
   async function login(){
     let clientId = resolveClientId();
     if (!clientId){
       clientId = (window.prompt(
         'EVE SSO Client ID needed (one-time setup):\n\n' +
-        '1. https://developers.eveonline.com → Create application\n' +
-        '2. Client/app type: public NATIVE (PKCE) — NOT web/confidential\n' +
-        '3. Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1\n' +
-        `4. Callback URL exactly: ${callbackUrl()}\n\n` +
+        '1. https://developers.eveonline.com → create an application (any kind — the secret key is never used)\n' +
+        '2. Scopes: esi-skills.read_skills.v1 and esi-characters.read_standings.v1 (tick the ones the portal still offers)\n' +
+        `3. Callback URL exactly: ${callbackUrl()}\n\n` +
         'Paste the Client ID here (stored only in your browser):') || '').trim();
       if (!clientId) return;
     }
     // persist whatever was resolved (prompt OR the canonical default) — the callback's
     // token exchange reads it back, and an unset client_id there means HTTP 401
     if (auth.clientId !== clientId){ auth.clientId = clientId; save(auth); }
+    // request only scopes the SSO still supports; remember what got dropped so pages
+    // can explain why (e.g. standings unavailable rather than silently zero)
+    const want = SCOPES.split(' ');
+    const supported = await ssoScopes();
+    let scopes = supported ? want.filter(s => supported.includes(s)) : want;
+    if (!scopes.length) scopes = want;   // metadata anomaly — never strip everything
+    auth.droppedScopes = want.filter(s => !scopes.includes(s));
     const verifier = randomString();
     const state = randomString();
     auth.pkce = { verifier, state, returnTo: location.href.split('?')[0] };
@@ -111,7 +138,7 @@
       response_type: 'code',
       redirect_uri: callbackUrl(),
       client_id: clientId,
-      scope: SCOPES,
+      scope: scopes.join(' '),
       code_challenge: await sha256(verifier),
       code_challenge_method: 'S256',
       state,
@@ -128,10 +155,9 @@
     if (!res.ok){
       let detail = '';
       try{ const j = await res.json(); detail = j.error_description || j.error || ''; }catch(_e){}
-      // 401/invalid_client with PKCE = the SSO wanted a client secret, i.e. the app is
-      // registered as a confidential (web) client instead of a public/native one
+      // 401/invalid_client at the token exchange = the client_id was missing or wrong
       if (res.status === 401) detail += (detail ? ' — ' : '') +
-        'the app must be a PUBLIC/NATIVE (PKCE) client in the EVE developer portal; a web/confidential app requires its secret key, which a browser-only site cannot use (or the Client ID was missing from the request)';
+        'check the Client ID and callback URL in the EVE developer portal (a missing client_id in the request also causes this)';
       throw new Error('SSO token endpoint: HTTP ' + res.status + (detail ? ' (' + detail + ')' : ''));
     }
     return res.json();
@@ -142,8 +168,9 @@
     const p = jwtPayload(t.access_token) || {};
     const id = Number(String(p.sub || '').split(':').pop()) || null;
     const prev = auth.chars[id] || {};
-    // a fresh login carries the current scope list — a "log in again for standings" marker is obsolete
-    if (!keepActive && prev.standings && prev.standings.needsRelogin) delete prev.standings;
+    // a fresh login carries the current scope list — degraded-standings markers are obsolete
+    if (!keepActive && prev.standings && (prev.standings.needsRelogin || prev.standings.unavailable))
+      delete prev.standings;
     auth.chars[id] = { ...prev,
       tokens: {
         access: t.access_token,
@@ -159,6 +186,16 @@
 
   async function handleCallback(){
     const q = new URLSearchParams(location.search);
+    const err = q.get('error');
+    if (err){
+      // the SSO bounced the login (e.g. invalid_scope when the app lacks a requested
+      // scope, or CCP removed it server-side) — never fail silently
+      delete auth.pkce;
+      save(auth);
+      history.replaceState(null, '', location.pathname);
+      alert('EVE login failed: ' + (q.get('error_description') || err));
+      return false;
+    }
     const code = q.get('code');
     if (!code || !auth.pkce) return false;
     if (q.get('state') !== auth.pkce.state){
@@ -175,7 +212,7 @@
       }));
     }catch(e){
       alert('EVE login failed: ' + e.message +
-        '\nIf this is a CORS error, double-check the app type and callback URL in the EVE developer portal.');
+        '\nIf this is a CORS error, double-check the Client ID and callback URL in the EVE developer portal.');
       return false;
     }
     history.replaceState(null, '', location.pathname);   // strip ?code=… from the URL
@@ -231,12 +268,24 @@
   }
 
   // standings toward agents / NPC corps / factions → { [from_id]: standing, fetched }.
-  // HTTP 403 = the stored token predates the standings scope: flag needsRelogin so pages
-  // can say "log in again to grant standings access" and fall back to 0.
+  // Degraded outcomes are recorded instead of thrown, so pages can explain and use 0:
+  //   { needsRelogin:true }  — the token predates the standings scope (log in again)
+  //   { unavailable:true }   — the SSO itself no longer offers the scope (nothing to grant)
   async function fetchStandings(charId = auth.active){
     const c = auth.chars[charId];
     if (!c) throw new Error('not logged in');
     const token = await getToken(charId);
+    // only call ESI when the token actually carries the scope — the scp claim can be a
+    // single string or an array
+    const scp = (jwtPayload(token) || {}).scp;
+    const granted = Array.isArray(scp) ? scp : scp ? [scp] : [];
+    if (!granted.includes(STANDINGS_SCOPE)){
+      c.standings = (auth.droppedScopes || []).includes(STANDINGS_SCOPE)
+        ? { unavailable: true, fetched: new Date().toISOString() }
+        : { needsRelogin: true, fetched: new Date().toISOString() };
+      save(auth);
+      return c.standings;
+    }
     const res = await fetch(`https://esi.evetech.net/latest/characters/${c.character.id}/standings/?datasource=tranquility`, {
       headers: { Authorization: 'Bearer ' + token },
     });

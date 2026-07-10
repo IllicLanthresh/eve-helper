@@ -37,19 +37,25 @@ The deployed site at `illiclanthresh.github.io` ships with its own registered ap
 just works there. Running a fork on another domain needs a one-time app registration
 (EVE SSO matches the callback URL exactly):
 1. Go to <https://developers.eveonline.com> → *Create new application*.
-2. Client/app type: **public native (PKCE)** — *not* web/confidential. A web-type app
-   demands its secret key at the token exchange, which a browser-only site cannot (and
-   should not) hold — the SSO then rejects the login with HTTP 401.
-3. Scopes: **both** `esi-skills.read_skills.v1` **and** `esi-characters.read_standings.v1`;
-   callback URL — exactly your deployed index page, e.g.
+2. Create the application (any kind — the login uses PKCE, so the app's secret key is
+   never used or stored).
+3. Scopes: tick **both** `esi-skills.read_skills.v1` **and**
+   `esi-characters.read_standings.v1` (if the portal still offers them); callback URL —
+   exactly your deployed index page, e.g.
    `https://your-name.github.io/eve-helper/index.html`. An app registered before the
    standings feature must add the `esi-characters.read_standings.v1` scope in the portal.
 4. Click *Log in with EVE* in the tool and paste the app's **Client ID** when prompted
    (stored locally; the secret key is never used).
 
-Characters logged in before the standings feature carry tokens without the standings
-scope — the Sell tool then computes with standings 0 and asks you to log in again (the
-"+ alt" / login flow re-grants the character with both scopes).
+The SSO rejects a login outright (`invalid_scope`) when the request names a scope the app
+doesn't have — or one CCP has removed server-side (it happens: `esi-characterstats.read.v1`
+went away in 2025 with exactly that rejection). Before redirecting to the SSO, the site
+checks the SSO's published metadata and automatically drops scopes that no longer exist,
+so the login itself keeps working. Characters logged in before the standings feature carry
+tokens without the standings scope — the Sell tool then computes with standings 0 and asks
+you to log in again (the "+ alt" / login flow re-grants the character with both scopes);
+if the standings scope itself is gone from the SSO, the tool says so instead and the
+broker fee stays hand-editable.
 
 ---
 
