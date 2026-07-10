@@ -225,17 +225,15 @@
       materials — 1 Tritanium counts as much as 1 Dysprosium; ISK compares fairly</span>
     <span class="sep"></span>
     <label for="facStruct" style="margin:0">refine at</label>
-    <select id="facStruct" style="width:150px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility">
-      <option value="npc">NPC station · 50%</option>
-      <option value="athanor">Athanor · 52%</option>
-      <option value="tatara">Tatara · 55%</option>
-    </select>
+    <select id="facStruct" style="width:170px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility"></select>
+    <button id="facPick" type="button" disabled
+      title="log in with EVE, then search a player structure — Athanor/Tatara refinery bases and system security are auto-detected">choose structure…</button>
     <select id="facRig" style="width:105px" disabled title="reprocessing rig on the structure">
       <option value="none">no rig</option>
       <option value="t1">T1 rig +1%</option>
       <option value="t2">T2 rig +3%</option>
     </select>
-    <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier">
+    <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier — auto-detected from the chosen structure's system">
       <option value="hs">highsec ×1.00</option>
       <option value="ls">lowsec ×1.06</option>
       <option value="ns">null/WH ×1.12</option>
@@ -246,6 +244,7 @@
       <option value="2">RX-802 +2%</option>
       <option value="4">RX-804 +4%</option>
     </select>
+    <span id="facNote" class="hint"></span>
     <label for="refine" style="margin:0">flat refine %</label>
     <input id="refine" type="number" min="30" max="95" step="1" value="75" style="width:70px"
       title="fallback yield used when not logged in — once logged in, refine is computed per ore from your actual skills and the facility selectors">
@@ -257,6 +256,10 @@
     <button id="btnEsi" type="button" class="primary">Fetch Jita prices (ESI)</button>
     <span id="esiStatus"></span>
   </div>
+  <details id="skillsBox" hidden style="margin-top:8px">
+    <summary id="skillsSummary" class="hint" style="cursor:pointer"></summary>
+    <table id="skillsTbl" style="width:auto;margin-top:6px;font-size:12px"><tbody id="skillsTblBody"></tbody></table>
+  </details>
   <div id="fetchBar" hidden><div id="fetchFill"></div></div>
   <details id="priceBox">
     <summary>Prices per unit — <span id="priceSrcNote" class="hint">placeholders until fetched</span></summary>
@@ -326,6 +329,7 @@
 </main>
 
 <script src="auth.js"></script>
+<script src="structures.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -458,7 +462,9 @@ const state = {
   prices: Object.fromEntries(MATS.map(m => [m, { override: null, fetched: null }])),
   fetchedAt: null,
   refine: 75,                // flat fallback yield % — used only when not logged in
-  fac: { struct: 'npc', rig: 'none', sec: 'hs', imp: 0 },   // refining facility (skill mode)
+  // refining facility (skill mode): struct is 'npc' or 's:<structureId>' with structInfo
+  // holding the picked structure's cached identity (type/security/system)
+  fac: { struct: 'npc', rig: 'none', sec: 'hs', imp: 0, structInfo: null },
   showAllRanks: false,
   arrayView: 'site',         // 'site' | 'm3'
   openDeposits: new Set(),
@@ -469,10 +475,23 @@ const state = {
 /* ---------- refining model (skill mode) ---------- */
 // yield = facilityBase × (1 + 3%×Reprocessing) × (1 + 2%×Reproc.Efficiency)
 //         × (1 + 2%×ore-group skill) × (1 + implant)
-// facilityBase = structure base × (1 + rigBonus × securityMultiplier)
+// facilityBase: NPC station = flat 50% (stations have no rigs, so rig/security never
+// apply there); player structure = type base (Athanor 52 / Tatara 55 / any other
+// structure 50) × (1 + rigBonus × securityMultiplier)
 const FACILITY_BASE = { npc: 50, athanor: 52, tatara: 55 };
 const RIG_BONUS = { none: 0, t1: 0.01, t2: 0.03 };
 const SEC_MULT = { hs: 1, ls: 1.06, ns: 1.12 };
+// security band from the system's security_status, rounded to 1 decimal like the client
+const secBandOf = sec => {
+  const r = Math.round(sec * 10) / 10;
+  return r >= 0.5 ? 'hs' : r >= 0.1 ? 'ls' : 'ns';
+};
+function facilityBasePct(){
+  if (state.fac.struct === 'npc') return FACILITY_BASE.npc;
+  const st = state.fac.structInfo;
+  const typeBase = FACILITY_BASE[(st && st.refinery) || 'npc'];
+  return typeBase * (1 + RIG_BONUS[state.fac.rig] * SEC_MULT[state.fac.sec]);
+}
 // asteroid ore → reprocessing skill group (post-2021 consolidated skills);
 // entries in ASSUMED_GROUP have no published mapping — flagged in tooltips
 const ORE_SKILL_GROUP = {
@@ -507,11 +526,108 @@ function refineFor(source){
     return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
   const grp = skillGroupOf(source);
   const gl = charSkills.groups[grp] || 0;
-  const base = FACILITY_BASE[state.fac.struct] * (1 + RIG_BONUS[state.fac.rig] * SEC_MULT[state.fac.sec]);
+  const base = facilityBasePct();
   const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
     * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
   const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grp} ${gl}${ASSUMED_GROUP.has(source.name) ? ' (group assumed — unpublished mapping)' : ''}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
   return { pct, detail };
+}
+
+/* ---------- facility controls (structure picked via the shared modal) ---------- */
+function facNoteText(){
+  if (state.fac.struct === 'npc') return '';
+  const st = state.fac.structInfo || {};
+  const band = state.fac.sec;
+  const bandName = band === 'hs' ? 'highsec' : band === 'ls' ? 'lowsec' : 'nullsec';
+  const typeLabel = st.refinery === 'tatara' ? 'Tatara' : st.refinery === 'athanor' ? 'Athanor' : (st.typeName || 'structure');
+  let t = `${typeLabel} · ${st.systemName || '?'} (${bandName}) — rig ×${SEC_MULT[band]}`;
+  if (!st.refinery) t += ' (no refinery bonus — not a refinery)';
+  return t;
+}
+
+// keeps the facility widgets consistent: options, enabled states, titles, note.
+// Rig + security only ever apply to player structures — NPC stations have no rigs.
+function renderFacControls(){
+  const on = !!(charSkills && charSkills.groups && Object.keys(charSkills.groups).length);
+  const st = state.fac.structInfo;
+  const isStruct = state.fac.struct !== 'npc' && !!st;
+  const sel = $('facStruct');
+  sel.textContent = '';
+  const add = (v, label) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    sel.appendChild(o);
+  };
+  add('npc', 'NPC station · 50%');
+  if (st) add('s:' + st.id, st.name);
+  sel.value = isStruct ? 's:' + st.id : 'npc';
+  sel.disabled = !on;
+  $('facPick').disabled = !on;
+  $('facImp').disabled = !on;
+  $('facRig').disabled = !on || !isStruct;
+  $('facSec').disabled = true;   // never hand-picked: detected from the structure's system
+  $('facSec').value = state.fac.sec;
+  if (on){
+    sel.title = '';
+    $('facPick').title = 'search a player structure — Athanor/Tatara refinery bases and system security are auto-detected';
+    $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant (clone implants are not in ESI — set manually)";
+    if (isStruct){
+      $('facRig').title = 'reprocessing rig fitted to the structure (fittings are not in ESI — set manually)';
+      $('facSec').title = `detected from ${st.systemName || 'the system'} security ${st.security != null ? st.security.toFixed(2) : '?'} — not editable`;
+    } else {
+      $('facRig').title = 'NPC stations cannot fit rigs — rig bonuses only exist on player structures';
+      $('facSec').title = 'security multiplier applies only to structure rigs';
+    }
+  }
+  $('facNote').textContent = on ? facNoteText() : '';
+}
+
+/* ---------- imported-skills transparency panel ---------- */
+const SKILL_PANEL = [
+  'Simple Ore Processing', 'Coherent Ore Processing', 'Variegated Ore Processing',
+  'Complex Ore Processing', 'Abyssal Ore Processing', 'Mercoxit Ore Processing',
+  'Ubiquitous Moon Ore Processing', 'Common Moon Ore Processing',
+  'Uncommon Moon Ore Processing', 'Rare Moon Ore Processing', 'Exceptional Moon Ore Processing',
+];
+function governsText(grp){
+  const moon = Object.entries(MOON_TIER_SKILL).find(([, g]) => g === grp);
+  if (moon) return moon[0] + ' moon ores';
+  const ores = Object.entries(ORE_SKILL_GROUP).filter(([, g]) => g === grp).map(([o]) => o);
+  const published = ores.filter(o => !ASSUMED_GROUP.has(o));
+  const assumed = ores.length - published.length;
+  return published.join(', ') + (assumed ? ` (+${assumed} assumed)` : '');
+}
+function renderSkillsPanel(){
+  const box = $('skillsBox');
+  const on = !!(charSkills && charSkills.groups);
+  box.hidden = !on;
+  if (!on) return;
+  const who = window.EveAuth && EveAuth.character();
+  $('skillsSummary').textContent =
+    `⚡ skills imported from ${who ? who.name : 'EVE'}: Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency}`;
+  const tb = $('skillsTblBody');
+  tb.textContent = '';
+  const facLabel = state.fac.struct === 'npc' ? 'NPC station' : ((state.fac.structInfo || {}).name || 'structure');
+  const head = document.createElement('tr');
+  for (const t of ['skill', 'level', 'applies to', `yield @ ${facLabel}`]){
+    const th = document.createElement('th');
+    th.textContent = t;
+    head.appendChild(th);
+  }
+  tb.appendChild(head);
+  const base = facilityBasePct();
+  for (const grp of SKILL_PANEL){
+    const gl = charSkills.groups[grp] || 0;
+    const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
+      * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
+    const tr = document.createElement('tr');
+    for (const t of [grp, String(gl), governsText(grp), pct.toFixed(2) + '%']){
+      const td = document.createElement('td');
+      td.textContent = t;
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
 }
 
 /* ---------- formatting ---------- */
@@ -1407,15 +1523,25 @@ function restore(){
   if (typeof s.refine === 'number' && Number.isFinite(s.refine))
     state.refine = Math.min(95, Math.max(30, s.refine));
   if (s.fac && typeof s.fac === 'object'){
-    if (FACILITY_BASE[s.fac.struct] != null) state.fac.struct = s.fac.struct;
+    // 'npc' or 's:<structureId>'; the pre-picker type values (athanor/tatara) carried
+    // no structure identity, so they fall back to the NPC default
+    if (s.fac.struct === 'npc' || /^s:\d+$/.test(String(s.fac.struct))) state.fac.struct = s.fac.struct;
     if (RIG_BONUS[s.fac.rig] != null) state.fac.rig = s.fac.rig;
     if (SEC_MULT[s.fac.sec] != null) state.fac.sec = s.fac.sec;
     if ([0, 1, 2, 4].includes(s.fac.imp)) state.fac.imp = s.fac.imp;
+    if (s.fac.structInfo && typeof s.fac.structInfo === 'object' && s.fac.structInfo.id)
+      state.fac.structInfo = s.fac.structInfo;
   }
-  $('facStruct').value = state.fac.struct;
+  if (state.fac.struct !== 'npc' && !state.fac.structInfo) state.fac.struct = 'npc';
   $('facRig').value = state.fac.rig;
-  $('facSec').value = state.fac.sec;
   $('facImp').value = String(state.fac.imp);
+  // refresh the cached structure identity (instant when already cached; needs login otherwise)
+  if (state.fac.structInfo && window.EveStructures)
+    EveStructures.info(state.fac.structInfo.id).then(info => {
+      state.fac.structInfo = info;
+      if (info.security != null) state.fac.sec = secBandOf(info.security);
+      renderFacControls(); renderSkillsPanel(); renderPlan();
+    }).catch(() => { /* keep the persisted snapshot */ });
   if (typeof s.moonText === 'string') $('moons').value = s.moonText;
   state.showAllRanks = !!s.showAllRanks;
   if (s.arrayView === 'site' || s.arrayView === 'm3') state.arrayView = s.arrayView;
@@ -1444,21 +1570,28 @@ $('refine').addEventListener('input', () => {
 });
 $('refine').addEventListener('change', () => { $('refine').value = String(state.refine); });
 $('facStruct').addEventListener('change', () => {
-  if (FACILITY_BASE[$('facStruct').value] != null) state.fac.struct = $('facStruct').value;
-  renderPlan(); persist();
+  const v = $('facStruct').value;
+  if (v === 'npc') state.fac.struct = 'npc';
+  else if (state.fac.structInfo && v === 's:' + state.fac.structInfo.id) state.fac.struct = v;
+  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
+});
+$('facPick').addEventListener('click', async () => {
+  const s = await EveStructures.pick({ title: 'Refining structure', manage: true });
+  if (s){
+    state.fac.struct = 's:' + s.id;
+    state.fac.structInfo = s;
+    if (s.security != null) state.fac.sec = secBandOf(s.security);
+  }
+  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
 });
 $('facRig').addEventListener('change', () => {
   if (RIG_BONUS[$('facRig').value] != null) state.fac.rig = $('facRig').value;
-  renderPlan(); persist();
-});
-$('facSec').addEventListener('change', () => {
-  if (SEC_MULT[$('facSec').value] != null) state.fac.sec = $('facSec').value;
-  renderPlan(); persist();
+  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
 });
 $('facImp').addEventListener('change', () => {
   const v = Number($('facImp').value);
   if ([0, 1, 2, 4].includes(v)) state.fac.imp = v;
-  renderPlan(); persist();
+  renderSkillsPanel(); renderPlan(); persist();
 });
 $('priceBasis').addEventListener('change', () => {
   state.priceBasis = $('priceBasis').value === 'buy' ? 'buy' : 'sell';
@@ -1482,6 +1615,7 @@ $('btnClearMoons').addEventListener('click', () => {
 $('priceBox').addEventListener('toggle', persist);
 
 restore();
+renderFacControls();
 renderAll();
 
 // logged in → per-ore refine from the ACTIVE character's skills (incl. the ore-group
@@ -1530,7 +1664,17 @@ renderAll();
   let seq = 0;   // a char switch mid-fetch supersedes the older run
   async function apply(){
     const my = ++seq;
-    if (!EveAuth.isLoggedIn()) return;
+    if (!EveAuth.isLoggedIn()){
+      // logged out live: degrade to the flat refine fallback
+      charSkills = null;
+      note.textContent = '';
+      renderFacControls();
+      renderSkillsPanel();
+      $('refine').disabled = false;
+      $('refine').title = '';
+      renderPlan();
+      return;
+    }
     try{
       let sk = EveAuth.skills();
       if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)
@@ -1539,10 +1683,8 @@ renderAll();
       if (!sk.groups || !Object.keys(sk.groups).length)
         throw new Error('ore-group skill levels unavailable');
       charSkills = sk;
-      for (const id of ['facStruct', 'facRig', 'facSec', 'facImp']){
-        $(id).disabled = false;
-        $(id).title = '';
-      }
+      renderFacControls();
+      renderSkillsPanel();
       $('refine').disabled = true;
       $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
       note.textContent = ` ⚡ per-ore refine from ${EveAuth.character().name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;

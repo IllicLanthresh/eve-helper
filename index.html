@@ -548,6 +548,7 @@ DSHR-01H Highsec Ice Storm Filament	13	Jump Filaments			1,30 m3
 AIR Mining Range Booster I	1	Booster		2	1 m3</script>
 
 <script src="auth.js"></script>
+<script src="structures.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -1154,12 +1155,13 @@ async function resolveTypeIds(names){
   return out;
 }
 
-/* ---------- markets: the NPC hubs + saved player structures ---------- */
-let structures = [];        // saved player market structures [{id, name, systemId, regionId}]
+/* ---------- markets: the NPC hubs + saved player structures (shared picker) ---------- */
 let structBroker = {};      // owner-set broker % remembered per structure id
 let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don't share it)
 let marketWasStructure = false;
 let lastMarket = 'jita';    // real market behind the select ('+ add structure…' is an action)
+
+const savedStructures = () => window.EveStructures ? EveStructures.saved() : [];
 
 function renderMarketOptions(){
   const sel = $('market');
@@ -1171,16 +1173,16 @@ function renderMarketOptions(){
     sel.appendChild(o);
   };
   for (const [k, h] of Object.entries(HUBS)) add(k, h.label);
-  for (const s of structures) add('s:' + s.id, s.name);
+  for (const s of savedStructures()) add('s:' + s.id, s.name);
   add('__add', '+ add structure…');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'jita';
-  $('manageStructs').hidden = !structures.length;
+  $('manageStructs').hidden = !savedStructures().length;
 }
 
 function hub(){
   const v = $('market').value;
   if (v.startsWith('s:')){
-    const s = structures.find(x => 's:' + x.id === v);
+    const s = savedStructures().find(x => 's:' + x.id === v);
     if (s) return { label: s.name, region: s.regionId, system: s.systemId, structure: s.id };
   }
   return HUBS[v] || HUBS.jita;
@@ -1200,69 +1202,20 @@ function syncBrokerForMarket(){
   marketWasStructure = !!h.structure;
 }
 
-const SYS_REGION_KEY = 'eveHelper.systemRegions.v1';
-async function regionOfSystem(systemId){
-  let cache;
-  try{ cache = JSON.parse(localStorage.getItem(SYS_REGION_KEY) || '{}'); }catch(_e){ cache = {}; }
-  if (cache[systemId]) return cache[systemId];
-  const sys = await (await esiFetch(`${ESI}/universe/systems/${systemId}/?datasource=tranquility`)).json();
-  const con = await (await esiFetch(`${ESI}/universe/constellations/${sys.constellation_id}/?datasource=tranquility`)).json();
-  cache[systemId] = con.region_id;
-  try{ localStorage.setItem(SYS_REGION_KEY, JSON.stringify(cache)); }catch(_e){}
-  return con.region_id;
-}
-
 const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
 const scopeHelp = missing =>
   `your login lacks ${missing.join(' + ')} — add the scope${missing.length > 1 ? 's' : ''} to the app in the EVE developer portal, then log in again`;
 
-// prompt/confirm based add flow — the search runs as the ACTIVE character, so it only
-// finds structures that character has access to
-async function addStructureFlow(){
-  if (!window.EveAuth || !EveAuth.isLoggedIn()){
-    alert('Log in with EVE first — the structure search runs as your character.');
-    return null;
-  }
-  const missing = ['esi-search.search_structures.v1', 'esi-universe.read_structures.v1']
-    .filter(s => !EveAuth.tokenScopes().includes(s));
-  if (missing.length){ alert(scopeHelp(missing)); return null; }
-  const frag = (prompt('Structure name (or a part of it) — e.g. your alliance market Keepstar:') || '').trim();
-  if (!frag) return null;
-  const hdrs = { headers: { Authorization: 'Bearer ' + await EveAuth.token() } };
-  const res = await esiFetch(`${ESI}/characters/${EveAuth.character().id}/search/?categories=structure&datasource=tranquility&search=${encodeURIComponent(frag)}&strict=false`, hdrs);
-  const ids = ((await res.json()).structure || []).slice(0, 10);
-  if (!ids.length){ alert(`No structures matched "${frag}" for ${EveAuth.character().name}.`); return null; }
-  const found = [];
-  for (const id of ids){
-    try{
-      const d = await (await esiFetch(`${ESI}/universe/structures/${id}/?datasource=tranquility`, hdrs)).json();
-      found.push({ id, name: d.name, systemId: d.solar_system_id });
-    }catch(_e){ /* not resolvable (no docking access etc.) — skip */ }
-  }
-  if (!found.length){ alert('The matched structures could not be resolved (no access?).'); return null; }
-  let pick = found[0];
-  if (found.length > 1){
-    const n = parseInt(prompt('Matches:\n' + found.map((s, i) => `${i + 1}. ${s.name}`).join('\n') + '\n\nNumber to add:') || '', 10);
-    if (!(n >= 1 && n <= found.length)) return null;
-    pick = found[n - 1];
-  } else if (!confirm(`Add "${pick.name}" as a market?`)) return null;
-  const s = { id: pick.id, name: pick.name, systemId: pick.systemId, regionId: await regionOfSystem(pick.systemId) };
-  const i = structures.findIndex(x => x.id === s.id);
-  if (i >= 0) structures[i] = s; else structures.push(s);
-  renderMarketOptions();
-  return s;
-}
-
-function manageStructuresFlow(){
-  if (!structures.length) return;
-  const n = parseInt(prompt('Saved structures:\n' + structures.map((s, i) => `${i + 1}. ${s.name}`).join('\n') + '\n\nNumber to REMOVE (cancel to keep all):') || '', 10);
-  if (!(n >= 1 && n <= structures.length)) return;
-  const [removed] = structures.splice(n - 1, 1);
-  delete structBroker[removed.id];
-  const wasSelected = $('market').value === 's:' + removed.id;
-  renderMarketOptions();   // falls back to jita when the removed one was selected
-  if (wasSelected) $('market').dispatchEvent(new Event('change'));
-  else persist();
+// the shared modal both adds and manages structures; a pick becomes the market,
+// removing the selected one falls back to Jita
+async function pickStructureMarket(){
+  const before = $('market').value;
+  const s = await EveStructures.pick({ title: 'Market structure', manage: true });
+  renderMarketOptions();   // reflects removals; falls back to jita if the selection is gone
+  const target = s ? 's:' + s.id : $('market').value;
+  $('market').value = target;
+  if (target !== before) $('market').dispatchEvent(new Event('change'));
+  else persist();          // the saved list may have changed without a market change
 }
 
 function orderCoversHub(o, h){
@@ -1444,9 +1397,10 @@ function persist(){
     localStorage.setItem(LS_KEY, JSON.stringify({
       inv: $('inv').value,
       // brokerFee always holds the NPC-hub value; structures keep theirs in structBroker
+      // (the saved structure list itself lives in EveStructures' shared storage)
       brokerFee: hubBrokerFee != null ? hubBrokerFee : $('brokerFee').value,
       salesTax: $('salesTax').value,
-      structures, structBroker,
+      structBroker,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
@@ -1466,8 +1420,6 @@ function restore(){
   $('undercut').checked = !!saved.undercut;
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
-  structures = Array.isArray(saved.structures)
-    ? saved.structures.filter(s => s && s.id && s.name && s.systemId && s.regionId) : [];
   structBroker = (saved.structBroker && typeof saved.structBroker === 'object') ? saved.structBroker : {};
   renderMarketOptions();
   if (saved.market && saved.market !== '__add'
@@ -1496,23 +1448,17 @@ $('brokerFee').addEventListener('change', () => {
   const h = hub();
   if (h.structure) structBroker[h.structure] = $('brokerFee').value;
 });
-$('manageStructs').addEventListener('click', e => { e.preventDefault(); manageStructuresFlow(); });
+$('manageStructs').addEventListener('click', e => { e.preventDefault(); pickStructureMarket(); });
 
 $('inv').addEventListener('input', () => rebuild());
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays', 'waitPct'])
   $(id).addEventListener('change', () => rebuild());
 $('topN').addEventListener('change', persist);
 
-$('market').addEventListener('change', async () => {
+$('market').addEventListener('change', () => {
   if ($('market').value === '__add'){
     $('market').value = lastMarket;   // that option is an action, not a market
-    let s = null;
-    try{ s = await addStructureFlow(); }
-    catch(e){ alert('Structure search failed: ' + e.message); }
-    if (s){
-      $('market').value = 's:' + s.id;
-      $('market').dispatchEvent(new Event('change'));
-    } else persist();
+    pickStructureMarket();            // modal handles search/manage; never rejects
     return;
   }
   lastMarket = $('market').value;

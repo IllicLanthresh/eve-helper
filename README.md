@@ -14,11 +14,17 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 "Log in with EVE" in the top bar pulls your skill levels and standings to auto-fill what
 you'd otherwise type by hand: **Accounting → sales tax**, **Broker Relations + standings →
 broker fee** (Sell tool), **Reprocessing / Reprocessing Efficiency + the ore-group
-processing skills → per-ore refine yields** (Mine tool; pick your facility — NPC station /
-Athanor / Tatara, rig tier, security band, implant — and each ore gets its own rate; the
-flat refine % input is only the logged-out fallback). Everything stays client-side: it's
-the OAuth2 **PKCE** flow, so there is no server, no database, and no secret — tokens live
-in your browser's localStorage only.
+processing skills → per-ore refine yields** (Mine tool; the flat refine % input is only
+the logged-out fallback). The Mine tool's refining facility is either the NPC-station
+default (flat 50% base — stations have no rigs, so no rig or security bonuses apply) or a
+player structure found through the shared **structure picker**: its type (Athanor 52% /
+Tatara 55% / anything else 50%) and its system's security band are **auto-detected**,
+while the reprocessing **rig and implant stay manual** — ESI exposes neither structure
+fittings nor clone implants. An **imported-skills panel** under the facility row lists
+every reprocessing skill that was pulled, what it governs, and the resulting yield % at
+the current facility. Everything stays client-side: it's the OAuth2 **PKCE** flow, so
+there is no server, no database, and no secret — tokens live in your browser's
+localStorage only.
 
 **Multiple characters**: log more in with the **+ alt** link in the top bar (the SSO page
 lets you pick a different character). A selector — in the top bar, and next to the values
@@ -99,10 +105,13 @@ broker fee stays hand-editable.
 ## Player structure markets
 
 Sell where your alliance actually trades: the market selector's **+ add structure…**
-option searches structures by name **as your logged-in character** (so it only finds
-structures that character has access to), lets you pick from the matches, and saves the
-choice; a **manage structures** link next to the selector removes saved ones. This needs
-the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
+option opens the structure picker — a modal with live search that runs **as your
+logged-in character** (so it only finds structures that character has access to). Results
+show name, system and structure type; pick with the mouse or ↑/↓ + Enter. Saved
+structures are listed in the same modal with a remove **×** each (the **manage
+structures** link next to the selector opens it too; removing the currently selected
+structure falls back to Jita), and the saved list is **shared with the Mine tool**. This
+needs the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
 `esi-search.search_structures.v1` scopes — if your character logged in before these were
 requested, log in again ("+ alt" on the same character works).
 
