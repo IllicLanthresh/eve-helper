@@ -546,6 +546,7 @@ Expired BLTZN-05L Lowsec Ice Storm Filament	2	Expired Jump Filaments			0,20 m3
 DSHR-01H Highsec Ice Storm Filament	13	Jump Filaments			1,30 m3
 AIR Mining Range Booster I	1	Booster		2	1 m3</script>
 
+<script src="auth.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -1390,6 +1391,30 @@ $('tblBody').addEventListener('click', e => {
 });
 
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
+
+// fees from the logged-in character: sales tax 7.5% ×(1 − 11%×Accounting),
+// NPC broker 3% − 0.3%×Broker Relations — auto-applied on load, still editable
+(async () => {
+  if (!window.EveAuth) return;
+  await EveAuth.ready;
+  if (!EveAuth.isLoggedIn()) return;
+  try{
+    let sk = EveAuth.skills();
+    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+    const tax = 7.5 * (1 - 0.11 * sk.accounting);
+    const broker = Math.max(0, 3 - 0.3 * sk.brokerRelations);
+    $('salesTax').value = tax.toFixed(2);
+    $('brokerFee').value = broker.toFixed(2);
+    const who = EveAuth.character();
+    const note = document.createElement('span');
+    note.className = 'hint';
+    note.textContent = `⚡ fees from ${who.name}'s skills (Accounting ${sk.accounting}, Broker Relations ${sk.brokerRelations}) — NPC-station broker base; structures differ, edit freely`;
+    $('brokerFee').closest('fieldset').appendChild(note);
+    rebuild();
+  }catch(e){
+    console.error('skill auto-fill failed:', e);
+  }
+})();
 </script>
 </body>
 </html>

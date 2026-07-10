@@ -303,6 +303,7 @@
 
 </main>
 
+<script src="auth.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -1380,6 +1381,30 @@ $('priceBox').addEventListener('toggle', persist);
 
 restore();
 renderAll();
+
+// refine % from the logged-in character: NPC-station base 50% × (1 + 3%×Reprocessing)
+// × (1 + 2%×Reprocessing Efficiency) × (1 + 2%×ore-specific, assumed level IV) —
+// auto-applied on load, still editable (structure users: bump it yourself)
+(async () => {
+  if (!window.EveAuth) return;
+  await EveAuth.ready;
+  if (!EveAuth.isLoggedIn()) return;
+  try{
+    let sk = EveAuth.skills();
+    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+    const eff = 50 * (1 + 0.03 * sk.reprocessing) * (1 + 0.02 * sk.reprocessingEfficiency) * 1.08;
+    state.refine = Math.min(95, Math.max(30, Math.round(eff * 10) / 10));
+    $('refine').value = String(state.refine);
+    const who = EveAuth.character();
+    const note = document.createElement('span');
+    note.className = 'hint';
+    note.textContent = ` ⚡ from ${who.name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency}, ore skill assumed IV, NPC base) — edit for structures`;
+    $('refine').insertAdjacentElement('afterend', note);
+    renderPlan(); persist();
+  }catch(e){
+    console.error('skill auto-fill failed:', e);
+  }
+})();
 </script>
 </body>
 </html>

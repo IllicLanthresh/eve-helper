@@ -9,6 +9,23 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
 | **Mine** | `mine.html` | Paste the materials you need for production → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). Live Jita prices. |
 
+## EVE login (optional)
+
+"Log in with EVE" in the top bar pulls your skill levels to auto-fill what you'd otherwise
+type by hand: **Accounting → sales tax**, **Broker Relations → broker fee** (Sell tool),
+**Reprocessing / Reprocessing Efficiency → refine %** (Mine tool; ore-specific skill assumed
+IV, NPC-station base — edit for structures). Everything stays client-side: it's the OAuth2
+**PKCE** flow, so there is no server, no database, and no secret — tokens live in your
+browser's localStorage only.
+
+One-time setup (needed because EVE SSO requires a registered app):
+1. Go to <https://developers.eveonline.com> → *Create new application*.
+2. Connection type: **Authentication & API Access**; scope: `esi-skills.read_skills.v1`.
+3. Callback URL — exactly your deployed index page, e.g.
+   `https://illiclanthresh.github.io/eve-helper/index.html`.
+4. Click *Log in with EVE* in the tool and paste the app's **Client ID** when prompted
+   (stored locally; the secret key is never used).
+
 ---
 
 # Sell Helper (`index.html`)
