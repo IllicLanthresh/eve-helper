@@ -1392,28 +1392,122 @@ $('tblBody').addEventListener('click', e => {
 
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 
-// fees from the logged-in character: sales tax 7.5% ×(1 − 11%×Accounting),
-// NPC broker 3% − 0.3%×Broker Relations — auto-applied on load, still editable
+// fees from the ACTIVE character: sales tax 7.5% ×(1 − 11%×Accounting); NPC-station
+// broker 3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp effective standing
+// toward the hub station's owner (Connections lifts positive standings, Diplomacy
+// repairs negative ones) — auto-applied, still editable
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
   if (!EveAuth.isLoggedIn()) return;
-  try{
-    let sk = EveAuth.skills();
-    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-    const tax = 7.5 * (1 - 0.11 * sk.accounting);
-    const broker = Math.max(0, 3 - 0.3 * sk.brokerRelations);
-    $('salesTax').value = tax.toFixed(2);
-    $('brokerFee').value = broker.toFixed(2);
-    const who = EveAuth.character();
-    const note = document.createElement('span');
-    note.className = 'hint';
-    note.textContent = `⚡ fees from ${who.name}'s skills (Accounting ${sk.accounting}, Broker Relations ${sk.brokerRelations}) — NPC-station broker base; structures differ, edit freely`;
-    $('brokerFee').closest('fieldset').appendChild(note);
-    rebuild();
-  }catch(e){
-    console.error('skill auto-fill failed:', e);
+
+  // hub station → owner corp (+ its faction), from public ESI, cached forever (NPC
+  // station ownership is static); names ride along for the note
+  const OWNERS_KEY = 'eveHelper.stationOwners.v1';
+  async function stationOwner(stationId){
+    let cache;
+    try{ cache = JSON.parse(localStorage.getItem(OWNERS_KEY) || '{}'); }catch(_e){ cache = {}; }
+    if (cache[stationId]) return cache[stationId];
+    const get = async url => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(url.split('/latest/')[1] + ': HTTP ' + r.status);
+      return r.json();
+    };
+    const st = await get(`https://esi.evetech.net/latest/universe/stations/${stationId}/?datasource=tranquility`);
+    const corp = await get(`https://esi.evetech.net/latest/corporations/${st.owner}/?datasource=tranquility`);
+    const own = { corp: st.owner, corpName: corp.name || null, faction: corp.faction_id || null, factionName: null };
+    if (own.faction){
+      try{
+        const f = (await get('https://esi.evetech.net/latest/universe/factions/?datasource=tranquility'))
+          .find(x => x.faction_id === own.faction);
+        if (f) own.factionName = f.name;
+      }catch(_e){ /* cosmetic only */ }
+    }
+    cache[stationId] = own;
+    try{ localStorage.setItem(OWNERS_KEY, JSON.stringify(cache)); }catch(_e){}
+    return own;
   }
+
+  const note = document.createElement('span');
+  note.className = 'hint';
+  const feesBox = $('brokerFee').closest('fieldset');
+  feesBox.appendChild(note);
+
+  // with several characters logged in, pick whose skills/standings fill the fees —
+  // this drives the site-wide active character, so the Mine tool follows along
+  let selWrap = null, charSel = null;
+  function renderCharSel(){
+    const chars = EveAuth.characters();
+    if (chars.length < 2){
+      if (selWrap){ selWrap.remove(); selWrap = null; charSel = null; }
+      return;
+    }
+    if (!selWrap){
+      selWrap = document.createElement('div');
+      selWrap.className = 'grow';
+      const lab = document.createElement('label');
+      lab.style.margin = '0';
+      lab.textContent = 'fees from';
+      charSel = document.createElement('select');
+      charSel.id = 'feeChar';
+      charSel.style.width = '150px';
+      charSel.title = 'whose skills and standings fill the fees (sets the site-wide active character)';
+      charSel.addEventListener('change', () => EveAuth.setActive(charSel.value));
+      selWrap.append(lab, charSel);
+      feesBox.insertBefore(selWrap, note);
+    }
+    charSel.textContent = '';
+    for (const c of chars){
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.name;
+      charSel.appendChild(o);
+    }
+    charSel.value = String(EveAuth.active());
+  }
+
+  // effective standing: Connections boosts positive standings, Diplomacy repairs negative ones
+  const eff = (base, sk) => base
+    ? base + (10 - base) * 0.04 * (base > 0 ? (sk.connections || 0) : (sk.diplomacy || 0))
+    : 0;
+
+  let seq = 0;   // a char/hub switch mid-fetch supersedes the older run
+  async function apply(){
+    const my = ++seq;
+    if (!EveAuth.isLoggedIn()){ note.textContent = ''; return; }
+    try{
+      let sk = EveAuth.skills();
+      if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+      let st = EveAuth.standings();
+      if (!st || Date.now() - Date.parse(st.fetched) > 86400e3){
+        try{ st = await EveAuth.fetchStandings(); }
+        catch(e){ console.warn('standings unavailable, using 0:', e); st = null; }
+      }
+      let own = null;
+      try{ own = await stationOwner(hub().station); }
+      catch(e){ console.warn('station owner lookup failed, standings ignored:', e); }
+      if (my !== seq) return;
+      const usable = st && !st.needsRelogin ? st : null;
+      const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
+      const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
+      const tax = 7.5 * (1 - 0.11 * sk.accounting);
+      const broker = Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff);
+      $('salesTax').value = tax.toFixed(2);
+      $('brokerFee').value = broker.toFixed(2);
+      const r2 = x => Math.round(x * 100) / 100;
+      const standingsBit = st && st.needsRelogin
+        ? 'standings n/a — log in again to grant standings access'
+        : `${(own && own.corpName) || 'corp'} ${r2(corpEff)} eff / ${(own && own.factionName) || 'faction'} ${r2(factionEff)} eff`;
+      note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · broker ${broker.toFixed(2)} (Broker ${sk.brokerRelations}, ${standingsBit}) — NPC-station broker; structures differ, edit freely`;
+      rebuild();
+    }catch(e){
+      console.error('skill auto-fill failed:', e);
+    }
+  }
+
+  EveAuth.onChange(() => { renderCharSel(); apply(); });
+  $('market').addEventListener('change', () => apply());
+  renderCharSel();
+  await apply();
 })();
 </script>
 </body>

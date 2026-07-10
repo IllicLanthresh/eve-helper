@@ -11,14 +11,27 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 
 ## EVE login (optional)
 
-"Log in with EVE" in the top bar pulls your skill levels to auto-fill what you'd otherwise
-type by hand: **Accounting → sales tax**, **Broker Relations → broker fee** (Sell tool),
-**Reprocessing / Reprocessing Efficiency + the ore-group processing skills → per-ore refine
-yields** (Mine tool; pick your facility — NPC station / Athanor / Tatara, rig tier, security
-band, implant — and each ore gets its own rate; the flat refine % input is only the
-logged-out fallback). Everything stays client-side: it's the OAuth2
-**PKCE** flow, so there is no server, no database, and no secret — tokens live in your
-browser's localStorage only.
+"Log in with EVE" in the top bar pulls your skill levels and standings to auto-fill what
+you'd otherwise type by hand: **Accounting → sales tax**, **Broker Relations + standings →
+broker fee** (Sell tool), **Reprocessing / Reprocessing Efficiency + the ore-group
+processing skills → per-ore refine yields** (Mine tool; pick your facility — NPC station /
+Athanor / Tatara, rig tier, security band, implant — and each ore gets its own rate; the
+flat refine % input is only the logged-out fallback). Everything stays client-side: it's
+the OAuth2 **PKCE** flow, so there is no server, no database, and no secret — tokens live
+in your browser's localStorage only.
+
+**Multiple characters**: log more in with the **+ alt** link in the top bar (the SSO page
+lets you pick a different character). A selector — in the top bar, and next to the values
+it drives ("fees from" on Sell, "skills from" on Mine) — chooses the **active** character,
+whose skills and standings both tools use; **log out** removes the active one. Handy when
+one alt trades and another one mines.
+
+**Broker fee with standings** (Sell tool): at an NPC station the broker fee is
+`3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp` effective standing toward the
+hub station's owner corporation and its faction (station owners come from public ESI and
+are cached). Effective standing = `base + (10 − base) × 4% × skill`, where the skill is
+**Connections** for positive base standings and **Diplomacy** for negative ones. The note
+under the fee inputs shows exactly which character and standings produced the numbers.
 
 The deployed site at `illiclanthresh.github.io` ships with its own registered app, so login
 just works there. Running a fork on another domain needs a one-time app registration
@@ -27,10 +40,16 @@ just works there. Running a fork on another domain needs a one-time app registra
 2. Client/app type: **public native (PKCE)** — *not* web/confidential. A web-type app
    demands its secret key at the token exchange, which a browser-only site cannot (and
    should not) hold — the SSO then rejects the login with HTTP 401.
-3. Scope: `esi-skills.read_skills.v1`; callback URL — exactly your deployed index page,
-   e.g. `https://your-name.github.io/eve-helper/index.html`.
+3. Scopes: **both** `esi-skills.read_skills.v1` **and** `esi-characters.read_standings.v1`;
+   callback URL — exactly your deployed index page, e.g.
+   `https://your-name.github.io/eve-helper/index.html`. An app registered before the
+   standings feature must add the `esi-characters.read_standings.v1` scope in the portal.
 4. Click *Log in with EVE* in the tool and paste the app's **Client ID** when prompted
    (stored locally; the secret key is never used).
+
+Characters logged in before the standings feature carry tokens without the standings
+scope — the Sell tool then computes with standings 0 and asks you to log in again (the
+"+ alt" / login flow re-grants the character with both scopes).
 
 ---
 

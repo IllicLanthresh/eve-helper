@@ -1484,34 +1484,77 @@ $('priceBox').addEventListener('toggle', persist);
 restore();
 renderAll();
 
-// logged in → per-ore refine from real skills (incl. the ore-group skills) + the
-// facility selectors; the flat refine input becomes a disabled bystander
+// logged in → per-ore refine from the ACTIVE character's skills (incl. the ore-group
+// skills) + the facility selectors; the flat refine input becomes a disabled bystander
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
   if (!EveAuth.isLoggedIn()) return;
-  try{
-    let sk = EveAuth.skills();
-    if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)
-      sk = await EveAuth.fetchSkills();
-    if (!sk.groups || !Object.keys(sk.groups).length)
-      throw new Error('ore-group skill levels unavailable');
-    charSkills = sk;
-    for (const id of ['facStruct', 'facRig', 'facSec', 'facImp']){
-      $(id).disabled = false;
-      $(id).title = '';
+
+  const note = document.createElement('span');
+  note.className = 'hint';
+  $('facImp').insertAdjacentElement('afterend', note);
+
+  // with several characters logged in, pick whose skills drive the refine — this sets
+  // the site-wide active character, so the Sell tool follows along
+  let selWrap = null, charSel = null;
+  function renderCharSel(){
+    const chars = EveAuth.characters();
+    if (chars.length < 2){
+      if (selWrap){ selWrap.remove(); selWrap = null; charSel = null; }
+      return;
     }
-    $('refine').disabled = true;
-    $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
-    const who = EveAuth.character();
-    const note = document.createElement('span');
-    note.className = 'hint';
-    note.textContent = ` ⚡ per-ore refine from ${who.name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
-    $('facImp').insertAdjacentElement('afterend', note);
-    renderPlan();
-  }catch(e){
-    console.error('skill auto-fill failed:', e);
+    if (!selWrap){
+      selWrap = document.createElement('span');
+      selWrap.style.cssText = 'display:inline-flex;gap:6px;align-items:center';
+      const lab = document.createElement('label');
+      lab.style.margin = '0';
+      lab.textContent = 'skills from';
+      charSel = document.createElement('select');
+      charSel.id = 'skillChar';
+      charSel.style.width = '150px';
+      charSel.title = 'whose skills compute the refine yields (sets the site-wide active character)';
+      charSel.addEventListener('change', () => EveAuth.setActive(charSel.value));
+      selWrap.append(lab, charSel);
+      $('facImp').insertAdjacentElement('afterend', selWrap);
+    }
+    charSel.textContent = '';
+    for (const c of chars){
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.name;
+      charSel.appendChild(o);
+    }
+    charSel.value = String(EveAuth.active());
   }
+
+  let seq = 0;   // a char switch mid-fetch supersedes the older run
+  async function apply(){
+    const my = ++seq;
+    if (!EveAuth.isLoggedIn()) return;
+    try{
+      let sk = EveAuth.skills();
+      if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)
+        sk = await EveAuth.fetchSkills();
+      if (my !== seq) return;
+      if (!sk.groups || !Object.keys(sk.groups).length)
+        throw new Error('ore-group skill levels unavailable');
+      charSkills = sk;
+      for (const id of ['facStruct', 'facRig', 'facSec', 'facImp']){
+        $(id).disabled = false;
+        $(id).title = '';
+      }
+      $('refine').disabled = true;
+      $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
+      note.textContent = ` ⚡ per-ore refine from ${EveAuth.character().name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
+      renderPlan();
+    }catch(e){
+      console.error('skill auto-fill failed:', e);
+    }
+  }
+
+  EveAuth.onChange(() => { renderCharSel(); apply(); });
+  renderCharSel();
+  await apply();
 })();
 </script>
 </body>
