@@ -7,8 +7,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | Tool | Page | What it does |
 | --- | --- | --- |
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
-| **Ore** | `ore.html` | Mineral → best rock → best sov prospecting-array deposit, weighted by live Jita prices. |
-| **Moon** | `moon.html` | Moon material → best moon ore → best scanned moon (paste your survey scan), weighted by live Jita prices. |
+| **Mine** | `mine.html` | Paste the materials you need for production → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). Live Jita prices. |
 
 ---
 
