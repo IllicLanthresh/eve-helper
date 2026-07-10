@@ -112,6 +112,7 @@
     <span class="sep"></span>
     <label for="market" style="margin:0">market</label>
     <select id="market" style="width:210px"></select>
+    <a href="#" id="manageStructs" class="hint" hidden title="remove saved player structures">manage structures</a>
     <button id="btnEsi" type="button" class="primary">Fetch prices (ESI)</button>
     <span id="esiStatus"></span>
   </div>
@@ -1153,27 +1154,138 @@ async function resolveTypeIds(names){
   return out;
 }
 
-function hub(){ return HUBS[$('market').value] || HUBS.jita; }
+/* ---------- markets: the NPC hubs + saved player structures ---------- */
+let structures = [];        // saved player market structures [{id, name, systemId, regionId}]
+let structBroker = {};      // owner-set broker % remembered per structure id
+let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don't share it)
+let marketWasStructure = false;
+let lastMarket = 'jita';    // real market behind the select ('+ add structure…' is an action)
+
+function renderMarketOptions(){
+  const sel = $('market');
+  const cur = sel.value;
+  sel.textContent = '';
+  const add = (v, label) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    sel.appendChild(o);
+  };
+  for (const [k, h] of Object.entries(HUBS)) add(k, h.label);
+  for (const s of structures) add('s:' + s.id, s.name);
+  add('__add', '+ add structure…');
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'jita';
+  $('manageStructs').hidden = !structures.length;
+}
+
+function hub(){
+  const v = $('market').value;
+  if (v.startsWith('s:')){
+    const s = structures.find(x => 's:' + x.id === v);
+    if (s) return { label: s.name, region: s.regionId, system: s.systemId, structure: s.id };
+  }
+  return HUBS[v] || HUBS.jita;
+}
+
+// the broker input is per-market: the NPC hubs share one skills/standings-driven value,
+// each structure remembers its own owner-set rate (ESI has no endpoint for it)
+function syncBrokerForMarket(){
+  const h = hub();
+  if (h.structure){
+    if (!marketWasStructure) hubBrokerFee = $('brokerFee').value;
+    if (structBroker[h.structure] != null) $('brokerFee').value = structBroker[h.structure];
+    structBroker[h.structure] = $('brokerFee').value;
+  } else if (marketWasStructure && hubBrokerFee != null){
+    $('brokerFee').value = hubBrokerFee;
+  }
+  marketWasStructure = !!h.structure;
+}
+
+const SYS_REGION_KEY = 'eveHelper.systemRegions.v1';
+async function regionOfSystem(systemId){
+  let cache;
+  try{ cache = JSON.parse(localStorage.getItem(SYS_REGION_KEY) || '{}'); }catch(_e){ cache = {}; }
+  if (cache[systemId]) return cache[systemId];
+  const sys = await (await esiFetch(`${ESI}/universe/systems/${systemId}/?datasource=tranquility`)).json();
+  const con = await (await esiFetch(`${ESI}/universe/constellations/${sys.constellation_id}/?datasource=tranquility`)).json();
+  cache[systemId] = con.region_id;
+  try{ localStorage.setItem(SYS_REGION_KEY, JSON.stringify(cache)); }catch(_e){}
+  return con.region_id;
+}
+
+const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
+const scopeHelp = missing =>
+  `your login lacks ${missing.join(' + ')} — add the scope${missing.length > 1 ? 's' : ''} to the app in the EVE developer portal, then log in again`;
+
+// prompt/confirm based add flow — the search runs as the ACTIVE character, so it only
+// finds structures that character has access to
+async function addStructureFlow(){
+  if (!window.EveAuth || !EveAuth.isLoggedIn()){
+    alert('Log in with EVE first — the structure search runs as your character.');
+    return null;
+  }
+  const missing = ['esi-search.search_structures.v1', 'esi-universe.read_structures.v1']
+    .filter(s => !EveAuth.tokenScopes().includes(s));
+  if (missing.length){ alert(scopeHelp(missing)); return null; }
+  const frag = (prompt('Structure name (or a part of it) — e.g. your alliance market Keepstar:') || '').trim();
+  if (!frag) return null;
+  const hdrs = { headers: { Authorization: 'Bearer ' + await EveAuth.token() } };
+  const res = await esiFetch(`${ESI}/characters/${EveAuth.character().id}/search/?categories=structure&datasource=tranquility&search=${encodeURIComponent(frag)}&strict=false`, hdrs);
+  const ids = ((await res.json()).structure || []).slice(0, 10);
+  if (!ids.length){ alert(`No structures matched "${frag}" for ${EveAuth.character().name}.`); return null; }
+  const found = [];
+  for (const id of ids){
+    try{
+      const d = await (await esiFetch(`${ESI}/universe/structures/${id}/?datasource=tranquility`, hdrs)).json();
+      found.push({ id, name: d.name, systemId: d.solar_system_id });
+    }catch(_e){ /* not resolvable (no docking access etc.) — skip */ }
+  }
+  if (!found.length){ alert('The matched structures could not be resolved (no access?).'); return null; }
+  let pick = found[0];
+  if (found.length > 1){
+    const n = parseInt(prompt('Matches:\n' + found.map((s, i) => `${i + 1}. ${s.name}`).join('\n') + '\n\nNumber to add:') || '', 10);
+    if (!(n >= 1 && n <= found.length)) return null;
+    pick = found[n - 1];
+  } else if (!confirm(`Add "${pick.name}" as a market?`)) return null;
+  const s = { id: pick.id, name: pick.name, systemId: pick.systemId, regionId: await regionOfSystem(pick.systemId) };
+  const i = structures.findIndex(x => x.id === s.id);
+  if (i >= 0) structures[i] = s; else structures.push(s);
+  renderMarketOptions();
+  return s;
+}
+
+function manageStructuresFlow(){
+  if (!structures.length) return;
+  const n = parseInt(prompt('Saved structures:\n' + structures.map((s, i) => `${i + 1}. ${s.name}`).join('\n') + '\n\nNumber to REMOVE (cancel to keep all):') || '', 10);
+  if (!(n >= 1 && n <= structures.length)) return;
+  const [removed] = structures.splice(n - 1, 1);
+  delete structBroker[removed.id];
+  const wasSelected = $('market').value === 's:' + removed.id;
+  renderMarketOptions();   // falls back to jita when the removed one was selected
+  if (wasSelected) $('market').dispatchEvent(new Event('change'));
+  else persist();
+}
 
 function orderCoversHub(o, h){
-  if (o.location_id === h.station) return true;
+  if (o.location_id === (h.station || h.structure)) return true;
   if (!o.is_buy_order) return false;
   if (o.range === 'region') return true;
+  // numeric jump ranges: counted for the same system only (conservative approximation);
+  // a 'station'-range buy that is NOT at the hub/structure itself can never reach it
   if (o.system_id === h.system && o.range !== 'station') return true;
   return false;
 }
 
 async function fetchBook(typeId, h){
-  let page = 1;
-  const buyLevels = [];
+  let page = 1, unk = 0;
+  const buys = new Map();   // keyed by order_id so structure-book duplicates dedup cleanly
   let bestSell = null, sellDepth = 0;
   for (;;){
     const res = await esiFetch(`${ESI}/markets/${h.region}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
     const data = await res.json();
     for (const o of data){
       if (!orderCoversHub(o, h)) continue;
-      if (o.is_buy_order) buyLevels.push({ p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
-      else if (o.location_id === h.station){
+      if (o.is_buy_order) buys.set(o.order_id ?? 'x' + unk++, { p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
+      else if (!h.structure && o.location_id === h.station){
         if (bestSell == null || o.price < bestSell) bestSell = o.price;
         sellDepth += o.volume_remain;
       }
@@ -1182,8 +1294,46 @@ async function fetchBook(typeId, h){
     if (page >= pages) break;
     page++;
   }
-  buyLevels.sort((a, b) => b.p - a.p);
+  if (h.structure && state.structBook){
+    // sell side: ONLY the structure's own book (that is the book you'd list into);
+    // buy side: merge the book's buys with the regional ones that cover the structure —
+    // a public structure's orders appear in BOTH feeds, hence the order_id dedup
+    const e = state.structBook.get(typeId);
+    if (e){
+      for (const b of e.buys) buys.set(b.id ?? 'sx' + unk++, { p: b.p, v: b.v, minv: b.minv });
+      for (const s of e.sells){
+        if (bestSell == null || s.p < bestSell) bestSell = s.p;
+        sellDepth += s.v;
+      }
+    }
+  }
+  const buyLevels = [...buys.values()].sort((a, b) => b.p - a.p);
   return { buyLevels, bestSell, sellDepth };
+}
+
+// the structure endpoint has no type_id filter: pull the WHOLE book once, index by type
+async function fetchStructureBook(h, fill, status){
+  const hdrs = { headers: { Authorization: 'Bearer ' + await EveAuth.token() } };
+  const byType = new Map();
+  let page = 1, capped = false;
+  for (;;){
+    const res = await esiFetch(`${ESI}/markets/structures/${h.structure}/?datasource=tranquility&page=${page}`, hdrs);
+    const data = await res.json();
+    for (const o of data){
+      let e = byType.get(o.type_id);
+      if (!e) byType.set(o.type_id, e = { buys: [], sells: [] });
+      if (o.is_buy_order) e.buys.push({ id: o.order_id, p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
+      else e.sells.push({ id: o.order_id, p: o.price, v: o.volume_remain });
+    }
+    const pages = Number(res.headers.get('x-pages') || '1');
+    status.textContent = `fetching ${h.label} order book… page ${page}/${pages}`;
+    fill.classList.remove('ind');
+    fill.style.width = Math.round(page / Math.max(pages, 1) * 100) + '%';
+    if (page >= pages) break;
+    if (page >= 100){ capped = true; console.warn('structure order book truncated at 100 pages'); break; }
+    page++;
+  }
+  return { byType, capped };
 }
 
 async function fetchHistory(typeId, h){
@@ -1199,6 +1349,19 @@ async function runEsi(){
   const withHist = $('histOn').checked;
   const h = hub();
 
+  if (h.structure){   // structure books need a logged-in character with the market scope
+    if (!window.EveAuth || !EveAuth.isLoggedIn()){
+      $('esiStatus').textContent = "log in with EVE to fetch this structure's market";
+      $('esiStatus').className = 'err';
+      return;
+    }
+    if (!EveAuth.tokenScopes().includes(STRUCTURE_MARKET_SCOPE)){
+      $('esiStatus').textContent = scopeHelp([STRUCTURE_MARKET_SCOPE]);
+      $('esiStatus').className = 'err';
+      return;
+    }
+  }
+
   state.esiRunning = true;
   const token = ++state.esiToken;   // Clear (or a newer run) bumps this and orphans us
   const btn = $('btnEsi'); btn.disabled = true;
@@ -1206,6 +1369,22 @@ async function runEsi(){
   const bar = $('fetchBar'), fill = $('fetchFill');
   bar.hidden = false; fill.classList.add('ind');
   try{
+    state.structBook = null;
+    let structCapped = false;
+    if (h.structure){
+      status.textContent = `fetching ${h.label} order book…`;
+      let book;
+      try{ book = await fetchStructureBook(h, fill, status); }
+      catch(e){
+        throw /HTTP 403/.test(e.message)
+          ? new Error('your character has no market access at this structure')
+          : e;
+      }
+      if (token !== state.esiToken) return;
+      state.structBook = book.byType;
+      structCapped = book.capped;
+      fill.style.width = '0%'; fill.classList.add('ind');
+    }
     status.textContent = `resolving ${inv.size} item names…`;
     const ids = await resolveTypeIds([...inv.values()].map(v => v.name));
     if (token !== state.esiToken) return;
@@ -1243,7 +1422,9 @@ async function runEsi(){
     if (token !== state.esiToken) return;
     state.fetchedHist = withHist;
     status.textContent = `${h.label} prices loaded ${new Date().toLocaleTimeString()}` +
-      (failed ? ` — ${failed} lookups failed` : '');
+      (failed ? ` — ${failed} lookups failed` : '') +
+      (structCapped ? ' — structure book truncated at 100 pages' : '') +
+      (h.structure && withHist ? ' — history is region-wide (ESI has none per structure)' : '');
     status.className = failed ? 'err' : 'ok';
   }catch(e){
     if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
@@ -1259,9 +1440,13 @@ async function runEsi(){
 /* ---------- persistence ---------- */
 function persist(){
   try{
+    if (!hub().structure) hubBrokerFee = $('brokerFee').value;
     localStorage.setItem(LS_KEY, JSON.stringify({
       inv: $('inv').value,
-      brokerFee: $('brokerFee').value, salesTax: $('salesTax').value,
+      // brokerFee always holds the NPC-hub value; structures keep theirs in structBroker
+      brokerFee: hubBrokerFee != null ? hubBrokerFee : $('brokerFee').value,
+      salesTax: $('salesTax').value,
+      structures, structBroker,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
@@ -1277,10 +1462,21 @@ function restore(){
   $('inv').value = saved.inv || '';
   if (saved.brokerFee != null) $('brokerFee').value = saved.brokerFee;
   if (saved.salesTax  != null) $('salesTax').value  = saved.salesTax;
+  hubBrokerFee = saved.brokerFee != null ? String(saved.brokerFee) : null;
   $('undercut').checked = !!saved.undercut;
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
-  if (saved.market && HUBS[saved.market]) $('market').value = saved.market;
+  structures = Array.isArray(saved.structures)
+    ? saved.structures.filter(s => s && s.id && s.name && s.systemId && s.regionId) : [];
+  structBroker = (saved.structBroker && typeof saved.structBroker === 'object') ? saved.structBroker : {};
+  renderMarketOptions();
+  if (saved.market && saved.market !== '__add'
+      && [...$('market').options].some(o => o.value === saved.market))
+    $('market').value = saved.market;
+  lastMarket = $('market').value;
+  marketWasStructure = !!hub().structure;
+  if (marketWasStructure && structBroker[hub().structure] != null)
+    $('brokerFee').value = structBroker[hub().structure];
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
@@ -1292,18 +1488,35 @@ function restore(){
 }
 
 /* ---------- wiring ---------- */
-for (const [k, h] of Object.entries(HUBS)){
-  const opt = document.createElement('option');
-  opt.value = k; opt.textContent = h.label;
-  $('market').appendChild(opt);
-}
+renderMarketOptions();
+
+// remember the owner-set broker rate per structure the moment it is edited
+// (registered before the generic rebuild listener so persist() sees the new value)
+$('brokerFee').addEventListener('change', () => {
+  const h = hub();
+  if (h.structure) structBroker[h.structure] = $('brokerFee').value;
+});
+$('manageStructs').addEventListener('click', e => { e.preventDefault(); manageStructuresFlow(); });
 
 $('inv').addEventListener('input', () => rebuild());
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays', 'waitPct'])
   $(id).addEventListener('change', () => rebuild());
 $('topN').addEventListener('change', persist);
 
-$('market').addEventListener('change', () => {
+$('market').addEventListener('change', async () => {
+  if ($('market').value === '__add'){
+    $('market').value = lastMarket;   // that option is an action, not a market
+    let s = null;
+    try{ s = await addStructureFlow(); }
+    catch(e){ alert('Structure search failed: ' + e.message); }
+    if (s){
+      $('market').value = 's:' + s.id;
+      $('market').dispatchEvent(new Event('change'));
+    } else persist();
+    return;
+  }
+  lastMarket = $('market').value;
+  syncBrokerForMarket();
   state.esi.clear();
   state.esiToken++;
   $('esiStatus').textContent = 'market changed — fetch prices again';
@@ -1477,6 +1690,17 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
     try{
       let sk = EveAuth.skills();
       if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+      const hNow = hub();
+      if (hNow.structure){
+        // player structure: the broker fee is owner-set (no ESI endpoint, skills and
+        // standings don't apply) — only the sales tax comes from the character
+        if (my !== seq) return;
+        const tax = 7.5 * (1 - 0.11 * sk.accounting);
+        $('salesTax').value = tax.toFixed(2);
+        note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (remembered per structure)`;
+        rebuild();
+        return;
+      }
       let st = EveAuth.standings();
       if (!st || Date.now() - Date.parse(st.fetched) > 86400e3){
         try{ st = await EveAuth.fetchStandings(); }

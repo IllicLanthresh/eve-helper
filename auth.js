@@ -4,15 +4,22 @@
    ACTIVE and drives every page (fees/standings on Sell, refine skills on Mine).
    Requires a (free) app at https://developers.eveonline.com with:
    - Callback URL: this site's index page URL (exactly, incl. trailing slash)
-   - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1 (scopes the SSO
-     no longer publishes are dropped from the login request automatically)
+   - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1
+     esi-markets.structure_markets.v1 esi-universe.read_structures.v1
+     esi-search.search_structures.v1 (scopes the SSO no longer publishes are dropped
+     from the login request automatically)
 */
 'use strict';
 (function(){
   const LS_KEY = 'eveHelper.auth.v1';
   const SSO = 'https://login.eveonline.com/v2/oauth';
   const STANDINGS_SCOPE = 'esi-characters.read_standings.v1';
-  const SCOPES = 'esi-skills.read_skills.v1 ' + STANDINGS_SCOPE;
+  const STRUCTURE_SCOPES = [
+    'esi-markets.structure_markets.v1',   // player-structure order books (Sell tool)
+    'esi-universe.read_structures.v1',    // structure name/system lookup
+    'esi-search.search_structures.v1',    // find structures by name
+  ];
+  const SCOPES = ['esi-skills.read_skills.v1', STANDINGS_SCOPE, ...STRUCTURE_SCOPES].join(' ');
 
   const SKILL_IDS = {
     accounting: 16622,
@@ -76,6 +83,11 @@
       return JSON.parse(decodeURIComponent(escape(atob(b))));
     }catch(_e){ return null; }
   }
+  // the scp claim can be a single string or an array — normalize to an array
+  function scopesOf(token){
+    const scp = (jwtPayload(token) || {}).scp;
+    return Array.isArray(scp) ? scp : scp ? [scp] : [];
+  }
 
   // The callback URL is always the site root page, so one registered URL covers every tool.
   function callbackUrl(){
@@ -115,7 +127,7 @@
       clientId = (window.prompt(
         'EVE SSO Client ID needed (one-time setup):\n\n' +
         '1. https://developers.eveonline.com → create an application (any kind — the secret key is never used)\n' +
-        '2. Scopes: esi-skills.read_skills.v1 and esi-characters.read_standings.v1 (tick the ones the portal still offers)\n' +
+        '2. Scopes (tick the ones the portal still offers): esi-skills.read_skills.v1, esi-characters.read_standings.v1, esi-markets.structure_markets.v1, esi-universe.read_structures.v1, esi-search.search_structures.v1\n' +
         `3. Callback URL exactly: ${callbackUrl()}\n\n` +
         'Paste the Client ID here (stored only in your browser):') || '').trim();
       if (!clientId) return;
@@ -275,11 +287,8 @@
     const c = auth.chars[charId];
     if (!c) throw new Error('not logged in');
     const token = await getToken(charId);
-    // only call ESI when the token actually carries the scope — the scp claim can be a
-    // single string or an array
-    const scp = (jwtPayload(token) || {}).scp;
-    const granted = Array.isArray(scp) ? scp : scp ? [scp] : [];
-    if (!granted.includes(STANDINGS_SCOPE)){
+    // only call ESI when the token actually carries the scope
+    if (!scopesOf(token).includes(STANDINGS_SCOPE)){
       c.standings = (auth.droppedScopes || []).includes(STANDINGS_SCOPE)
         ? { unavailable: true, fetched: new Date().toISOString() }
         : { needsRelogin: true, fetched: new Date().toISOString() };
@@ -392,6 +401,12 @@
     active: () => (auth.active != null ? auth.active : null),
     skills: id => { const c = auth.chars[id != null ? id : auth.active]; return (c && c.skills) || null; },
     standings: id => { const c = auth.chars[id != null ? id : auth.active]; return (c && c.standings) || null; },
+    // for pages that call authenticated ESI endpoints themselves (structure markets)
+    token: id => getToken(id != null ? id : auth.active),
+    tokenScopes: id => {
+      const c = auth.chars[id != null ? id : auth.active];
+      return c && c.tokens ? scopesOf(c.tokens.access) : [];
+    },
   };
 
   const init = async () => { await handleCallback(); renderUI(); };

@@ -39,11 +39,14 @@ just works there. Running a fork on another domain needs a one-time app registra
 1. Go to <https://developers.eveonline.com> → *Create new application*.
 2. Create the application (any kind — the login uses PKCE, so the app's secret key is
    never used or stored).
-3. Scopes: tick **both** `esi-skills.read_skills.v1` **and**
-   `esi-characters.read_standings.v1` (if the portal still offers them); callback URL —
+3. Scopes — tick everything the portal still offers of: `esi-skills.read_skills.v1`,
+   `esi-characters.read_standings.v1` (standings-aware broker fee),
+   `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
+   `esi-search.search_structures.v1` (player structure markets); callback URL —
    exactly your deployed index page, e.g.
-   `https://your-name.github.io/eve-helper/index.html`. An app registered before the
-   standings feature must add the `esi-characters.read_standings.v1` scope in the portal.
+   `https://your-name.github.io/eve-helper/index.html`. An app registered before these
+   features must add the missing scopes in the portal (and characters must log in
+   again to grant them).
 4. Click *Log in with EVE* in the tool and paste the app's **Client ID** when prompted
    (stored locally; the secret key is never used).
 
@@ -64,7 +67,8 @@ broker fee stays hand-editable.
 ## Workflow
 
 1. **Paste your inventory** (select items in a hangar/container → Ctrl-C).
-2. **Pick a market**: Jita 4-4, Amarr, Dodixie, Rens, or Hek.
+2. **Pick a market**: Jita 4-4, Amarr, Dodixie, Rens, Hek — or a saved player structure
+   (see *Player structure markets* below).
 3. **Fetch prices (ESI)** — pulls the live order book per item (optionally plus ~13 months
    of daily price history) for the chosen hub.
 4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%) and choose how ORDER
@@ -91,6 +95,31 @@ broker fee stays hand-editable.
    - **Instant checklist**: the INSTANT items as `Item name ⇥ Qty` (plus the instant legs
      of ticked SPLITs as partial stacks) — sell these directly in the hangar.
 8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
+
+## Player structure markets
+
+Sell where your alliance actually trades: the market selector's **+ add structure…**
+option searches structures by name **as your logged-in character** (so it only finds
+structures that character has access to), lets you pick from the matches, and saves the
+choice; a **manage structures** link next to the selector removes saved ones. This needs
+the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
+`esi-search.search_structures.v1` scopes — if your character logged in before these were
+requested, log in again ("+ alt" on the same character works).
+
+With a structure selected, a price run fetches:
+- the structure's **real order book** (the ESI structure-market endpoint has no per-item
+  filter, so the whole paginated book is pulled once and indexed — sell prices, undercuts
+  and sell depth come exclusively from it);
+- **regional buy orders that reach the structure** (range `region`, or same-system jump
+  ranges; `station`-range buys elsewhere never do), merged with the structure book's buys
+  and de-duplicated by order id — a public structure's orders appear in both feeds;
+- **regional history** (ESI has no per-structure history — the Hist column, flags and
+  fallbacks are region-wide, and the status line says so).
+
+The **owner-set broker fee is not in ESI** (there is no endpoint for it): read it once
+from the in-game sell window and type it into the broker % field — it is remembered per
+structure and switching back to an NPC hub restores the skills/standings-derived rate.
+Sales tax (Accounting) applies everywhere and keeps auto-filling.
 
 ## Flags
 
