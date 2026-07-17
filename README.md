@@ -8,6 +8,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | --- | --- | --- |
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
 | **Mine** | `mine.html` | Paste the materials you need for production → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). Live Jita prices. |
+| **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
 
 ## EVE login (optional)
 
@@ -47,8 +48,10 @@ just works there. Running a fork on another domain needs a one-time app registra
    never used or stored).
 3. Scopes — tick everything the portal still offers of: `esi-skills.read_skills.v1`,
    `esi-characters.read_standings.v1` (standings-aware broker fee),
-   `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
-   `esi-search.search_structures.v1` (player structure markets); callback URL —
+   `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1`,
+   `esi-search.search_structures.v1` (player structure markets) and
+   `esi-characters.read_blueprints.v1` (owned blueprints for the Industry tool);
+   callback URL —
    exactly your deployed index page, e.g.
    `https://your-name.github.io/eve-helper/index.html`. An app registered before these
    features must add the missing scopes in the portal (and characters must log in
@@ -166,3 +169,92 @@ Items with no orders and no history at the hub are listed separately and never p
 
 Plain HTML/CSS/JS in one file — no build step. `Load sample data` fills the input with a
 real 250-item hangar for instant experimentation (fetch prices to value it).
+
+---
+
+# Industry Helper (`industry.html`)
+
+Answers one question across the whole market at once: *of everything I could manufacture,
+what is worth building right now* — with home facilities in null, Jita as the trade hub,
+and shipping both ways priced in.
+
+## Static data pipeline
+
+Blueprint recipes, type volumes, market groups and skills come from CCP's **Static Data
+Export**. CI downloads the SDE at deploy time and runs
+`tools/build-industry-data.mjs`, which condenses the ~500 MB YAML into one
+`data/industry.json` blob (~2 MB: every man/rea/inv/cop/me/te activity with materials,
+products, probabilities and skills). The file is generated, not committed — for a local
+checkout, build it once from an extracted SDE:
+`node tools/build-industry-data.mjs --sde <dir> --out data/industry.json`. The page's
+status line shows the SDE version and blueprint count it loaded.
+
+## Live data — one "Update ESI data" button
+
+All of it public ESI, all cached in **IndexedDB** (the order book is far too big for
+localStorage), each dataset with its own age label:
+
+- **The Forge order book** — the full regional book, `~350 paginated requests`
+  (progress-barred, error-limit aware). It is condensed on arrival: per type, the sell
+  levels at Jita 4-4 (ascending) and the buy levels whose range actually covers Jita
+  (station / same-system / region — the same rule the Sell tool uses), capped at 40
+  price levels per side. That's what "cost at sell / revenue at buy" are computed from.
+- **Adjusted prices** (`/markets/prices/`) — the EIV basis for job fees.
+- **Cost indices** (`/industry/systems/`) — per-system, per-activity; facilities show
+  their system's indices and refresh with this dataset.
+- **Owned blueprints** — for every logged-in character whose token carries
+  `esi-characters.read_blueprints.v1`: all blueprints, merged to the best-researched
+  BPO per type (a BPO always beats a BPC). Characters missing the scope are named in an
+  inline note — add the scope to the app and log in again. An owned BPO feeds its real
+  ME/TE into the calculation and removes the invention path for that product.
+
+## Profiles
+
+Named manufacturing profiles (create / rename / duplicate / delete; stored per browser).
+Each holds:
+
+- **Facilities** (ordered — a job runs at the first facility offering its activity whose
+  product scope covers the end product): player structures via the shared picker (system,
+  security and structure type auto-detected; Raitaru/Azbel/Sotiyo/Athanor/Tatara role
+  bonuses pre-filled as editable presets marked *verify in game*) or NPC stations (type
+  the system name for its cost index). Per facility: activity checkboxes, owner-set
+  facility tax, optional cost-index override, and **rigs** as T1/T2 × ME/TE/Cost presets
+  with the security-band multiplier applied automatically (HS ×1.0, LS ×1.9, NS/WH ×2.1)
+  plus an optional market-group scope per rig.
+- **Market settings**: buy inputs instantly vs at buy order; sell output via sell order
+  vs instant; broker + sales tax auto-filled from the active character's skills and
+  standings at Jita 4-4 (same formulas as the Sell tool) with a manual override.
+- **Shipping**: `reward = round-up-to-million(base + ISK/m³ × volume + collateral% ×
+  value)` — all four parameters editable, per-direction toggles (defaults 10 M + 653.4
+  ISK/m³ + 1% collateral).
+- **Assumptions**: ME/TE for unowned BPOs (10/20), decryptor policy (auto-cheapest /
+  none / a specific one), SCC surcharge %.
+
+## The table & drilldown
+
+One button computes **every manufacturable product with a market group** (~4 300)
+through the shared calc engine (`industry-engine.js`) in background chunks with progress
+and cancel; profile/data changes flag the results *stale* instead of silently recomputing.
+Sortable, filterable columns (name search, category and meta chips, numeric minimums,
+owned-BP / skilled / priced toggles — filter state persists): cost, revenue, profit,
+margin, ROI, ISK/h, shipping, sales tax, m³, ISK/m³, blueprint situation (owned research
+/ invent / buy BPO) and build-vs-buy node counts. **Demand/Day and D.O.S.** (days of
+stock = Jita sell depth ÷ demand) fetch region history lazily — only for rows actually
+scrolled into view, cached a day. Clicking a row opens the **drilldown**: the full
+build-vs-buy tree with both costs at every node, the chosen facility, job time, the fee
+breakdown (system cost index gross, structure/rig bonus, SCC, facility tax), the
+material-modifier breakdown, an invention subpanel with the per-decryptor comparison,
+per-node **force buy/build** toggles (persisted in the profile, recomputing just that
+product), and TSV export of the tree or the whole table.
+
+## Honest simplifications (v1)
+
+- Input-side broker fees (when placing buy orders) are not modelled.
+- ISK/h divides profit by the **sum** of build-job times — no parallel slots, no critical
+  path; invention/copy times excluded.
+- Invention consumables are amortized into cost but not added to the inbound haul.
+- Demand/history is regional (The Forge), both order sides combined.
+- Facility product scopes and owned-BP ME/TE apply per end product; intermediates use the
+  unowned-BPO defaults. Owned T2 BPCs are displayed but priced via invention.
+- Everything is priced at 1 run; structure role/rig bonus presets are hardcoded — verify
+  in game and override per facility if needed.
