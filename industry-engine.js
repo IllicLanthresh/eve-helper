@@ -40,19 +40,36 @@
                  // inputSide='buy' — the buyer pays their own broker fee to place orders.
                  // sellerBrokerPct/sellerTaxPct fall back to brokerPct/taxPct.
                  shipping: { base, perM3, collateralPct, roundUpToMillion, applyInbound, applyOutbound },
-                 assumptions: { ownedBpoMe, ownedBpoTe, sccPct, decryptor:'auto'|name|null } }
+                 assumptions: { ownedBpoMe, ownedBpoTe, sccPct, decryptor:'auto'|name|null },
+                 planning: { capital,          // ISK for working inputs; null = unlimited
+                             slots: {man, science, reaction},  // override auto-derivation
+                             demandCapPct,     // default 100 — see opts.demandPerDay
+                             maxHaulM3 } }     // default 350000 — shipping splits into hauls
    - skills:   { byName: {'Industry':5, ...} } and/or { byId: {tid:lvl} }.
    - params:   { maxDepth } — defaults for evaluate opts.
 
    evaluate(productTypeId, opts) opts:
-   - runs (default 1), meOverride/teOverride (root blueprint only), maxDepth,
+   - runs — PINS the plan to exactly `runs` runs in one job (the pre-batch behavior).
+     Omit it to let the batch planner size R (runs/job) × J (parallel jobs) from BPC
+     runs / blueprint limit / ~24h job cap / slots / demand / capital — see evaluate()'s
+     own doc comment for the full algorithm.
+   - demandPerDay — market demand in units/day (planner mode only); with demandCapPct
+     it caps the plan's daily output. null/omitted = uncapped.
+   - meOverride/teOverride (root blueprint only), maxDepth,
      forceBuy: Set<tid>, forceBuild: Set<tid>,
      noInvention (root only) — price the root straight off its blueprint (owned
      BPO/BPC in hand), skipping the invention variants and their amortized overhead;
      pair it with meOverride/teOverride carrying the owned blueprint's research.
 
-   Returns { tid, name, produced, runs, totals, tree, stats } where totals =
-   { costPerItem, revenuePerItem, profitPerItem, marginPct, roiPct, iskPerHour,
+   Returns { tid, name, produced, runs, totals, tree, stats } — runs = R×J total.
+   totals =
+   { costPerItem, revenuePerItem, profitPerItem, marginPct, roiPct,
+     iskPerHour,                       // pipeline: profit/unit × min stage units/hour
+     profitPerDay,                     // iskPerHour × 24
+     capitalUsed,                      // batch build total + inbound shipping
+     batch: { runs, jobs, units, planned, cycleHours, bottleneck, unitsPerHour,
+              stages:[{stage, unitsPerHour}], demandLimited, dailyLaunch, capitalLimited,
+              capitalUsed, hauls:{in:{count,m3,costEach,cost}, out:{...}} },
      shippingIn, shippingOut, shippingInPerItem, shippingOutPerItem, salesTax, brokerFee,
      totalJobTime, treeDepth,
      thinBookCount,                    // chosen-tree bought inputs with a thin sell book
@@ -66,8 +83,17 @@
      children:[...] }.
 
    Documented v1 simplifications (kept deliberately, noted for v2):
-   - iskPerHour divides profit by the SUM of chosen-tree build-job times (not the critical
-     path, no parallelism); invention/copy job times are excluded from that sum.
+   - The batch is priced as ONE aggregate job of R×J runs: job fees are linear in runs so
+     they match exactly, but material rounding differs from J separate jobs by at most
+     J−1 units per material (per-job ceilings), and totalJobTime stays the linear sum.
+   - Intermediate BUILD nodes do not consume the top-level man/reaction/science slots —
+     only the FINAL product's stages bound throughput; sub-node job fees/times still
+     scale with the batch quantity.
+   - iskPerHour/profitPerDay assume steady state: slots relaunch instantly, science keeps
+     copies/BPCs flowing at the computed rates, demand absorbs at the capped rate.
+   - Reaction formulas are assumed available for every parallel job (originals are cheap);
+     no copy stage constrains reactions.
+   - Shipping hauls split cargo and collateral EVENLY across ceil(m³/maxHaulM3) contracts.
    - Facility choice per activity = FIRST profile facility listing that activity.
    - Memoization key is (tid, qty); diamond dependencies with equal quantities share one
      resolved node object (the result tree is a DAG at those points).
@@ -147,6 +173,10 @@
     var ownedMe = assume.ownedBpoMe != null ? assume.ownedBpoMe : 10;
     var ownedTe = assume.ownedBpoTe != null ? assume.ownedBpoTe : 20;
     var sccPct = assume.sccPct != null ? assume.sccPct : 4;
+    var planning = profile.planning || {};
+    var capital = planning.capital != null ? planning.capital : null;   // null = unlimited
+    var demandCapPct = planning.demandCapPct != null ? planning.demandCapPct : 100;
+    var maxHaulM3 = planning.maxHaulM3 != null && planning.maxHaulM3 > 0 ? planning.maxHaulM3 : 350000;
 
     // ---- indexes over the static data ------------------------------------------
     var productToBp = new Map();   // product tid -> {bpid, bp, activity, qtyPerRun}
@@ -195,6 +225,31 @@
       industry: skillLevel('Industry'), advanced: skillLevel('Advanced Industry'),
       science: skillLevel('Science'), reactions: skillLevel('Reactions'),
       metallurgy: skillLevel('Metallurgy'), research: skillLevel('Research'),
+    };
+
+    /* Job-slot counts. planning.slots overrides win; otherwise derived from the
+       (manufacturer) character's skills: man = 1 + Mass Production + Advanced Mass
+       Production, science = 1 + Laboratory Operation + Advanced Laboratory Operation,
+       reaction = 1 + Mass Reactions + Advanced Mass Reactions. The slot skills are NOT
+       part of data.skills (that map only carries blueprint-required skills), so each is
+       resolved by name via skillLevel() AND by its well-known SDE type id against
+       skills.byId — whichever yields the higher trained level wins. */
+    var SLOT_SKILL_IDS = { 'Mass Production': 3387, 'Advanced Mass Production': 24625,
+      'Laboratory Operation': 3406, 'Advanced Laboratory Operation': 24624,
+      'Mass Reactions': 45748, 'Advanced Mass Reactions': 45749 };
+    function slotSkill(name) {
+      var byNameLvl = skillLevel(name) || 0;
+      var wk = byId[SLOT_SKILL_IDS[name]];
+      return Math.max(byNameLvl, wk != null ? wk : 0);
+    }
+    var slotsCfg = planning.slots || {};
+    var slots = {
+      man: slotsCfg.man != null ? Math.max(1, slotsCfg.man)
+        : 1 + slotSkill('Mass Production') + slotSkill('Advanced Mass Production'),
+      science: slotsCfg.science != null ? Math.max(1, slotsCfg.science)
+        : 1 + slotSkill('Laboratory Operation') + slotSkill('Advanced Laboratory Operation'),
+      reaction: slotsCfg.reaction != null ? Math.max(1, slotsCfg.reaction)
+        : 1 + slotSkill('Mass Reactions') + slotSkill('Advanced Mass Reactions'),
     };
 
     function typeRow(tid) { return data.types[tid] || null; }
@@ -507,19 +562,17 @@
       return shipping.roundUpToMillion ? roundUpToMillion(c) : c;
     }
 
-    function evaluate(productTid, opts) {
-      opts = opts || {};
-      var pe = productToBp.get(productTid);
-      if (!pe) throw new Error('IndustryEngine: no blueprint produces type ' + productTid);
+    /* One full tree evaluation for `runs` total runs of the product. */
+    function evalTree(productTid, pe, runs, opts) {
       var ctx = {
-        runs: opts.runs != null ? opts.runs : 1,
+        runs: runs,
         maxDepth: opts.maxDepth != null ? opts.maxDepth : (params.maxDepth != null ? params.maxDepth : 10),
         forceBuy: opts.forceBuy || new Set(), forceBuild: opts.forceBuild || new Set(),
         meOverride: opts.meOverride, teOverride: opts.teOverride,
         noInvention: !!opts.noInvention,
         memo: new Map(), stats: { nodesResolved: 0, memoHits: 0 },
       };
-      var produced = pe.qtyPerRun * ctx.runs;
+      var produced = pe.qtyPerRun * runs;
       var built = buildFor(productTid, produced, 0, ctx);
       if (!built) throw new Error('IndustryEngine: no facility supports activity "' + pe.activity + '"');
       var root = { tid: productTid, name: typeName(productTid), decision: 'build', qty: produced,
@@ -528,10 +581,133 @@
       var q = prices(productTid);
       root.buyCost = q && q.sell != null ? q.sell * produced : null; // informational
       if (built.invention) root.invention = built.invention;
-
       var acc = { boughtM3: 0, boughtCost: 0, jobTime: 0, maxDepth: 0, thinBookCount: 0 };
       walkChosen(root, 0, acc);
+      return { ctx: ctx, produced: produced, built: built, root: root, acc: acc, q: q };
+    }
 
+    /* Real job duration of a copy/invention step: blueprint seconds × skill multiplier
+       × the chosen facility's structure/rig TE (v1: blueprint TE research not applied). */
+    function jobTimeFor(baseT, activity, productTid) {
+      var fac = facilityFor(activity);
+      var b = fac ? (fac.bonuses || {}) : {};
+      var rigTe = fac ? rigBonuses(fac, productTid).te : 0;
+      return (baseT || 0) * timeSkillMult(activity, sk) * (1 - (b.te || 0) / 100) * (1 - rigTe / 100);
+    }
+
+    /* Split one direction of shipping into hauls of ≤ maxHaulM3 each. EACH haul pays the
+       base + its own per-m³/collateral share, ceil'd to the million when configured —
+       cargo and collateral split evenly across hauls (v1 simplification). */
+    function shipLeg(m3, collateral) {
+      var count = Math.max(1, Math.ceil(m3 / maxHaulM3));
+      var each = shipCost(m3 / count, (collateral || 0) / count);
+      return { count: count, m3: m3, costEach: each, cost: each * count };
+    }
+    var NO_LEG = { count: 0, m3: 0, costEach: 0, cost: 0 };
+
+    /* Steady-state pipeline stage rates (units/hour) for a plan of J jobs × R runs.
+       - manufacturing|reaction: J·qtyPerRun·3600/perRunTime (slots relaunch continuously).
+       - invented products: every job consumes an invented BPC; the science slots are a
+         POOLED pipeline — each success costs attemptsPerSuccess × (copyTime + invTime)
+         science-seconds (equivalent to a proportional copy/invention slot split); the
+         stage is labeled by the larger time consumer (copying vs invention).
+       - owned-BPO products at J > 1: one job runs the BPO itself, the other J−1 need
+         R-run BPCs from the science slots; the copying stage's capacity is the BPO-fed
+         job plus whatever the copy rate sustains. Blueprints without a copy activity
+         (reaction formulas) put no copy constraint on parallel jobs. */
+    function stageRates(pe, productTid, R, J, root) {
+      var qtyPerRun = pe.qtyPerRun;
+      var totalRuns = R * J;
+      var perRunTime = root.job && root.job.time > 0 ? root.job.time / totalRuns : 0;
+      var stages = [];
+      if (perRunTime > 0)
+        stages.push({ stage: pe.activity === 'rea' ? 'reaction' : 'manufacturing',
+                      unitsPerHour: J * qtyPerRun * 3600 / perRunTime });
+      if (pe.activity === 'man' && root.invention) {
+        var src = inventedBy.get(pe.bpid);
+        var t1bp = src && data.blueprints[src.t1bpid];
+        if (t1bp && t1bp.inv) {
+          var copT = t1bp.cop ? jobTimeFor(t1bp.cop.t, 'cop', productTid) : 0;
+          var invT = jobTimeFor(t1bp.inv.t, 'inv', productTid);
+          var perSuccess = root.invention.attemptsPerSuccess * (copT + invT);
+          if (perSuccess > 0)
+            stages.push({ stage: copT >= invT ? 'copying' : 'invention',
+                          unitsPerHour: slots.science * 3600 / perSuccess * root.invention.bpcRuns * qtyPerRun });
+        }
+      } else if (pe.activity === 'man' && J > 1 && pe.bp.cop && perRunTime > 0) {
+        var copPerRun = jobTimeFor(pe.bp.cop.t, 'cop', productTid);
+        if (copPerRun > 0)
+          stages.push({ stage: 'copying',
+                        unitsPerHour: qtyPerRun * (3600 / perRunTime + slots.science * 3600 / copPerRun) });
+      }
+      return { stages: stages, perRunTime: perRunTime };
+    }
+
+    /* evaluate(productTid, opts) — plans a batch (runs omitted) or prices a pinned run
+       count (opts.runs set: R = runs, J = 1, no constraint scaling — the pre-batch
+       behavior, kept for fixtures and pinned what-ifs). Planner:
+         R (runs/job) = invented product: the invented BPC's run count;
+                        owned BPO/T1:    min(blueprint maxProductionLimit, soft cap of
+                        floor(24h / perRunTime) so one job lasts ≲ a day — parallel slots
+                        beat marathon jobs and a dead BPO slot re-queues daily anyway).
+         J (parallel jobs) = man/reaction slot count for the product's activity.
+         Demand cap: daily output ≤ demandPerDay × demandCapPct/100. J is floored to the
+         largest slot count that fits; when even ONE continuously-relaunched slot
+         over-produces, the plan becomes a single demand-sized job per day (cycle floored
+         at 24 h). Capital: while the batch's working capital (depth-walked input cost +
+         job fees + invention overhead + inbound shipping) exceeds `capital`, the batch
+         shrinks proportionally (full-R jobs preferred, then shorter jobs; ≥ 1 run
+         always remains — a batch of one run over capital is flagged, not hidden). */
+    function evaluate(productTid, opts) {
+      opts = opts || {};
+      var pe = productToBp.get(productTid);
+      if (!pe) throw new Error('IndustryEngine: no blueprint produces type ' + productTid);
+      var planned = opts.runs == null;
+      var R, J, res, demandLimited = false, dailyLaunch = false, capitalLimited = false;
+
+      if (!planned) {
+        R = opts.runs; J = 1;
+        res = evalTree(productTid, pe, R, opts);
+      } else {
+        var probe = evalTree(productTid, pe, 1, opts);
+        var perRun = probe.root.job ? probe.root.job.time : 0;  // time of exactly 1 run
+        J = Math.max(1, pe.activity === 'rea' ? slots.reaction : slots.man);
+        if (probe.root.invention) {
+          R = Math.max(1, probe.root.invention.bpcRuns);
+        } else {
+          R = perRun > 0 ? Math.max(1, Math.floor(86400 / perRun)) : 1;   // ~24h soft cap
+          if (pe.bp.limit > 0) R = Math.min(R, pe.bp.limit);
+        }
+        if (opts.demandPerDay != null) {
+          var capRate = opts.demandPerDay * demandCapPct / 100;           // units/day allowed
+          var slotRate = perRun > 0 ? pe.qtyPerRun * 86400 / perRun : Infinity;
+          var jMax = Math.floor(capRate / slotRate);
+          if (jMax >= 1) {
+            if (jMax < J) { J = jMax; demandLimited = true; }
+          } else {
+            demandLimited = true; dailyLaunch = true; J = 1;
+            R = Math.min(R, Math.max(1, Math.floor(capRate / pe.qtyPerRun)));
+          }
+        }
+        res = R * J === 1 ? probe : evalTree(productTid, pe, R * J, opts);
+        if (capital != null) {
+          for (var iter = 0; iter < 8; iter++) {
+            var used = res.built.buildTotalForProduced
+              + (shipping && shipping.applyInbound && res.acc.boughtM3 > 0
+                 ? shipLeg(res.acc.boughtM3, res.acc.boughtCost).cost : 0);
+            if (used <= capital || R * J <= 1) break;
+            capitalLimited = true;
+            var newRuns = Math.floor(R * J * capital / used);
+            if (newRuns >= R * J) newRuns = R * J - 1;
+            if (newRuns < 1) newRuns = 1;
+            if (newRuns < R) { J = 1; R = newRuns; }
+            else J = Math.max(1, Math.min(J, Math.floor(newRuns / R)));
+            res = R * J === 1 ? probe : evalTree(productTid, pe, R * J, opts);
+          }
+        }
+      }
+
+      var produced = res.produced, built = res.built, root = res.root, acc = res.acc, q = res.q;
       var grossUnit = q ? (market.outputSide === 'instant' ? q.buy : q.sell) : null;
       var grossTotal = grossUnit != null ? grossUnit * produced : null;
       var revenueThinBook = null;
@@ -552,31 +728,58 @@
           revenueUnit = grossTotal * (1 - sellerBrokerPct / 100 - sellerTaxPct / 100) / produced;
         }
       }
-      var shipIn = shipping && shipping.applyInbound && acc.boughtM3 > 0
-        ? shipCost(acc.boughtM3, acc.boughtCost) : 0;
-      var shipOut = shipping && shipping.applyOutbound && grossTotal != null
-        ? shipCost(typeVol(productTid) * produced, grossTotal) : 0;
+      var haulIn = shipping && shipping.applyInbound && acc.boughtM3 > 0
+        ? shipLeg(acc.boughtM3, acc.boughtCost) : NO_LEG;
+      var haulOut = shipping && shipping.applyOutbound && grossTotal != null
+        ? shipLeg(typeVol(productTid) * produced, grossTotal) : NO_LEG;
+      var shipIn = haulIn.cost, shipOut = haulOut.cost;
+      var capitalUsed = built.buildTotalForProduced + shipIn;
+
+      // steady-state pipeline: units/hour = min over stages; limits that shrank the
+      // plan (capital, then demand) take priority in the bottleneck label
+      var sr = stageRates(pe, productTid, R, J, root);
+      var minStage = null;
+      for (var si = 0; si < sr.stages.length; si++)
+        if (!minStage || sr.stages[si].unitsPerHour < minStage.unitsPerHour) minStage = sr.stages[si];
+      var effRate = minStage ? minStage.unitsPerHour : null;
+      var bottleneck = minStage ? minStage.stage : null;
+      if (dailyLaunch && effRate != null && produced / 24 < effRate) effRate = produced / 24;
+      if (capitalLimited) bottleneck = 'capital';
+      else if (demandLimited) bottleneck = 'demand';
+      var cycleHours = sr.perRunTime > 0 ? sr.perRunTime * R / 3600 : 0;
+      if (dailyLaunch) cycleHours = Math.max(cycleHours, 24);
 
       var costPerItem = (built.buildTotalForProduced + shipIn + shipOut) / produced;
       var profitPerItem = revenueUnit != null ? revenueUnit - costPerItem : null;
-      var hours = acc.jobTime / 3600;
+      var iskPerHour = profitPerItem != null && effRate != null && effRate > 0
+        ? profitPerItem * effRate : null;
       return {
-        tid: productTid, name: root.name, produced: produced, runs: ctx.runs,
+        tid: productTid, name: root.name, produced: produced, runs: R * J,
         totals: {
           costPerItem: costPerItem,
           revenuePerItem: revenueUnit,
           profitPerItem: profitPerItem,
           marginPct: profitPerItem != null && revenueUnit ? profitPerItem / revenueUnit * 100 : null,
           roiPct: profitPerItem != null && costPerItem ? profitPerItem / costPerItem * 100 : null,
-          // v1: profit ÷ SUM of chosen-tree build-job hours (not critical path)
-          iskPerHour: profitPerItem != null && hours > 0 ? profitPerItem * produced / hours : null,
+          // pipeline number: profit/unit × steady-state units/hour (min stage rate)
+          iskPerHour: iskPerHour,
+          profitPerDay: iskPerHour != null ? iskPerHour * 24 : null,
+          capitalUsed: capitalUsed,
+          batch: {
+            runs: R, jobs: J, units: produced, planned: planned,
+            cycleHours: cycleHours, bottleneck: bottleneck,
+            unitsPerHour: effRate, stages: sr.stages,
+            demandLimited: demandLimited, dailyLaunch: dailyLaunch, capitalLimited: capitalLimited,
+            capitalUsed: capitalUsed,
+            hauls: { in: haulIn, out: haulOut },
+          },
           shippingIn: shipIn, shippingOut: shipOut,
           shippingInPerItem: shipIn / produced, shippingOutPerItem: shipOut / produced,
           salesTax: salesTax, brokerFee: brokerFee,
           totalJobTime: acc.jobTime, treeDepth: acc.maxDepth,
           thinBookCount: acc.thinBookCount, revenueThinBook: revenueThinBook,
         },
-        tree: root, stats: ctx.stats,
+        tree: root, stats: res.ctx.stats,
       };
     }
 
