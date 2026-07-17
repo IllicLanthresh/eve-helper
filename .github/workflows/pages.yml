@@ -57,6 +57,7 @@ jobs:
         run: |
           unzip -q -o ~/.cache/sde/sde.zip \
             'fsd/blueprints.yaml' 'fsd/types.yaml' 'fsd/groups.yaml' 'fsd/marketGroups.yaml' \
+            'fsd/typeDogma.yaml' 'fsd/dogmaAttributes.yaml' \
             -d "$RUNNER_TEMP/sde"
           node --max-old-space-size=4096 tools/build-industry-data.mjs \
             --sde "$RUNNER_TEMP/sde" --out data/industry.json

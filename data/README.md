@@ -10,10 +10,12 @@ Build it locally:
 ```sh
 cd tools && npm ci
 curl -O https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip
-unzip -q sde.zip 'fsd/blueprints.yaml' 'fsd/types.yaml' 'fsd/groups.yaml' 'fsd/marketGroups.yaml' -d /tmp/sde
+unzip -q sde.zip 'fsd/blueprints.yaml' 'fsd/types.yaml' 'fsd/groups.yaml' 'fsd/marketGroups.yaml' \
+  'fsd/typeDogma.yaml' 'fsd/dogmaAttributes.yaml' -d /tmp/sde
 node --max-old-space-size=4096 build-industry-data.mjs --sde /tmp/sde --out ../data/industry.json
 ```
 
 The output schema (types / groups / marketGroups / skills / blueprints with
-`man`/`rea`/`cop`/`inv`/`me`/`te` activities) is documented at the top of
-`tools/build-industry-data.mjs`.
+`man`/`rea`/`cop`/`inv`/`me`/`te` activities, plus the `rigs` catalog of real
+Standup engineering/reactor rigs and the `structures` size/slot map) is
+documented at the top of `tools/build-industry-data.mjs`.
