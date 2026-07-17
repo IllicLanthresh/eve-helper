@@ -368,6 +368,22 @@
         bolt.textContent = '⚡ ' + c.character.name;
         box.appendChild(bolt);
       }
+      const ref = document.createElement('a');
+      ref.href = '#'; ref.textContent = '↻';
+      ref.title = 'refresh ESI data — re-pull skills & standings for every logged-in character and clear cached station/structure metadata (market prices refetch with each tool’s own Fetch button)';
+      ref.addEventListener('click', async e => {
+        e.preventDefault();
+        if (ref.dataset.busy) return;
+        ref.dataset.busy = '1'; ref.style.opacity = '.4';
+        for (const k of ['eveHelper.ssoMeta.v1', 'eveHelper.stationOwners.v1', 'eveHelper.structInfo.v1'])
+          try{ localStorage.removeItem(k); }catch(_e){}
+        for (const ch of characters()){
+          try{ await fetchSkills(ch.id); }catch(err){ console.error('skills refresh failed for ' + ch.name + ':', err); }
+          try{ await fetchStandings(ch.id); }catch(err){ console.error('standings refresh failed for ' + ch.name + ':', err); }
+        }
+        delete ref.dataset.busy; ref.style.opacity = '';
+        fireChange();
+      });
       const alt = document.createElement('a');
       alt.href = '#'; alt.textContent = '+ alt';
       alt.title = 'log in another character (pick a different one on the SSO page)';
@@ -376,7 +392,7 @@
       out.href = '#'; out.textContent = 'log out';
       out.title = 'log out the active character';
       out.addEventListener('click', e => { e.preventDefault(); logout(auth.active); });
-      box.append(alt, out);
+      box.append(ref, alt, out);
     } else {
       // CCP's standardized SSO button (required branding); black variant for the dark topbar
       const a = document.createElement('a');
