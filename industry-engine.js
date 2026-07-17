@@ -13,7 +13,18 @@
                  blueprints:{bpid:{ limit, man?:{t,m:[[tid,qty]],p:[[tid,qty]],s:[[skillTid,lvl]]},
                                     rea?:{t,m,p,s}, cop?:{t}, inv?:{t,m,p:[[producedBpid,runs,probability]],s},
                                     me?:{t}, te?:{t} }} }
-   - prices:   (tid) => { sell, buy } | null      — real hub quotes.
+   - prices:   (tid) => { sell, buy, sellLevels?, buyLevels? } | null — real hub quotes.
+               sell/buy are scalar best quotes. The optional depth arrays are price levels
+               [price, volume, minVolume] (sellLevels ascending, buyLevels descending):
+               · with sellLevels, input buying (inputSide 'sell') WALKS the book, taking
+                 volume per level until the needed quantity fills; a book that runs dry
+                 prices the remainder at the worst (deepest) filled level and flags the
+                 node with thinBook = {filled, needed} (surfaced, never zeroed);
+               · with buyLevels, instant revenue (outputSide 'instant') walks the buy book
+                 top-down respecting each order's minVolume (unmeetable min-volume orders
+                 are skipped — the Sell tool's rule); output the book cannot absorb earns
+                 0 and totals.revenueThinBook = {filled, needed} is set.
+               Without levels the scalar best-quote behavior applies unchanged.
    - adjusted: (tid) => number                    — ESI /markets/prices adjusted_price (EIV basis).
    - indices:  (systemNameOrId, activity) => costIndex — ESI /industry/systems values. The engine
                passes facility.system verbatim and the SHORT activity code; the caller maps codes
@@ -22,7 +33,12 @@
    - profile:  { facilities:[{ id, label, system, tax, activities:['man','rea','inv','cop','me','te'],
                                bonuses:{me,te,cost},            // structure bonuses, percent
                                rigs:[{match:[ids], me, te, cost}] }],  // match: marketGroup ancestor ids or groupIds
-                 market: { inputSide:'sell'|'buy', outputSide:'sellOrder'|'instant', brokerPct, taxPct },
+                 market: { inputSide:'sell'|'buy', outputSide:'sellOrder'|'instant',
+                           buyerBrokerPct, sellerBrokerPct, sellerTaxPct,
+                           brokerPct, taxPct },   // legacy fallbacks for the seller fields
+                 // buyerBrokerPct (default 0) is ADDED on top of buy-side quotes when
+                 // inputSide='buy' — the buyer pays their own broker fee to place orders.
+                 // sellerBrokerPct/sellerTaxPct fall back to brokerPct/taxPct.
                  shipping: { base, perM3, collateralPct, roundUpToMillion, applyInbound, applyOutbound },
                  assumptions: { ownedBpoMe, ownedBpoTe, sccPct, decryptor:'auto'|name|null } }
    - skills:   { byName: {'Industry':5, ...} } and/or { byId: {tid:lvl} }.
@@ -38,8 +54,12 @@
    Returns { tid, name, produced, runs, totals, tree, stats } where totals =
    { costPerItem, revenuePerItem, profitPerItem, marginPct, roiPct, iskPerHour,
      shippingIn, shippingOut, shippingInPerItem, shippingOutPerItem, salesTax, brokerFee,
-     totalJobTime, treeDepth } and tree is the recursive node structure:
+     totalJobTime, treeDepth,
+     thinBookCount,                    // chosen-tree bought inputs with a thin sell book
+     revenueThinBook }                 // {filled, needed} | null — instant buy book ran dry
+   and tree is the recursive node structure:
    { tid, name, decision:'buy'|'build', qty, buyCost, buildCost, cost, forced?, depthCapped?, note?,
+     thinBook?,                        // {filled, needed} — sell book thinner than qty
      job:{activity, facilityLabel, runs, time, eiv, costBreakdown:{sciGross,bonus,scc,tax},
           matModifierBreakdown:{bpMe,structMe,rigMe,bpTe,structTe,rigTe}},
      invention?:{decryptor, chance, attemptsPerSuccess, bpcRuns, me, te, costPerSuccess, perUnit, options:[...]},
@@ -55,7 +75,10 @@
    - Invention & copy EIV use the T1 blueprint's manufacturing materials (1 run).
    - Invention consumables (datacores/decryptors/copies) are amortized into cost but are
      NOT added to the inbound shipping haul.
-   - Input-side broker fees for placing buy orders are not modeled (raw quote is used). */
+   - Buy-order inputs (inputSide 'buy') pay the buyer's broker fee on top of the raw top
+     quote (buyerBrokerPct), but stay scalar — no depth walk on the buy side of inputs.
+   - Invention consumables (datacores/decryptors) are priced at the scalar top quote,
+     never depth-walked — their quantities are tiny next to build materials. */
 'use strict';
 (function () {
 
@@ -114,6 +137,11 @@
     var profile = cfg.profile || {};
     var params = cfg.params || {};
     var market = profile.market || { inputSide: 'sell', outputSide: 'sellOrder', brokerPct: 0, taxPct: 0 };
+    // role fees: seller fields fall back to the legacy names; buyer broker defaults to 0
+    // (the pre-role behavior — raw buy quotes) so old profiles/fixtures are unchanged
+    var buyerBrokerPct = market.buyerBrokerPct != null ? market.buyerBrokerPct : 0;
+    var sellerBrokerPct = market.sellerBrokerPct != null ? market.sellerBrokerPct : (market.brokerPct || 0);
+    var sellerTaxPct = market.sellerTaxPct != null ? market.sellerTaxPct : (market.taxPct || 0);
     var shipping = profile.shipping || null;
     var assume = profile.assumptions || {};
     var ownedMe = assume.ownedBpoMe != null ? assume.ownedBpoMe : 10;
@@ -221,7 +249,64 @@
       var q = prices(tid);
       if (!q) return null;
       var p = market.inputSide === 'buy' ? q.buy : q.sell;
-      return (p == null || !(p > 0)) ? null : p;
+      if (p == null || !(p > 0)) return null;
+      // placing buy orders costs the buyer their own broker fee on top of the quote
+      return market.inputSide === 'buy' ? p * (1 + buyerBrokerPct / 100) : p;
+    }
+
+    /* Depth-aware cost of buying `qty` off the sell book (levels [price, vol, minVol] asc).
+       min_volume is irrelevant on sells — we are the buyer and take volume per level.
+       A dry book prices the remainder at the worst (deepest) filled level. */
+    function walkSellCost(levels, qty) {
+      var cost = 0, remaining = qty, worst = null;
+      for (var i = 0; i < levels.length && remaining > 0; i++) {
+        var take = Math.min(levels[i][1], remaining);
+        if (!(take > 0)) continue;
+        cost += take * levels[i][0];
+        worst = levels[i][0];
+        remaining -= take;
+      }
+      if (worst == null) return null;   // pathological all-zero-volume book — caller falls back
+      if (remaining > 0) cost += remaining * worst;
+      return { cost: cost, filled: qty - Math.max(0, remaining) };
+    }
+
+    /* Instant-sale proceeds for `qty` against the buy book (levels desc). Orders whose
+       min_volume exceeds what is left to sell are skipped (the Sell tool's rule);
+       output the book cannot absorb earns 0. */
+    function walkBuyRevenue(levels, qty) {
+      var proceeds = 0, remaining = qty;
+      for (var i = 0; i < levels.length && remaining > 0; i++) {
+        if ((levels[i][2] || 1) > remaining) continue;
+        var take = Math.min(levels[i][1], remaining);
+        if (!(take > 0)) continue;
+        proceeds += take * levels[i][0];
+        remaining -= take;
+      }
+      return { proceeds: proceeds, filled: qty - remaining };
+    }
+
+    /* Full acquisition quote for `qty` units: {cost, thinBook?} | null. */
+    function buyQuote(tid, qty) {
+      var q = prices(tid);
+      if (!q) return null;
+      if (market.inputSide === 'buy') {
+        var pb = q.buy;
+        if (pb == null || !(pb > 0)) return null;
+        return { cost: pb * qty * (1 + buyerBrokerPct / 100) };
+      }
+      var lv = q.sellLevels;
+      if (lv && lv.length) {
+        var w = walkSellCost(lv, qty);
+        if (w) {
+          var out = { cost: w.cost };
+          if (w.filled < qty) out.thinBook = { filled: w.filled, needed: qty };
+          return out;
+        }
+      }
+      var ps = q.sell;
+      if (ps == null || !(ps > 0)) return null;
+      return { cost: ps * qty };
     }
 
     /* Copy job cost for a 1-run T1 copy (v1: EIV = T1 man materials × 1 run). */
@@ -379,8 +464,8 @@
       var hit = ctx.memo.get(key);
       if (hit && (!hit.truncated || depth >= hit.depth)) { ctx.stats.memoHits++; return hit.node; }
       ctx.stats.nodesResolved++;
-      var unitBuy = inputUnitPrice(tid);
-      var buyCost = unitBuy != null ? unitBuy * qty : null;
+      var bq = buyQuote(tid, qty);
+      var buyCost = bq ? bq.cost : null;
       var forced = ctx.forceBuy.has(tid) ? 'buy' : ctx.forceBuild.has(tid) ? 'build' : null;
       var capped = false, built = null;
       if (productToBp.has(tid) && forced !== 'buy') {
@@ -390,6 +475,7 @@
       var node = { tid: tid, name: typeName(tid), qty: qty, buyCost: buyCost,
                    buildCost: built ? built.buildCost : null, children: built ? built.children : [] };
       if (built) { node.job = built.job; if (built.invention) node.invention = built.invention; }
+      if (bq && bq.thinBook) node.thinBook = bq.thinBook;
       if (forced) node.forced = forced;
       if (capped) node.depthCapped = true; // build branch cut off by maxDepth
       if (forced === 'build' && built) node.decision = 'build';
@@ -407,6 +493,7 @@
       if (node.decision === 'buy') {
         acc.boughtM3 += typeVol(node.tid) * node.qty;
         acc.boughtCost += (node.buyCost || 0);
+        if (node.thinBook) acc.thinBookCount++;
         return;
       }
       acc.jobTime += node.job ? node.job.time : 0;
@@ -442,24 +529,33 @@
       root.buyCost = q && q.sell != null ? q.sell * produced : null; // informational
       if (built.invention) root.invention = built.invention;
 
-      var acc = { boughtM3: 0, boughtCost: 0, jobTime: 0, maxDepth: 0 };
+      var acc = { boughtM3: 0, boughtCost: 0, jobTime: 0, maxDepth: 0, thinBookCount: 0 };
       walkChosen(root, 0, acc);
 
       var grossUnit = q ? (market.outputSide === 'instant' ? q.buy : q.sell) : null;
+      var grossTotal = grossUnit != null ? grossUnit * produced : null;
+      var revenueThinBook = null;
+      if (market.outputSide === 'instant' && q && q.buyLevels && q.buyLevels.length) {
+        // depth-aware instant sale: walk the buy book (min_volume respected)
+        var wr = walkBuyRevenue(q.buyLevels, produced);
+        grossTotal = wr.proceeds;
+        grossUnit = grossTotal / produced;
+        if (wr.filled < produced) revenueThinBook = { filled: wr.filled, needed: produced };
+      }
       var revenueUnit = null, salesTax = 0, brokerFee = 0;
-      if (grossUnit != null) {
-        salesTax = grossUnit * produced * (market.taxPct || 0) / 100;
+      if (grossTotal != null) {
+        salesTax = grossTotal * sellerTaxPct / 100;
         if (market.outputSide === 'instant') {
-          revenueUnit = grossUnit * (1 - (market.taxPct || 0) / 100);
+          revenueUnit = grossTotal * (1 - sellerTaxPct / 100) / produced;
         } else {
-          brokerFee = grossUnit * produced * (market.brokerPct || 0) / 100;
-          revenueUnit = grossUnit * (1 - (market.brokerPct || 0) / 100 - (market.taxPct || 0) / 100);
+          brokerFee = grossTotal * sellerBrokerPct / 100;
+          revenueUnit = grossTotal * (1 - sellerBrokerPct / 100 - sellerTaxPct / 100) / produced;
         }
       }
       var shipIn = shipping && shipping.applyInbound && acc.boughtM3 > 0
         ? shipCost(acc.boughtM3, acc.boughtCost) : 0;
-      var shipOut = shipping && shipping.applyOutbound && grossUnit != null
-        ? shipCost(typeVol(productTid) * produced, grossUnit * produced) : 0;
+      var shipOut = shipping && shipping.applyOutbound && grossTotal != null
+        ? shipCost(typeVol(productTid) * produced, grossTotal) : 0;
 
       var costPerItem = (built.buildTotalForProduced + shipIn + shipOut) / produced;
       var profitPerItem = revenueUnit != null ? revenueUnit - costPerItem : null;
@@ -478,6 +574,7 @@
           shippingInPerItem: shipIn / produced, shippingOutPerItem: shipOut / produced,
           salesTax: salesTax, brokerFee: brokerFee,
           totalJobTime: acc.jobTime, treeDepth: acc.maxDepth,
+          thinBookCount: acc.thinBookCount, revenueThinBook: revenueThinBook,
         },
         tree: root, stats: ctx.stats,
       };
