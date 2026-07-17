@@ -204,9 +204,10 @@ localStorage), each dataset with its own age label:
   their system's indices and refresh with this dataset.
 - **Owned blueprints** — for every logged-in character whose token carries
   `esi-characters.read_blueprints.v1`: all blueprints, merged to the best-researched
-  BPO per type (a BPO always beats a BPC). Characters missing the scope are named in an
-  inline note — add the scope to the app and log in again. An owned BPO feeds its real
-  ME/TE into the calculation and removes the invention path for that product.
+  BPO per type (a BPO always beats a BPC), with each character's own best copy kept so
+  the profile's **manufacturer** wins merge ties. Characters missing the scope are named
+  in an inline note — add the scope to the app and log in again. An owned BPO feeds its
+  real ME/TE into the calculation and removes the invention path for that product.
 
 ## Profiles
 
@@ -222,13 +223,49 @@ Each holds:
   with the security-band multiplier applied automatically (HS ×1.0, LS ×1.9, NS/WH ×2.1)
   plus an optional market-group scope per rig.
 - **Market settings**: buy inputs instantly vs at buy order; sell output via sell order
-  vs instant; broker + sales tax auto-filled from the active character's skills and
-  standings at Jita 4-4 (same formulas as the Sell tool) with a manual override.
+  vs instant — and **three market roles**, each a dropdown of your logged-in characters
+  (defaulting to whoever was active when the profile was created, persisted per profile;
+  a logged-out pick falls back to a logged-in character with an inline warning):
+  - **Buyer** — their broker % is added on top of input buy-order quotes;
+  - **Seller** — their sales tax + sell-order broker hit the revenue side;
+  - **Manufacturer** — their full skill list drives job times, invention, the
+    "only if skilled" filter and the job-slot derivation, and their owned blueprints win
+    merge ties.
+  Fees auto-fill from each role's skills and standings at Jita 4-4 (same formulas as the
+  Sell tool), with manual overrides when auto is off.
 - **Shipping**: `reward = round-up-to-million(base + ISK/m³ × volume + collateral% ×
   value)` — all four parameters editable, per-direction toggles (defaults 10 M + 653.4
-  ISK/m³ + 1% collateral).
+  ISK/m³ + 1% collateral). Cargo above **max haul m³** splits into multiple courier
+  contracts, each paying the base and its own round-up.
 - **Assumptions**: ME/TE for unowned BPOs (10/20), decryptor policy (auto-cheapest /
   none / a specific one), SCC surcharge %.
+- **Planning**: available **capital** (blank = unlimited — caps how much working ISK a
+  batch may tie up), **job slots** for manufacturing / science / reactions (auto-derived
+  from the manufacturer's skills — 1 + Mass Production + Advanced Mass Production and
+  friends — shown and editable), **demand cap %** and **max haul m³**.
+
+## Batch planning & depth-aware pricing
+
+Everything is priced at **batch scale**, not one lonely run. The engine plans
+`R runs/job × J parallel jobs` per product: R from the invented BPC's run count (T2) or
+`min(blueprint run limit, ~24 h of job time)` (owned BPO / T1), J from the activity's
+job slots — then scales the plan down to respect the **demand cap** (daily output ≤
+demand/day × cap%) and your **capital** (depth-walked input cost + job fees + inbound
+hauls must fit). Input costs **walk the condensed Jita book level by level** for the
+real batch quantity; instant selling walks the buy book respecting min-volume. A book
+shallower than the batch prices the remainder at the worst listed level and flags the
+row/node with ⚠ ("book depth filled/needed") instead of poisoning the number.
+
+**ISK/h and Profit/Day are steady-state pipeline numbers**: profit/unit × the slowest
+stage rate among manufacturing/reaction, copying and invention (science slots pooled
+proportionally between copying and invention; parallel T1 BPO jobs are fed by copies).
+The bottleneck stage — including `demand` or `capital` when those bind — is shown in the
+drilldown's **batch panel** along with R×J, units, cycle time, capital used and the
+haul counts with per-haul cost.
+
+The full-market scan plans with demand unknown (ranking can't wait for thousands of
+history fetches); once a visible row's history arrives, its batch is **re-planned
+against real demand** and marked with a subtle ↺.
 
 ## The table & drilldown
 
@@ -237,24 +274,31 @@ through the shared calc engine (`industry-engine.js`) in background chunks with 
 and cancel; profile/data changes flag the results *stale* instead of silently recomputing.
 Sortable, filterable columns (name search, category and meta chips, numeric minimums,
 owned-BP / skilled / priced toggles — filter state persists): cost, revenue, profit,
-margin, ROI, ISK/h, shipping, sales tax, m³, ISK/m³, blueprint situation (owned research
-/ invent / buy BPO) and build-vs-buy node counts. **Demand/Day and D.O.S.** (days of
-stock = Jita sell depth ÷ demand) fetch region history lazily — only for rows actually
-scrolled into view, cached a day. Clicking a row opens the **drilldown**: the full
-build-vs-buy tree with both costs at every node, the chosen facility, job time, the fee
-breakdown (system cost index gross, structure/rig bonus, SCC, facility tax), the
-material-modifier breakdown, an invention subpanel with the per-decryptor comparison,
-per-node **force buy/build** toggles (persisted in the profile, recomputing just that
-product), and TSV export of the tree or the whole table.
+margin, ROI, pipeline ISK/h, **Batch (R×J)**, **Profit/Day**, **Capital Used**, shipping,
+sales tax, m³, ISK/m³, blueprint situation (owned research / invent / buy BPO) and
+build-vs-buy node counts. Thin-book rows keep their ⚠ marker even with "hide unpriced"
+on. **Demand/Day and D.O.S.** (days of stock = Jita sell depth ÷ demand) fetch region
+history lazily — only for rows actually scrolled into view, cached a day. Clicking a row
+opens the **drilldown**: the batch panel, the full build-vs-buy tree with both costs at
+every node, the chosen facility, job time, the fee breakdown (system cost index gross,
+structure/rig bonus, SCC, facility tax), the material-modifier breakdown, per-node book
+depth flags, an invention subpanel with the per-decryptor comparison, per-node
+**force buy/build** toggles (persisted in the profile, recomputing just that product),
+and TSV export of the tree or the whole table.
 
 ## Honest simplifications (v1)
 
-- Input-side broker fees (when placing buy orders) are not modelled.
-- ISK/h divides profit by the **sum** of build-job times — no parallel slots, no critical
-  path; invention/copy times excluded.
+- The batch prices as **one aggregate job** of R×J runs: job fees are linear so they match
+  exactly, but per-job material ceilings can differ by up to J−1 units per material.
+- Intermediate build nodes don't consume top-level job slots — only the final product's
+  stages bound throughput; sub-node fees/times still scale with batch quantity. Reaction
+  formulas are assumed available for every parallel job.
+- Buy-order inputs pay the buyer's broker on the scalar top quote — no depth walk on the
+  buy side of inputs; invention consumables also stay at the scalar top quote.
+- Shipping hauls split cargo and collateral evenly across contracts.
 - Invention consumables are amortized into cost but not added to the inbound haul.
 - Demand/history is regional (The Forge), both order sides combined.
 - Facility product scopes and owned-BP ME/TE apply per end product; intermediates use the
   unowned-BPO defaults. Owned T2 BPCs are displayed but priced via invention.
-- Everything is priced at 1 run; structure role/rig bonus presets are hardcoded — verify
-  in game and override per facility if needed.
+- Structure role/rig bonus presets are hardcoded — verify in game and override per
+  facility if needed.

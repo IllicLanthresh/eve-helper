@@ -123,6 +123,9 @@
   .invpanel td,.invpanel th{padding:2px 8px;border-bottom:1px solid #1a2233;text-align:right;font-family:var(--mono)}
   .invpanel td:first-child,.invpanel th:first-child{text-align:left;font-family:inherit}
   .invpanel tr.pick td{color:var(--cyan)}
+  .dsummary.batchpanel{border-top:1px dashed var(--line);padding-top:7px}
+  .thinflag{cursor:help}
+  .refflag{cursor:help;font-size:11px}
   #copyPad{position:fixed;left:-9999px;top:0;width:10px;height:10px}
   @media (max-width:900px){ td.name{max-width:170px} }
 </style>
@@ -186,11 +189,21 @@
         <label class="inl"><input type="radio" name="outSide" id="outInstant"> instant to buy orders</label>
       </div>
       <div class="grow">
-        <label class="inl"><input type="checkbox" id="feeAuto"> fees from active character</label>
-        <label class="inl">broker % <input id="brokerPct" type="number" step="0.01" min="0" max="20"></label>
+        <label class="inl" title="pays the broker fee when placing input BUY orders (inputSide = buy)">buyer
+          <select id="roleBuyer" class="roleSel" style="width:150px"></select></label>
+        <label class="inl" title="pays sales tax and the sell-order broker fee on the product">seller
+          <select id="roleSeller" class="roleSel" style="width:150px"></select></label>
+        <label class="inl" title="their full skill list drives job times, invention, the skilled filter and job-slot counts; their owned blueprints win merge ties">manufacturer
+          <select id="roleManuf" class="roleSel" style="width:150px"></select></label>
+      </div>
+      <div class="grow">
+        <label class="inl"><input type="checkbox" id="feeAuto"> fees from role characters</label>
+        <label class="inl">buy broker % <input id="buyerBrokerPct" type="number" step="0.01" min="0" max="20"></label>
+        <label class="inl">sell broker % <input id="brokerPct" type="number" step="0.01" min="0" max="20"></label>
         <label class="inl">sales tax % <input id="taxPct" type="number" step="0.01" min="0" max="20"></label>
       </div>
       <div class="grow"><span id="feeNote" class="hint"></span></div>
+      <div class="grow"><span id="roleWarn" class="hint warn"></span></div>
     </fieldset>
     <fieldset class="grp">
       <legend>shipping (per direction)</legend>
@@ -220,6 +233,24 @@
       <div class="grow">
         <label class="inl">SCC surcharge % <input id="asScc" type="number" step="0.1" min="0"></label>
       </div>
+    </fieldset>
+    <fieldset class="grp">
+      <legend>planning</legend>
+      <div class="grow">
+        <label class="inl" title="ISK available for a batch's working inputs (materials + job fees + inbound haul); blank = unlimited">capital
+          <input id="plCapital" type="number" step="1000000" min="0" style="width:130px" placeholder="unlimited"></label>
+        <label class="inl" title="cap a batch's daily output at this share of the item's demand/day (when history is loaded)">demand cap %
+          <input id="plDemandPct" type="number" step="5" min="0" max="500" style="width:64px"></label>
+      </div>
+      <div class="grow">
+        <span class="hint" title="parallel job slots; blank = auto from the manufacturer's skills (1 + Mass Production + Advanced Mass Production, etc.)">slots</span>
+        <label class="inl">man <input id="plSlotMan" type="number" step="1" min="1" max="11" style="width:52px"></label>
+        <label class="inl">science <input id="plSlotSci" type="number" step="1" min="1" max="11" style="width:52px"></label>
+        <label class="inl">reaction <input id="plSlotRea" type="number" step="1" min="1" max="11" style="width:52px"></label>
+        <label class="inl" title="a haul above this volume splits into multiple courier contracts, each paying the base reward + its own round-up">max haul m³
+          <input id="plMaxHaul" type="number" step="10000" min="1000" style="width:90px"></label>
+      </div>
+      <div class="grow"><span id="plNote" class="hint"></span></div>
     </fieldset>
   </div>
 </section>
@@ -263,8 +294,11 @@
         <th data-key="profit" class="num">Profit/Item</th>
         <th data-key="margin" class="num" title="profit ÷ revenue">Margin %</th>
         <th data-key="roi" class="num" title="profit ÷ cost">ROI %</th>
-        <th data-key="iskh" class="num" title="profit ÷ Σ build-job hours of the chosen tree">ISK/h</th>
-        <th data-key="ship" class="num" title="inbound + outbound shipping, amortized per item">Shipping/Item</th>
+        <th data-key="iskh" class="num" title="pipeline: profit/unit × steady-state units/hour — min of the manufacturing / copying / invention stage rates for the planned batch">ISK/h</th>
+        <th data-key="batch" class="num" title="planned batch: runs per job × parallel jobs (bounded by BPC runs / ~24h jobs / slots / demand / capital)">Batch</th>
+        <th data-key="profitday" class="num" title="pipeline profit per day (ISK/h × 24)">Profit/Day</th>
+        <th data-key="capused" class="num" title="working capital the batch ties up: depth-priced inputs + job fees + invention overhead + inbound hauls">Capital Used</th>
+        <th data-key="ship" class="num" title="batch shipping (both directions, haul-split), amortized per item">Shipping/Item</th>
         <th data-key="tax" class="num" title="sales tax per item">Sales tax/Item</th>
         <th data-key="m3" class="num" title="packaged volume">m³</th>
         <th data-key="iskm3" class="num" title="profit per packaged m³">ISK/m³</th>
@@ -280,18 +314,34 @@
   <details class="notes">
     <summary>Simplifications &amp; assumptions (v1)</summary>
     <ul class="plain">
-      <li>Input-side broker fees are not modelled: "place buy orders" uses the raw top-buy quote with no
-          broker cut on top.</li>
-      <li>ISK/h divides profit by the SUM of the chosen tree's build-job times — no parallel job slots, no
-          critical path; invention and copy job times are excluded from that sum.</li>
-      <li>Invention consumables (datacores, decryptors, copies) are amortized into cost but NOT added to the
-          inbound shipping haul.</li>
+      <li>Inputs are priced DEPTH-AWARE against the condensed Jita book (top 40 levels/side): buying walks the
+          sell levels for the full batch quantity; instant selling walks the buy levels respecting each
+          order's min-volume. A book that runs dry prices the remainder at the worst listed level and flags
+          the row/node with ⚠ instead of zeroing it. Invention consumables (datacores, decryptors) stay at
+          the scalar top quote.</li>
+      <li>Market fees come from THREE role characters: the buyer's broker % is added on top of input buy
+          orders, the seller's sales tax + broker hit revenue, and the manufacturer's skills drive job times,
+          invention, slots, the skilled filter and owned-blueprint merge ties.</li>
+      <li>Everything is priced at BATCH scale: R runs/job × J parallel jobs, bounded by invented-BPC runs or
+          the blueprint's run limit, a ~24h soft job cap, your job slots (1 + Mass Production + Advanced Mass
+          Production etc.), the demand cap and your capital. The batch prices as ONE aggregate job — per-job
+          material ceilings can differ by up to J−1 units per material.</li>
+      <li>ISK/h and Profit/Day are steady-state PIPELINE numbers: profit/unit × the slowest stage rate
+          (manufacturing/reaction, copying, invention — science slots are pooled proportionally between
+          copying and invention). Intermediate build jobs do NOT consume top-level slots in v1, and reaction
+          formulas are assumed available for every parallel job.</li>
+      <li>The full-market scan plans with demandPerDay = null (ranking can't wait for thousands of history
+          fetches); rows whose history is loaded get their batch re-planned against real demand as they
+          become visible, marked ↺.</li>
+      <li>Shipping splits into ceil(m³ / max haul) courier contracts per direction, each paying the base +
+          its own round-up; cargo and collateral split evenly across hauls. Per-item shipping amortizes the
+          whole batch.</li>
+      <li>Invention consumables are amortized into cost but NOT added to the inbound shipping haul.</li>
       <li>Demand/history is regional (The Forge) and mixes both order sides — ESI has nothing narrower.</li>
       <li>A facility's product scope is applied per END PRODUCT: the whole tree of that product builds at the
           facilities its scope selects; intermediates are not re-scoped mid-tree.</li>
       <li>Owned-blueprint ME/TE applies to the end product's own blueprint; intermediate blueprints use the
           "unowned BPO" defaults above. Owned T2 BPCs are shown in the BP column but priced via invention.</li>
-      <li>Everything is priced at 1 run; per-item shipping and job fees amortize that one run.</li>
       <li>Structure role bonuses and rig values are hardcoded presets (marked "verify in game") — override
           them per facility if your numbers differ.</li>
     </ul>
@@ -562,11 +612,14 @@ async function updateEsi(){
 
     /* (d) owned blueprints — every logged-in character carrying the scope */
     status.textContent = 'owned blueprints…';
-    const map = {}, counts = {}, missing = [];
+    const map = {}, counts = {}, missing = [], byChar = {};
+    const better = (cand, cur) => (cand.isBpo && !cur.isBpo) ||
+      (cand.isBpo === cur.isBpo && (cand.me > cur.me || (cand.me === cur.me && cand.te > cur.te)));
     const chars = window.EveAuth ? EveAuth.characters() : [];
     for (const ch of chars){
       if (!EveAuth.tokenScopes(ch.id).includes(BP_SCOPE)){ missing.push(ch.name); continue; }
       let n = 0;
+      const mine = byChar[ch.id] = {};
       try{
         const hdrs = { headers: { Authorization: 'Bearer ' + await EveAuth.token(ch.id) } };
         for (let p = 1, tot = 1; p <= tot; p++){
@@ -576,13 +629,16 @@ async function updateEsi(){
             n += it.quantity > 0 ? it.quantity : 1;
             const cand = { me: it.material_efficiency, te: it.time_efficiency,
                            isBpo: it.quantity === -1, count: it.quantity > 0 ? it.quantity : 1, owner: ch.name };
+            // this character's own best copy — lets the manufacturer win merge ties
+            const cm = mine[it.type_id];
+            if (!cm) mine[it.type_id] = { ...cand };
+            else{ cm.count += cand.count; if (better(cand, cm)){ cm.me = cand.me; cm.te = cand.te; cm.isBpo = cand.isBpo; } }
             const cur = map[it.type_id];
             if (!cur) map[it.type_id] = cand;
             else{
               cur.count += cand.count;
               // keep the best-researched copy, BPOs first
-              if ((cand.isBpo && !cur.isBpo) ||
-                  (cand.isBpo === cur.isBpo && (cand.me > cur.me || (cand.me === cur.me && cand.te > cur.te)))){
+              if (better(cand, cur)){
                 cur.me = cand.me; cur.te = cand.te; cur.isBpo = cand.isBpo; cur.owner = cand.owner;
               }
             }
@@ -594,7 +650,7 @@ async function updateEsi(){
         missing.push(ch.name + ' (fetch failed)');
       }
     }
-    ownedBp = { fetched: Date.now(), map, counts, missing };
+    ownedBp = { fetched: Date.now(), map, counts, missing, byChar };
     await idb.set('ownedBp', ownedBp);
     renderAges();
 
@@ -634,20 +690,39 @@ function secMult(sec){ return sec == null || sec >= 0.45 ? 1.0 : sec > 0 ? 1.9 :
 function secLabel(sec){ return sec == null ? 'HS' : sec >= 0.45 ? 'HS' : sec > 0 ? 'LS' : 'NS/WH'; }
 
 function defaultProfile(name){
+  // the three market roles default to whoever is ACTIVE when the profile is created
+  const act = window.EveAuth && EveAuth.active ? EveAuth.active() : null;
   return {
     id: uid(), name,
     facilities: [],
-    market: { auto: true, inputSide: 'sell', outputSide: 'sellOrder', brokerPct: 3, taxPct: 7.5 },
+    market: { auto: true, inputSide: 'sell', outputSide: 'sellOrder',
+              brokerPct: 3, taxPct: 7.5, buyerBrokerPct: 3,
+              buyerChar: act, sellerChar: act, manufChar: act },
     shipping: { base: 10000000, perM3: 653.4, collateralPct: 1, roundUp: true, inbound: true, outbound: true },
     assumptions: { ownedBpoMe: 10, ownedBpoTe: 20, decryptor: 'auto', sccPct: 4 },
+    planning: { capital: null, slots: { man: null, science: null, reaction: null },
+                demandCapPct: 100, maxHaulM3: 350000 },
     forceBuy: [], forceBuild: [],
   };
+}
+// older stored profiles predate the market roles + planning block — upgrade in place
+function normalizeProfile(p){
+  const m = p.market || (p.market = {});
+  if (m.buyerBrokerPct == null) m.buyerBrokerPct = m.brokerPct != null ? m.brokerPct : 3;
+  for (const k of ['buyerChar', 'sellerChar', 'manufChar']) if (m[k] === undefined) m[k] = null;
+  const pl = p.planning || (p.planning = {});
+  if (pl.capital === undefined) pl.capital = null;
+  pl.slots = Object.assign({ man: null, science: null, reaction: null }, pl.slots || {});
+  if (pl.demandCapPct == null) pl.demandCapPct = 100;
+  if (pl.maxHaulM3 == null) pl.maxHaulM3 = 350000;
+  return p;
 }
 let profStore = { active: null, profiles: [] };
 function loadProfiles(){
   try{ const s = JSON.parse(localStorage.getItem(PROF_KEY) || 'null'); if (s && Array.isArray(s.profiles)) profStore = s; }
   catch(_e){}
   if (!profStore.profiles.length) profStore.profiles.push(defaultProfile('Default'));
+  profStore.profiles.forEach(normalizeProfile);
   if (!profStore.profiles.some(p => p.id === profStore.active)) profStore.active = profStore.profiles[0].id;
 }
 function saveProfiles(){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} markStale(); }
@@ -927,6 +1002,75 @@ function fillDecOptions(){
   add('none', 'no decryptor');
   for (const n of Object.keys(IndustryEngine.DECRYPTORS)) add(n, n);
 }
+/* ----- market roles: BUYER pays the buy-order broker, SELLER pays sales tax + the
+   sell-order broker, MANUFACTURER's skills drive job times / invention / slots and
+   their owned blueprints win merge ties. A selected character that logged out falls
+   back to the active (else first) logged-in character, with an inline warning. ----- */
+const ROLE_KEYS = { roleBuyer: 'buyerChar', roleSeller: 'sellerChar', roleManuf: 'manufChar' };
+function roleCharId(key){
+  const chars = window.EveAuth ? EveAuth.characters() : [];
+  if (!chars.length) return null;
+  const want = activeProfile().market[key];
+  if (want != null && chars.some(c => c.id === want)) return want;
+  const act = EveAuth.active();
+  return chars.some(c => c.id === act) ? act : chars[0].id;
+}
+function roleCharName(key){
+  const id = roleCharId(key);
+  const c = id != null ? EveAuth.characters().find(x => x.id === id) : null;
+  return c ? c.name : '—';
+}
+function manufAllSkills(){
+  const id = roleCharId('manufChar');
+  return window.EveAuth && EveAuth.allSkills ? EveAuth.allSkills(id != null ? id : undefined) : null;
+}
+function renderRoles(){
+  const p = activeProfile();
+  const chars = window.EveAuth ? EveAuth.characters() : [];
+  const warns = [];
+  for (const [selId, key] of Object.entries(ROLE_KEYS)){
+    const sel = $(selId);
+    sel.textContent = '';
+    if (!chars.length){
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = 'log in…';
+      sel.appendChild(o); sel.disabled = true;
+      continue;
+    }
+    sel.disabled = false;
+    for (const c of chars){
+      const o = document.createElement('option');
+      o.value = String(c.id); o.textContent = c.name;
+      sel.appendChild(o);
+    }
+    const eff = roleCharId(key);
+    sel.value = String(eff);
+    if (p.market[key] != null && p.market[key] !== eff)
+      warns.push(`${key.replace('Char', '')} character logged out — using ${roleCharName(key)}`);
+  }
+  $('roleWarn').textContent = warns.join(' · ');
+  $('roleWarn').hidden = !warns.length;
+  renderPlanningNote();
+}
+/* auto-derived job-slot counts from the MANUFACTURER's skills (engine formulas) */
+const SLOT_IDS = { man: [3387, 24625], science: [3406, 24624], reaction: [45748, 45749] };
+function derivedSlots(){
+  const all = manufAllSkills() || {};
+  const out = {};
+  for (const [k, ids] of Object.entries(SLOT_IDS)) out[k] = 1 + (all[ids[0]] || 0) + (all[ids[1]] || 0);
+  return out;
+}
+function renderPlanningNote(){
+  const p = activeProfile();
+  const d = derivedSlots();
+  const ov = p.planning.slots;
+  const part = k => (ov[k] != null ? ov[k] + '*' : d[k]);
+  $('plNote').textContent = manufAllSkills()
+    ? `slots from ${roleCharName('manufChar')}: man ${part('man')} · science ${part('science')} · reaction ${part('reaction')} (* = manual override)`
+    : 'slots default to 1/1/1 until the manufacturer’s full skill list is fetched (topbar ↻)';
+  for (const [k, id] of [['man', 'plSlotMan'], ['science', 'plSlotSci'], ['reaction', 'plSlotRea']])
+    $(id).placeholder = String(d[k]);
+}
 function renderSettings(){
   const p = activeProfile();
   $('inSell').checked = p.market.inputSide === 'sell';
@@ -934,9 +1078,17 @@ function renderSettings(){
   $('outOrder').checked = p.market.outputSide === 'sellOrder';
   $('outInstant').checked = p.market.outputSide === 'instant';
   $('feeAuto').checked = !!p.market.auto;
+  $('buyerBrokerPct').value = p.market.buyerBrokerPct;
   $('brokerPct').value = p.market.brokerPct;
   $('taxPct').value = p.market.taxPct;
-  $('brokerPct').disabled = $('taxPct').disabled = !!p.market.auto;
+  $('buyerBrokerPct').disabled = $('brokerPct').disabled = $('taxPct').disabled = !!p.market.auto;
+  $('plCapital').value = p.planning.capital == null ? '' : p.planning.capital;
+  $('plSlotMan').value = p.planning.slots.man == null ? '' : p.planning.slots.man;
+  $('plSlotSci').value = p.planning.slots.science == null ? '' : p.planning.slots.science;
+  $('plSlotRea').value = p.planning.slots.reaction == null ? '' : p.planning.slots.reaction;
+  $('plDemandPct').value = p.planning.demandCapPct;
+  $('plMaxHaul').value = p.planning.maxHaulM3;
+  renderRoles();
   $('shipBase').value = p.shipping.base;
   $('shipM3').value = p.shipping.perM3;
   $('shipColl').value = p.shipping.collateralPct;
@@ -956,11 +1108,26 @@ function bindSettings(){
   $('outInstant').addEventListener('change', () => { activeProfile().market.outputSide = 'instant'; saveProfiles(); });
   $('feeAuto').addEventListener('change', () => {
     activeProfile().market.auto = $('feeAuto').checked;
-    $('brokerPct').disabled = $('taxPct').disabled = $('feeAuto').checked;
+    $('buyerBrokerPct').disabled = $('brokerPct').disabled = $('taxPct').disabled = $('feeAuto').checked;
     saveProfiles(); autoFees();
   });
+  $('buyerBrokerPct').addEventListener('change', () => { activeProfile().market.buyerBrokerPct = num($('buyerBrokerPct')); saveProfiles(); });
   $('brokerPct').addEventListener('change', () => { activeProfile().market.brokerPct = num($('brokerPct')); saveProfiles(); });
   $('taxPct').addEventListener('change', () => { activeProfile().market.taxPct = num($('taxPct')); saveProfiles(); });
+  for (const [selId, key] of Object.entries(ROLE_KEYS))
+    $(selId).addEventListener('change', () => {
+      const v = $(selId).value;
+      activeProfile().market[key] = v === '' ? null : Number(v);
+      clearEngines();
+      saveProfiles(); renderRoles(); autoFees();
+    });
+  const numOrNull = el => el.value === '' ? null : Number(el.value);
+  $('plCapital').addEventListener('change', () => { activeProfile().planning.capital = numOrNull($('plCapital')); saveProfiles(); });
+  $('plSlotMan').addEventListener('change', () => { activeProfile().planning.slots.man = numOrNull($('plSlotMan')); saveProfiles(); renderPlanningNote(); });
+  $('plSlotSci').addEventListener('change', () => { activeProfile().planning.slots.science = numOrNull($('plSlotSci')); saveProfiles(); renderPlanningNote(); });
+  $('plSlotRea').addEventListener('change', () => { activeProfile().planning.slots.reaction = numOrNull($('plSlotRea')); saveProfiles(); renderPlanningNote(); });
+  $('plDemandPct').addEventListener('change', () => { activeProfile().planning.demandCapPct = $('plDemandPct').value === '' ? 100 : Number($('plDemandPct').value); saveProfiles(); });
+  $('plMaxHaul').addEventListener('change', () => { activeProfile().planning.maxHaulM3 = $('plMaxHaul').value === '' ? 350000 : Number($('plMaxHaul').value); saveProfiles(); });
   $('shipBase').addEventListener('change', () => { activeProfile().shipping.base = num($('shipBase')); saveProfiles(); });
   $('shipM3').addEventListener('change', () => { activeProfile().shipping.perM3 = num($('shipM3')); saveProfiles(); });
   $('shipColl').addEventListener('change', () => { activeProfile().shipping.collateralPct = num($('shipColl')); saveProfiles(); });
@@ -996,39 +1163,57 @@ const eff = (base, sk) => base
   ? base + (10 - base) * 0.04 * (base > 0 ? (sk.connections || 0) : (sk.diplomacy || 0))
   : 0;
 let feeSeq = 0;
+/* Per-role fees: the BUYER's skills/standings set the buy-order broker %, the SELLER's
+   set sales tax + the sell-order broker %. Same Jita 4-4 formulas as the Sell tool. */
+async function roleFees(charId, own){
+  let sk = EveAuth.skills(charId);
+  if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3){
+    try{ sk = await EveAuth.fetchSkills(charId); }catch(_e){ sk = sk || { accounting: 0, brokerRelations: 0 }; }
+  }
+  let st = EveAuth.standings(charId);
+  if (!st){ try{ st = await EveAuth.fetchStandings(charId); }catch(_e){ st = null; } }
+  const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
+  const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
+  const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
+  return {
+    sk,
+    tax: Math.round(7.5 * (1 - 0.11 * sk.accounting) * 100) / 100,
+    broker: Math.round(Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff) * 100) / 100,
+  };
+}
 async function autoFees(){
   const my = ++feeSeq;
   const p = activeProfile();
   const note = $('feeNote');
+  renderRoles();
   if (!p.market.auto){ note.textContent = 'manual fees'; return; }
-  if (!window.EveAuth || !EveAuth.isLoggedIn()){
-    note.textContent = 'log in with EVE to auto-fill Jita fees from your skills and standings';
+  if (!window.EveAuth || !EveAuth.characters().length){
+    note.textContent = 'log in with EVE to auto-fill Jita fees from the role characters’ skills and standings';
     return;
   }
   try{
-    let sk = EveAuth.skills();
-    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-    let st = EveAuth.standings();
-    if (!st){ try{ st = await EveAuth.fetchStandings(); }catch(_e){ st = null; } }
+    const buyerId = roleCharId('buyerChar'), sellerId = roleCharId('sellerChar');
     let own = null;
     try{ own = await stationOwner(STATION); }catch(_e){}
+    const buyer = await roleFees(buyerId, own);
+    const seller = buyerId === sellerId ? buyer : await roleFees(sellerId, own);
     if (my !== feeSeq) return;
-    const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
-    const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
-    const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
-    const tax = Math.round(7.5 * (1 - 0.11 * sk.accounting) * 100) / 100;
-    const broker = Math.round(Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff) * 100) / 100;
-    const changed = p.market.brokerPct !== broker || p.market.taxPct !== tax;
-    p.market.brokerPct = broker;
-    p.market.taxPct = tax;
-    $('brokerPct').value = broker;
-    $('taxPct').value = tax;
+    const changed = p.market.buyerBrokerPct !== buyer.broker
+      || p.market.brokerPct !== seller.broker || p.market.taxPct !== seller.tax;
+    p.market.buyerBrokerPct = buyer.broker;
+    p.market.brokerPct = seller.broker;
+    p.market.taxPct = seller.tax;
+    $('buyerBrokerPct').value = buyer.broker;
+    $('brokerPct').value = seller.broker;
+    $('taxPct').value = seller.tax;
     if (changed){
       try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){}
       markStale();
     }
-    note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · `
-      + `broker ${broker.toFixed(2)} (Broker ${sk.brokerRelations}) at Jita 4-4`;
+    note.textContent = `⚡ buyer ${roleCharName('buyerChar')}: buy broker ${buyer.broker.toFixed(2)}% `
+      + `(Broker ${buyer.sk.brokerRelations}) · seller ${roleCharName('sellerChar')}: `
+      + `tax ${seller.tax.toFixed(2)}% (Accounting ${seller.sk.accounting}), sell broker ${seller.broker.toFixed(2)}% · `
+      + `manufacturer ${roleCharName('manufChar')}: skills, slots & owned BPs — at Jita 4-4`;
   }catch(e){ note.textContent = 'fee auto-fill failed: ' + (e.message || e); }
 }
 
@@ -1036,7 +1221,6 @@ async function autoFees(){
 const engineCache = new Map();
 let ovrIdx = {};                    // 'ovr:<uid>' -> cost-index fraction
 function clearEngines(){ engineCache.clear(); }
-function activeAllSkills(){ return window.EveAuth && EveAuth.allSkills ? EveAuth.allSkills() : null; }
 
 function facilityToEngine(f){
   const rigs = (f.rigs || []).map(r => {
@@ -1061,11 +1245,21 @@ function facilityToEngine(f){
 function engineProfile(fs){
   const p = activeProfile();
   const dec = p.assumptions.decryptor;
+  const slots = {};
+  for (const k of ['man', 'science', 'reaction'])
+    if (p.planning.slots[k] != null) slots[k] = p.planning.slots[k];
   return {
     facilities: fs.map(facilityToEngine),
     market: {
       inputSide: p.market.inputSide, outputSide: p.market.outputSide,
-      brokerPct: p.market.brokerPct || 0, taxPct: p.market.taxPct || 0,
+      buyerBrokerPct: p.market.buyerBrokerPct || 0,
+      sellerBrokerPct: p.market.brokerPct || 0, sellerTaxPct: p.market.taxPct || 0,
+    },
+    planning: {
+      capital: p.planning.capital,
+      slots,                                    // only manual overrides; else skill-derived
+      demandCapPct: p.planning.demandCapPct,
+      maxHaulM3: p.planning.maxHaulM3,
     },
     shipping: {
       base: p.shipping.base || 0, perM3: p.shipping.perM3 || 0,
@@ -1091,8 +1285,10 @@ function engineFor(tid){
     e = IndustryEngine.create({
       data: D,
       prices: t => {
-        const s = bestSell(t), b = bestBuy(t);
-        return s == null && b == null ? null : { sell: s, buy: b };
+        const en = bookEntry(t);
+        if (!en || (!en.s.length && !en.b.length)) return null;
+        return { sell: en.s.length ? en.s[0][0] : null, buy: en.b.length ? en.b[0][0] : null,
+                 sellLevels: en.s, buyLevels: en.b };   // [price, volume, minVolume] levels
       },
       adjusted: t => (adjusted && adjusted.map[t]) || 0,
       indices: (sys, act) => {
@@ -1101,25 +1297,39 @@ function engineFor(tid){
         return (m && m[act]) || 0;
       },
       profile: engineProfile(fs),
-      skills: { byId: activeAllSkills() || {} },
+      skills: { byId: manufAllSkills() || {} },
       params: {},
     });
     engineCache.set(key, e);
   }
   return e;
 }
-function evalOpts(tid){
+/* Owned-blueprint lookup: the global merge keeps the best-researched copy (BPOs first);
+   when the MANUFACTURER's own copy TIES that quality, theirs wins the merge — the BP
+   column then credits the character who will actually run the jobs. */
+function ownedEntryFor(bpid){
+  const global = ownedBp && ownedBp.map && ownedBp.map[bpid];
+  if (!global) return null;
+  const manuf = roleCharId('manufChar');
+  const mine = manuf != null && ownedBp.byChar && ownedBp.byChar[manuf] && ownedBp.byChar[manuf][bpid];
+  if (mine && mine.isBpo === global.isBpo && mine.me === global.me && mine.te === global.te)
+    return Object.assign({}, mine, { count: global.count });
+  return global;
+}
+/* no opts.runs → the engine's batch planner sizes R×J; demandPerDay caps daily output */
+function evalOpts(tid, demandPerDay){
   const p = activeProfile();
-  const o = { runs: 1, forceBuy: new Set(p.forceBuy || []), forceBuild: new Set(p.forceBuild || []) };
+  const o = { demandPerDay: demandPerDay != null ? demandPerDay : null,
+    forceBuy: new Set(p.forceBuy || []), forceBuild: new Set(p.forceBuild || []) };
   const pe = productToBp.get(tid);
-  const own = pe && ownedBp && ownedBp.map && ownedBp.map[pe.bpid];
+  const own = pe && ownedEntryFor(pe.bpid);
   if (own){
     if (own.isBpo){ o.meOverride = own.me; o.teOverride = own.te; o.noInvention = true; }
     else if (!inventedBy.has(pe.bpid)){ o.meOverride = own.me; o.teOverride = own.te; }
   }
   return o;
 }
-function evalOne(tid){ return engineFor(tid).evaluate(tid, evalOpts(tid)); }
+function evalOne(tid, demandPerDay){ return engineFor(tid).evaluate(tid, evalOpts(tid, demandPerDay)); }
 
 /* ---------- compute all products ---------- */
 const state = {
@@ -1155,7 +1365,7 @@ const metaOf = tid => META_NAMES[D.types[tid][5]] || (D.types[tid][5] ? 'Other' 
 function bpDescr(tid){
   const pe = productToBp.get(tid);
   if (!pe) return { kind: 'none', label: '—' };
-  const own = ownedBp && ownedBp.map && ownedBp.map[pe.bpid];
+  const own = ownedEntryFor(pe.bpid);
   if (own && own.isBpo) return { kind: 'bpo', label: `ME${own.me}/TE${own.te}`, own };
   if (own) return { kind: 'bpc', label: `BPC ME${own.me}/TE${own.te}`, own };
   if (inventedBy.has(pe.bpid)) return { kind: 'invent', label: 'invent' };
@@ -1185,7 +1395,7 @@ function countNodes(node, acc, seen){
   for (const c of node.children || []) countNodes(c, acc, seen);
 }
 
-function rowFrom(tid, res, err){
+function rowFrom(tid, res, err, planDemand){
   const t = D.types[tid];
   const m3 = t[2] != null ? t[2] : t[1];
   const catId = topMg(tid);
@@ -1194,13 +1404,15 @@ function rowFrom(tid, res, err){
     cat: (D.marketGroups[catId] && D.marketGroups[catId][0]) || '—', catId,
     meta: metaOf(tid),
     m3, demand: undefined, dos: undefined,
+    planDemand: planDemand != null ? planDemand : null, refined: planDemand != null,
     bp: bpDescr(tid), owned: false, skillOk: true, err: err ? (err.message || String(err)) : null,
   };
   base.owned = base.bp.kind === 'bpo' || base.bp.kind === 'bpc';
-  const all = activeAllSkills();
+  const all = manufAllSkills();
   base.skillOk = all ? isSkilled(tid, all) : null;
   if (err || !res){
     Object.assign(base, { cost: null, rev: null, profit: null, margin: null, roi: null, iskh: null,
+      batch: null, batchR: null, batchJ: null, profitday: null, capused: null, thin: false,
       ship: null, tax: null, iskm3: null, buildN: 0, buyN: 0, unpriced: true, produced: 1 });
     return base;
   }
@@ -1214,6 +1426,14 @@ function rowFrom(tid, res, err){
   base.margin = base.profit != null ? tt.marginPct : null;
   base.roi = base.profit != null ? tt.roiPct : null;
   base.iskh = base.profit != null && tt.iskPerHour != null && isFinite(tt.iskPerHour) ? tt.iskPerHour : null;
+  const b = tt.batch;
+  base.batch = b ? b.units : null;                      // numeric sort key = batch units
+  base.batchR = b ? b.runs : null;
+  base.batchJ = b ? b.jobs : null;
+  base.bottleneck = b ? b.bottleneck : null;
+  base.profitday = base.profit != null && tt.profitPerDay != null && isFinite(tt.profitPerDay) ? tt.profitPerDay : null;
+  base.capused = isFinite(tt.capitalUsed) ? tt.capitalUsed : null;
+  base.thin = tt.thinBookCount > 0 || !!tt.revenueThinBook;
   base.ship = tt.shippingInPerItem + tt.shippingOutPerItem;
   base.tax = tt.salesTax / res.produced;
   base.iskm3 = base.profit != null && m3 > 0 ? base.profit / m3 : null;
@@ -1293,13 +1513,39 @@ function recomputeOne(tid){
   clearEngines(); ovrIdx = {};
   const i = state.rows.findIndex(r => r.tid === tid);
   if (i < 0) return;
-  let res = null, err = null;
-  try{ res = evalOne(tid); }catch(e){ err = e; }
-  const row = rowFrom(tid, res, err);
   const h = histMem.get(tid);
+  const dem = h && h !== 'loading' ? h.demand : null;
+  let res = null, err = null;
+  try{ res = evalOne(tid, dem); }catch(e){ err = e; }
+  const row = rowFrom(tid, res, err, dem);
   if (h && h !== 'loading'){ row.demand = h.demand; row.dos = dosOf(tid, h.demand); }
   state.rows[i] = row;
   render();
+}
+
+/* Demand-aware batch REFINEMENT. The full scan runs with demandPerDay = null (waiting
+   for ~5,000 history fetches before ranking would gut the scan), then rows whose
+   history IS known get their batch re-planned against real demand as they scroll into
+   view — marked with a subtle ↺ on the row. */
+let renderQueued = false;
+function scheduleRender(){
+  if (renderQueued) return;
+  renderQueued = true;
+  setTimeout(() => { renderQueued = false; render(); }, 60);
+}
+function refineRow(tid){
+  const i = state.rows.findIndex(r => r.tid === tid);
+  if (i < 0) return;
+  const r = state.rows[i];
+  const h = histMem.get(tid);
+  if (!h || h === 'loading' || h.demand == null) return;
+  if (r.planDemand === h.demand || r.err) return;
+  let res = null, err = null;
+  try{ res = evalOne(tid, h.demand); }catch(e){ err = e; }
+  const row = rowFrom(tid, res, err, h.demand);
+  row.demand = h.demand; row.dos = dosOf(tid, h.demand);
+  state.rows[i] = row;
+  scheduleRender();
 }
 
 /* ---------- demand / D.O.S. — lazy per-visible-row history ---------- */
@@ -1356,11 +1602,16 @@ function applyHist(tid, demand){
     const dos = r ? r.dos : null;
     cells.dos.textContent = dos == null ? '—' : dos === Infinity ? '∞' : fmt.format(Math.round(dos * 10) / 10);
   }
+  if (demand != null) refineRow(tid);   // re-plan the batch against real demand
 }
 const renderedHist = new Map();  // tid -> {demand: td, dos: td}
 const io = new IntersectionObserver(entries => {
   for (const en of entries)
-    if (en.isIntersecting && en.target.dataset.tid) needHist(Number(en.target.dataset.tid));
+    if (en.isIntersecting && en.target.dataset.tid){
+      const tid = Number(en.target.dataset.tid);
+      needHist(tid);
+      refineRow(tid);   // history may already be cached from an earlier scroll-by
+    }
 }, { root: $('twrap'), rootMargin: '250px' });
 
 /* ---------- table ---------- */
@@ -1413,6 +1664,20 @@ function render(){
     exp.className = 'exp';
     exp.textContent = openTid === r.tid ? '▾' : '▸';
     tdName.append(exp, document.createTextNode(r.name));
+    if (r.thin){
+      const w = document.createElement('span');
+      w.className = 'warn thinflag';
+      w.textContent = ' ⚠';
+      w.title = 'thin order book — the Jita book is shallower than this batch needs somewhere in the tree (see drilldown)';
+      tdName.appendChild(w);
+    }
+    if (r.refined){
+      const rf = document.createElement('span');
+      rf.className = 'hint refflag';
+      rf.textContent = ' ↺';
+      rf.title = `batch re-planned against live demand (${fmt.format(Math.round(r.planDemand * 10) / 10)}/day)`;
+      tdName.appendChild(rf);
+    }
     if (r.err) tdName.title = r.err;
     tr.appendChild(tdName);
     const tdCat = document.createElement('td'); tdCat.textContent = r.cat; tr.appendChild(tdCat);
@@ -1431,6 +1696,11 @@ function render(){
     numCell(fmtPct(r.margin), r.margin);
     numCell(fmtPct(r.roi), r.roi);
     numCell(fmtIsk(r.iskh), r.iskh);
+    const tdBatch = numCell(r.batchR != null ? `${fmt0.format(r.batchR)}×${r.batchJ}` : '—', r.batch);
+    if (r.batchR != null) tdBatch.title = `${fmt0.format(r.batch)} units/batch`
+      + (r.bottleneck ? ` · bottleneck: ${r.bottleneck}` : '');
+    numCell(fmtIsk(r.profitday), r.profitday, r.profitday > 0 ? ' pos' : r.profitday != null && r.profitday < 0 ? ' neg' : '');
+    numCell(fmtIsk(r.capused), r.capused);
     numCell(fmtIsk(r.ship), r.ship);
     numCell(fmtIsk(r.tax), r.tax);
     numCell(fmt.format(r.m3), r.m3);
@@ -1454,7 +1724,7 @@ function render(){
   if (!shown.length){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 17; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
+    td.colSpan = 20; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
     td.textContent = state.rows.length ? 'No rows match the current filters.'
       : 'Load data, set up a profile and hit "Compute all products".';
     tr.appendChild(td); tbody.appendChild(tr);
@@ -1520,8 +1790,8 @@ document.querySelectorAll('#tbl thead th').forEach(th => {
 const bindFilter = (id, key, isCheck) => {
   $(id).addEventListener(isCheck ? 'change' : 'input', () => {
     state.filters[key] = isCheck ? $(id).checked : $(id).value;
-    if (id === 'fltSkilled' && $(id).checked && !activeAllSkills())
-      $('fltCount').textContent = 'skill filter needs the full skill list — hit ↻ in the top bar to refetch skills';
+    if (id === 'fltSkilled' && $(id).checked && !manufAllSkills())
+      $('fltCount').textContent = 'skill filter needs the manufacturer’s full skill list — hit ↻ in the top bar to refetch skills';
     saveUi(); render();
   });
 };
@@ -1560,13 +1830,15 @@ $('tblBody').addEventListener('click', e => {
 
 function tableTsv(){
   const head = ['Item', 'Category', 'Meta', 'Cost/Item', 'Revenue/Item', 'Profit/Item', 'Margin %', 'ROI %',
-    'ISK/h', 'Shipping/Item', 'Sales tax/Item', 'm3', 'ISK/m3', 'Demand/Day', 'D.O.S.', 'BP', 'Build nodes', 'Buy nodes'];
+    'ISK/h', 'Batch runs', 'Batch jobs', 'Batch units', 'Bottleneck', 'Profit/Day', 'Capital used',
+    'Shipping/Item', 'Sales tax/Item', 'm3', 'ISK/m3', 'Demand/Day', 'D.O.S.', 'BP', 'Build nodes', 'Buy nodes', 'Thin book'];
   const lines = [head.join('\t')];
   const n = v => v == null || !isFinite(v) ? '' : String(Math.round(v * 100) / 100);
   for (const r of sortedRows())
     lines.push([r.name, r.cat, r.meta, n(r.cost), n(r.rev), n(r.profit), n(r.margin), n(r.roi), n(r.iskh),
+      n(r.batchR), n(r.batchJ), n(r.batch), r.bottleneck || '', n(r.profitday), n(r.capused),
       n(r.ship), n(r.tax), n(r.m3), n(r.iskm3), n(r.demand), r.dos === Infinity ? 'inf' : n(r.dos),
-      r.bp.label, r.buildN, r.buyN].join('\t'));
+      r.bp.label, r.buildN, r.buyN, r.thin ? 'yes' : ''].join('\t'));
   return lines.join('\n');
 }
 $('btnTsv').addEventListener('click', () =>
@@ -1581,10 +1853,11 @@ function buildDrillRow(tid){
   const tr = document.createElement('tr');
   tr.className = 'drill';
   const td = document.createElement('td');
-  td.colSpan = 17;
+  td.colSpan = 20;
   tr.appendChild(td);
+  const rowRef = state.rows.find(x => x.tid === tid);
   let res = null, err = null;
-  try{ res = evalOne(tid); }catch(e){ err = e; }
+  try{ res = evalOne(tid, rowRef ? rowRef.planDemand : null); }catch(e){ err = e; }
   if (err){
     td.textContent = 'cannot evaluate: ' + (err.message || err);
     td.className = 'err';
@@ -1592,16 +1865,22 @@ function buildDrillRow(tid){
   }
   const p = activeProfile();
   const tt = res.totals;
+  const bt = tt.batch;
 
-  const sum = document.createElement('div');
-  sum.className = 'dsummary';
-  const stat = (label, val) => {
-    const s = document.createElement('span');
-    const b = document.createElement('b'); b.textContent = val;
-    s.append(document.createTextNode(label + ' '), b);
-    sum.appendChild(s);
+  const mkStatRow = () => {
+    const sum = document.createElement('div');
+    sum.className = 'dsummary';
+    sum.stat = (label, val) => {
+      const s = document.createElement('span');
+      const b = document.createElement('b'); b.textContent = val;
+      s.append(document.createTextNode(label + ' '), b);
+      sum.appendChild(s);
+    };
+    return sum;
   };
-  stat('run produces', fmt0.format(res.produced));
+  const sum = mkStatRow();
+  const stat = sum.stat;
+  stat('batch produces', fmt0.format(res.produced));
   stat('cost/item', fmtIsk(tt.costPerItem));
   stat('revenue/item', fmtIsk(tt.revenuePerItem));
   stat('profit/item', fmtIsk(tt.profitPerItem));
@@ -1612,6 +1891,23 @@ function buildDrillRow(tid){
   stat('broker fee', fmtIsk(tt.brokerFee));
   stat('tree depth', String(tt.treeDepth));
   td.appendChild(sum);
+
+  // batch panel — the plan the pipeline numbers assume
+  const bp = mkStatRow();
+  bp.classList.add('batchpanel');
+  bp.stat('batch', `${fmt0.format(bt.runs)} runs × ${bt.jobs} job${bt.jobs > 1 ? 's' : ''}`);
+  bp.stat('units', fmt0.format(bt.units));
+  bp.stat('cycle', fmtDur(bt.cycleHours * 3600));
+  bp.stat('bottleneck', bt.bottleneck || '—');
+  if (bt.stages && bt.stages.length > 1)
+    bp.stat('stage rates', bt.stages.map(s => `${s.stage} ${fmt.format(Math.round(s.unitsPerHour * 100) / 100)}/h`).join(' · '));
+  bp.stat('capital used', fmtIsk(bt.capitalUsed));
+  bp.stat('hauls in', bt.hauls.in.count ? `${bt.hauls.in.count} × ${fmtIsk(bt.hauls.in.costEach)}` : '—');
+  bp.stat('hauls out', bt.hauls.out.count ? `${bt.hauls.out.count} × ${fmtIsk(bt.hauls.out.costEach)}` : '—');
+  if (rowRef && rowRef.refined) bp.stat('↺ demand-refined', `${fmt.format(Math.round(rowRef.planDemand * 10) / 10)}/day cap`);
+  if (tt.revenueThinBook)
+    bp.stat('⚠ buy book absorbs', `${fmt0.format(tt.revenueThinBook.filled)}/${fmt0.format(tt.revenueThinBook.needed)} units`);
+  td.appendChild(bp);
 
   const ctl = document.createElement('div');
   ctl.className = 'rowline';
@@ -1696,6 +1992,13 @@ function renderNode(node, rootTid, depth, p){
     const w = document.createElement('span');
     w.className = 'warn';
     w.textContent = 'unpriced';
+    line.appendChild(w);
+  }
+  if (node.thinBook){
+    const w = document.createElement('span');
+    w.className = 'warn thindepth';
+    w.textContent = `⚠ book depth ${fmt0.format(node.thinBook.filled)}/${fmt0.format(node.thinBook.needed)}`;
+    w.title = 'the Jita sell book holds fewer units than this batch needs — the remainder is priced at the worst listed level';
     line.appendChild(w);
   }
 
