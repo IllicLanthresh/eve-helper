@@ -102,6 +102,7 @@
   .chip.on{color:var(--text);border-color:var(--cyan);background:#14344a}
   #staleBanner{margin-top:10px;padding:8px 12px;border:1px solid #6b571f;background:#3a2f14;color:var(--amber);
     border-radius:8px;display:flex;gap:12px;align-items:center;font-size:13px}
+  #staleBanner[hidden]{display:none}  /* the explicit display would defeat the hidden attribute */
   /* drilldown */
   tr.drill>td{background:#0d1119;padding:10px 16px;cursor:default}
   .dsummary{font-size:12px;color:var(--dim);margin-bottom:8px;display:flex;gap:22px;flex-wrap:wrap}
