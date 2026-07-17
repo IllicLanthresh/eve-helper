@@ -1,0 +1,1802 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVE Helper — Industry</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  #topbar{display:flex;gap:4px;align-items:center;padding:8px 22px;background:#0e131d;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  #topbar .brand{font-weight:600;font-size:14px;letter-spacing:.5px;color:var(--cyan);margin-right:14px}
+  #topbar a{color:var(--dim);text-decoration:none;font-size:13px;padding:4px 12px;border-radius:6px}
+  #topbar a:hover{color:var(--text);background:#1b2434}
+  #topbar a.active{color:var(--text);background:#1b2434;box-shadow:inset 0 -2px 0 var(--cyan)}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,'Segoe UI',Roboto,sans-serif}
+  header{padding:18px 22px 10px}
+  header h1{margin:0;font-size:20px;letter-spacing:.4px}
+  header p{margin:4px 0 0;color:var(--dim);font-size:13px}
+  main{padding:0 22px 60px;max-width:1600px;margin:0 auto}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+  section h2{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)}
+  label{display:block;color:var(--dim);font-size:12px;margin-bottom:4px}
+  label.inl{display:inline-flex;align-items:center;gap:6px;margin:0;color:var(--dim);font-size:12px}
+  input:focus,select:focus{outline:1px solid var(--cyan)}
+  input[type=number],input[type=text],select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;font:13px var(--mono);width:90px}
+  input:disabled,select:disabled{opacity:.4;cursor:not-allowed}
+  fieldset.grp{border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+    padding:6px 12px 10px;margin:0;min-width:210px}
+  fieldset.grp legend{color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:0 6px}
+  fieldset.grp .grow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+  fieldset.grp label{color:var(--text);font-size:13px}
+  button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
+    padding:7px 14px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--cyan)}
+  button.primary{background:#14344a;border-color:#2a6d92;color:#cfeefb}
+  button:disabled{opacity:.5;cursor:default}
+  button.mini{padding:2px 8px;font-size:12px}
+  .rowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+  .rowline .sep{flex:1}
+  .hint{color:var(--dim);font-size:12px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  thead th{position:sticky;top:0;background:#182130;color:var(--dim);font-weight:600;text-align:left;
+    padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;z-index:5}
+  thead th.num{text-align:right}
+  thead th.s-asc::after{content:' ▲';color:var(--cyan);font-size:10px}
+  thead th.s-desc::after{content:' ▼';color:var(--cyan);font-size:10px}
+  tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
+  tbody td:not(:first-child){cursor:copy}
+  tbody td.copied{box-shadow:inset 0 0 0 1px var(--cyan);background:#14344a}
+  tbody tr:hover{background:#161d2b}
+  tbody tr.open{background:#14202f}
+  td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  td.pos{color:var(--green)}
+  td.neg{color:var(--red)}
+  td.name{max-width:300px;cursor:pointer}
+  td.name .exp{color:var(--cyan);margin-right:5px;font-size:11px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.build{background:#15321f;color:var(--green);border:1px solid #2c5c3b}
+  .badge.buy{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.forced{outline:1px dashed var(--violet)}
+  .tablewrap{max-height:640px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:10px}
+  #fetchBar,#compBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
+  #fetchFill,#compFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
+  #fetchFill.ind{width:30%;animation:ind 1.1s linear infinite}
+  @keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
+  code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
+  details.notes{margin-top:10px;color:var(--dim);font-size:13px}
+  details.notes summary{cursor:pointer;color:var(--text)}
+  ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
+  #esiStatus,#sdeStatus,#compStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .ok{color:var(--green)} .err{color:var(--red)} .warn{color:var(--amber)}
+  #dataAges{margin-top:8px;font-size:12px;color:var(--dim);display:flex;gap:24px;flex-wrap:wrap}
+  #dataAges b{color:var(--text);font-weight:600}
+  /* facilities */
+  .fac{border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:10px 12px;margin-top:10px}
+  .fac .fhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .fac input.flabel{width:230px}
+  .fac .sub{color:var(--dim);font-size:12px}
+  .fac .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:16px;padding:0 4px;border-radius:4px}
+  .fac .x:hover{color:var(--red);background:#242e42}
+  .fac .acts label{display:inline-flex;gap:4px;margin:0 12px 0 0;color:var(--text);font-size:12px;align-items:center}
+  .fac .kv{display:inline-flex;gap:5px;align-items:center;margin:0 14px 0 0;font-size:12px;color:var(--dim)}
+  .fac .kv input{width:64px;padding:3px 6px;font-size:12px}
+  .rig{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px}
+  .rig select{width:230px;font-size:12px;padding:3px 6px}
+  .rig .x{cursor:pointer;color:var(--dim);padding:0 5px;border-radius:4px}
+  .rig .x:hover{color:var(--red);background:#242e42}
+  .scopebox{display:inline-block;position:relative;font-size:12px}
+  .scopebox>summary{cursor:pointer;color:var(--cyan);list-style:none;user-select:none}
+  .scopebox>summary::-webkit-details-marker{display:none}
+  .scopebox .pop{position:absolute;z-index:30;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px;min-width:240px;max-height:260px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .scopebox .pop label{display:flex;gap:6px;color:var(--text);font-size:12px;margin:2px 0;align-items:center}
+  .chip{display:inline-block;padding:2px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--dim);font-size:12px;cursor:pointer;user-select:none;margin:2px 0}
+  .chip.on{color:var(--text);border-color:var(--cyan);background:#14344a}
+  #staleBanner{margin-top:10px;padding:8px 12px;border:1px solid #6b571f;background:#3a2f14;color:var(--amber);
+    border-radius:8px;display:flex;gap:12px;align-items:center;font-size:13px}
+  /* drilldown */
+  tr.drill>td{background:#0d1119;padding:10px 16px;cursor:default}
+  .dsummary{font-size:12px;color:var(--dim);margin-bottom:8px;display:flex;gap:22px;flex-wrap:wrap}
+  .dsummary b{color:var(--text);font-family:var(--mono)}
+  .dnode{margin:2px 0;font-size:12px}
+  .dnode .line{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .dnode .line .nm{color:var(--text);font-weight:600}
+  .dnode .line .qty,.dnode .line .cst{font-family:var(--mono);color:var(--dim)}
+  .dnode .line .cst b{color:var(--text)}
+  .dnode .kids{margin-left:16px;border-left:1px solid #1e2839;padding-left:12px}
+  .dnode .feeline{color:var(--dim);margin-left:22px;font-size:11px}
+  .dnode .tg{cursor:pointer;color:var(--cyan);font-size:11px;width:12px;display:inline-block}
+  .fbtn{font-size:10px;padding:1px 7px;border-radius:5px;cursor:pointer;border:1px solid var(--line);
+    color:var(--dim);background:var(--panel2)}
+  .fbtn.on{color:var(--text);border-color:var(--violet);background:#2b1f3c}
+  .invpanel{margin:4px 0 6px 22px;border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#111621;font-size:11px}
+  .invpanel table{font-size:11px;width:auto;margin-top:4px}
+  .invpanel td,.invpanel th{padding:2px 8px;border-bottom:1px solid #1a2233;text-align:right;font-family:var(--mono)}
+  .invpanel td:first-child,.invpanel th:first-child{text-align:left;font-family:inherit}
+  .invpanel tr.pick td{color:var(--cyan)}
+  #copyPad{position:fixed;left:-9999px;top:0;width:10px;height:10px}
+  @media (max-width:900px){ td.name{max-width:170px} }
+</style>
+</head>
+<body>
+<nav id="topbar">
+  <span class="brand">EVE Helper</span>
+  <a href="index.html">Sell</a>
+  <a href="mine.html">Mine</a>
+  <a href="industry.html" class="active">Industry</a>
+</nav>
+<header>
+  <h1>Industry Helper</h1>
+  <p>Full-market build-vs-buy scan: every blueprint product priced against the live Jita book with your
+     facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI and ISK/h, with a
+     per-item cost drilldown.</p>
+</header>
+<main>
+
+<section>
+  <h2>1 · Data &amp; prices</h2>
+  <div id="sdeStatus">loading static blueprint data…</div>
+  <div class="rowline">
+    <button id="btnEsi" type="button" class="primary">Update ESI data</button>
+    <span id="esiStatus"></span>
+  </div>
+  <div id="fetchBar" hidden><div id="fetchFill"></div></div>
+  <div id="dataAges"></div>
+  <div id="bpNote" class="hint" style="margin-top:6px"></div>
+</section>
+
+<section>
+  <h2>2 · Profiles</h2>
+  <div class="rowline">
+    <label for="profSel" style="margin:0">profile</label>
+    <select id="profSel" style="width:220px"></select>
+    <button id="btnProfNew" class="mini" type="button">new</button>
+    <button id="btnProfRen" class="mini" type="button">rename</button>
+    <button id="btnProfDup" class="mini" type="button">duplicate</button>
+    <button id="btnProfDel" class="mini" type="button">delete</button>
+    <span class="hint">everything below is stored per profile (in your browser)</span>
+  </div>
+
+  <div id="facList"></div>
+  <div class="rowline">
+    <button id="btnAddStruct" type="button">+ structure…</button>
+    <button id="btnAddNpc" type="button">+ NPC station</button>
+    <span class="hint">ordered list — jobs run at the FIRST facility that offers the activity (and whose
+      product scope covers the end product)</span>
+  </div>
+
+  <div class="rowline" style="align-items:stretch">
+    <fieldset class="grp">
+      <legend>market (Jita)</legend>
+      <div class="grow">
+        <label class="inl"><input type="radio" name="inSide" id="inSell"> buy inputs instantly (at sell)</label>
+        <label class="inl"><input type="radio" name="inSide" id="inBuy"> place buy orders (at buy)</label>
+      </div>
+      <div class="grow">
+        <label class="inl"><input type="radio" name="outSide" id="outOrder"> sell order (at sell)</label>
+        <label class="inl"><input type="radio" name="outSide" id="outInstant"> instant to buy orders</label>
+      </div>
+      <div class="grow">
+        <label class="inl"><input type="checkbox" id="feeAuto"> fees from active character</label>
+        <label class="inl">broker % <input id="brokerPct" type="number" step="0.01" min="0" max="20"></label>
+        <label class="inl">sales tax % <input id="taxPct" type="number" step="0.01" min="0" max="20"></label>
+      </div>
+      <div class="grow"><span id="feeNote" class="hint"></span></div>
+    </fieldset>
+    <fieldset class="grp">
+      <legend>shipping (per direction)</legend>
+      <div class="grow">
+        <label class="inl">base <input id="shipBase" type="number" step="1000" min="0" style="width:110px"></label>
+        <label class="inl">ISK/m³ <input id="shipM3" type="number" step="0.1" min="0"></label>
+        <label class="inl">collateral % <input id="shipColl" type="number" step="0.1" min="0"></label>
+      </div>
+      <div class="grow">
+        <label class="inl"><input type="checkbox" id="shipRound"> round up to the next million</label>
+      </div>
+      <div class="grow">
+        <label class="inl"><input type="checkbox" id="shipIn"> inbound (materials to home)</label>
+        <label class="inl"><input type="checkbox" id="shipOut"> outbound (products to Jita)</label>
+      </div>
+      <div class="grow"><span class="hint">reward = round-up(base + ISK/m³ × volume + collateral% × value)</span></div>
+    </fieldset>
+    <fieldset class="grp">
+      <legend>assumptions</legend>
+      <div class="grow">
+        <label class="inl">unowned BPO ME <input id="asMe" type="number" step="1" min="0" max="10" style="width:60px"></label>
+        <label class="inl">TE <input id="asTe" type="number" step="2" min="0" max="20" style="width:60px"></label>
+      </div>
+      <div class="grow">
+        <label class="inl">decryptor <select id="asDec" style="width:210px"></select></label>
+      </div>
+      <div class="grow">
+        <label class="inl">SCC surcharge % <input id="asScc" type="number" step="0.1" min="0"></label>
+      </div>
+    </fieldset>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Profitability</h2>
+  <div class="rowline">
+    <button id="btnCompute" type="button" class="primary">Compute all products</button>
+    <button id="btnCancel" type="button" hidden>Cancel</button>
+    <span id="compStatus"></span>
+    <span class="sep"></span>
+    <button id="btnTsv" type="button">Copy table TSV</button>
+    <span id="tsvStatus" class="hint"></span>
+  </div>
+  <div id="compBar" hidden><div id="compFill"></div></div>
+  <div id="staleBanner" hidden>
+    <span>results are stale — the profile, ESI data or active character changed since the last compute.</span>
+    <button id="btnRecompute" class="mini" type="button">Recompute</button>
+  </div>
+  <div class="rowline">
+    <input id="fltText" type="text" placeholder="filter by name…" style="width:210px">
+    <label class="inl">min ROI % <input id="fltRoi" type="number" step="1" style="width:64px"></label>
+    <label class="inl">min profit/item <input id="fltProfit" type="number" step="1000" style="width:100px"></label>
+    <label class="inl">min ISK/h <input id="fltIskh" type="number" step="100000" style="width:100px"></label>
+    <label class="inl">min demand/day <input id="fltDemand" type="number" step="1" style="width:70px"></label>
+    <label class="inl"><input type="checkbox" id="fltOwned"> only owned BPs</label>
+    <label class="inl"><input type="checkbox" id="fltSkilled"> only if skilled</label>
+    <label class="inl"><input type="checkbox" id="fltPriced"> hide unpriced</label>
+    <span id="fltCount" class="hint"></span>
+  </div>
+  <div class="rowline" id="catChips"></div>
+  <div class="rowline" id="metaChips"></div>
+  <div class="tablewrap" id="twrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-key="name">Item</th>
+        <th data-key="cat">Category</th>
+        <th data-key="meta">Meta</th>
+        <th data-key="cost" class="num" title="full build cost per item: materials + job fees + shipping (both directions), invention amortized">Cost/Item</th>
+        <th data-key="rev" class="num" title="net revenue per item after broker + sales tax at Jita">Revenue/Item</th>
+        <th data-key="profit" class="num">Profit/Item</th>
+        <th data-key="margin" class="num" title="profit ÷ revenue">Margin %</th>
+        <th data-key="roi" class="num" title="profit ÷ cost">ROI %</th>
+        <th data-key="iskh" class="num" title="profit ÷ Σ build-job hours of the chosen tree">ISK/h</th>
+        <th data-key="ship" class="num" title="inbound + outbound shipping, amortized per item">Shipping/Item</th>
+        <th data-key="tax" class="num" title="sales tax per item">Sales tax/Item</th>
+        <th data-key="m3" class="num" title="packaged volume">m³</th>
+        <th data-key="iskm3" class="num" title="profit per packaged m³">ISK/m³</th>
+        <th data-key="demand" class="num" title="The Forge daily traded units, mean of the last 30 days (fetched lazily for visible rows)">Demand/Day</th>
+        <th data-key="dos" class="num" title="days of stock — Jita sell-side depth ÷ demand/day">D.O.S.</th>
+        <th data-key="bp" title="blueprint situation: owned research, invent, or buy a BPO">BP</th>
+        <th data-key="nodes" class="num" title="build/buy node counts in the chosen tree">Build/Buy</th>
+      </tr></thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+  <div id="tblNote" class="hint" style="margin-top:6px"></div>
+  <details class="notes">
+    <summary>Simplifications &amp; assumptions (v1)</summary>
+    <ul class="plain">
+      <li>Input-side broker fees are not modelled: "place buy orders" uses the raw top-buy quote with no
+          broker cut on top.</li>
+      <li>ISK/h divides profit by the SUM of the chosen tree's build-job times — no parallel job slots, no
+          critical path; invention and copy job times are excluded from that sum.</li>
+      <li>Invention consumables (datacores, decryptors, copies) are amortized into cost but NOT added to the
+          inbound shipping haul.</li>
+      <li>Demand/history is regional (The Forge) and mixes both order sides — ESI has nothing narrower.</li>
+      <li>A facility's product scope is applied per END PRODUCT: the whole tree of that product builds at the
+          facilities its scope selects; intermediates are not re-scoped mid-tree.</li>
+      <li>Owned-blueprint ME/TE applies to the end product's own blueprint; intermediate blueprints use the
+          "unowned BPO" defaults above. Owned T2 BPCs are shown in the BP column but priced via invention.</li>
+      <li>Everything is priced at 1 run; per-item shipping and job fees amortize that one run.</li>
+      <li>Structure role bonuses and rig values are hardcoded presets (marked "verify in game") — override
+          them per facility if your numbers differ.</li>
+    </ul>
+  </details>
+</section>
+
+</main>
+<textarea id="copyPad" tabindex="-1" aria-hidden="true"></textarea>
+<script src="auth.js"></script>
+<script src="structures.js"></script>
+<script src="industry-engine.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const ESI = 'https://esi.evetech.net/latest';
+const REGION = 10000002, SYSTEM = 30000142, STATION = 60003760;   // The Forge / Jita / 4-4
+const BP_SCOPE = 'esi-characters.read_blueprints.v1';
+const BOOK_CAP = 40;              // price levels kept per side per type
+const SHOW_STEP = 500;            // table rows rendered per "show more" step
+const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const fmt0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const fmtIsk = n => n == null || !isFinite(n) ? '—' : fmt.format(Math.round(n * 100) / 100);
+const fmtPct = n => n == null || !isFinite(n) ? '—' : n.toFixed(1);
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+function fmtDur(s){
+  if (s == null || !isFinite(s) || s <= 0) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.round(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function ago(ts){
+  if (!ts) return 'never';
+  const s = (Date.now() - ts) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return Math.round(s / 60) + ' min ago';
+  if (s < 172800) return (s / 3600).toFixed(1) + ' h ago';
+  return Math.round(s / 86400) + ' d ago';
+}
+
+/* ---------- ESI fetch with retry + error-limit backoff (same pattern as the Sell tool) ---------- */
+async function esiFetch(url, opts){
+  for (let attempt = 0; attempt < 3; attempt++){
+    let res;
+    try{ res = await fetch(url, opts); }
+    catch(e){ if (attempt === 2) throw e; await sleep(1500 * (attempt + 1)); continue; }
+    const remain = Number(res.headers.get('x-esi-error-limit-remain') || '100');
+    if (res.status === 420 || remain < 10){
+      const reset = Number(res.headers.get('x-esi-error-limit-reset') || '10');
+      await sleep((reset + 1) * 1000);
+      if (res.status === 420) continue;
+    }
+    if (res.ok) return res;
+    if (res.status >= 500 && attempt < 2){ await sleep(1500 * (attempt + 1)); continue; }
+    throw new Error('ESI HTTP ' + res.status);
+  }
+  throw new Error('ESI retries exhausted');
+}
+
+/* ---------- IndexedDB key-value wrapper (the Forge book is far too big for localStorage) ---------- */
+const idb = (() => {
+  let dbP = null;
+  const open = () => dbP || (dbP = new Promise((res, rej) => {
+    const rq = indexedDB.open('eveHelperIndustry', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }));
+  const op = (mode, fn) => open().then(db => new Promise((res, rej) => {
+    const tx = db.transaction('kv', mode);
+    const rq = fn(tx.objectStore('kv'));
+    tx.oncomplete = () => res(rq && rq.result);
+    tx.onerror = () => rej(tx.error);
+  }));
+  return {
+    get: k => op('readonly', st => st.get(k)),
+    set: (k, v) => op('readwrite', st => st.put(v, k)),
+    del: k => op('readwrite', st => st.delete(k)),
+  };
+})();
+
+/* ---------- static blueprint data (CI-built from CCP's SDE) ---------- */
+let D = null;                      // data/industry.json
+let productToBp = new Map();       // product tid -> {bpid, bp, activity, qtyPerRun}
+let inventedBy = new Map();        // produced (T2) bpid -> {t1bpid, runs, prob}
+let PRODUCTS = [];                 // manufacturable tids that have a market group
+let TOP_MGIDS = [];                // top-level market group ids
+const topMgCache = new Map();
+function topMg(tid){
+  if (topMgCache.has(tid)) return topMgCache.get(tid);
+  let mg = D.types[tid] ? D.types[tid][4] : 0, hop = 0, last = 0;
+  while (mg && D.marketGroups[mg] && hop++ < 50){ last = mg; mg = D.marketGroups[mg][1] || 0; }
+  topMgCache.set(tid, last || 0);
+  return last || 0;
+}
+function buildIndexes(){
+  productToBp = new Map(); inventedBy = new Map();
+  for (const bpid in D.blueprints){
+    const bp = D.blueprints[bpid];
+    for (const a of ['man', 'rea']){
+      if (!bp[a] || !bp[a].p) continue;
+      for (const pe of bp[a].p)
+        if (!productToBp.has(pe[0])) productToBp.set(pe[0], { bpid: Number(bpid), bp, activity: a, qtyPerRun: pe[1] });
+    }
+    if (bp.inv && bp.inv.p)
+      for (const e of bp.inv.p)
+        if (!inventedBy.has(e[0])) inventedBy.set(e[0], { t1bpid: Number(bpid), runs: e[1], prob: e[2] });
+  }
+  PRODUCTS = [...productToBp.keys()].filter(t => D.types[t] && D.types[t][4]);
+  PRODUCTS.sort((a, b) => D.types[a][0].localeCompare(D.types[b][0]));
+  TOP_MGIDS = Object.keys(D.marketGroups).filter(id => !D.marketGroups[id][1]).map(Number);
+}
+async function loadStatic(){
+  const el = $('sdeStatus');
+  try{
+    const res = await fetch('data/industry.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    D = await res.json();
+    buildIndexes();
+    el.textContent = `static data OK — SDE ${D.v} · ${fmt0.format(Object.keys(D.blueprints).length)} blueprints · `
+      + `${fmt0.format(Object.keys(D.types).length)} types · ${fmt0.format(PRODUCTS.length)} sellable products`;
+    el.className = 'ok';
+  }catch(e){
+    el.textContent = 'data/industry.json missing or unreadable (' + (e.message || e) + ') — it is built by CI '
+      + "from CCP's SDE at deploy time; for a local checkout run tools/build-industry-data.mjs (see data/README.md)";
+    el.className = 'err';
+  }
+}
+
+/* ---------- ESI datasets (IndexedDB-cached; one Update button refreshes all) ---------- */
+let book = null;      // {fetched, pages, typeCount, types:{tid:{s:[[p,v,minv]…asc], b:[[p,v,minv]…desc]}}}
+let adjusted = null;  // {fetched, map:{tid: adjusted_price}}
+let indices = null;   // {fetched, map:{systemId:{man,rea,inv,cop,me,te}}}
+let ownedBp = null;   // {fetched, map:{bpTid:{me,te,isBpo,count,owner}}, missing:[names], counts:{owner:n}}
+
+function bookEntry(tid){ return (book && book.types[tid]) || null; }
+function bestSell(tid){ const e = bookEntry(tid); return e && e.s.length ? e.s[0][0] : null; }
+function bestBuy(tid){ const e = bookEntry(tid); return e && e.b.length ? e.b[0][0] : null; }
+function sellDepth(tid){ const e = bookEntry(tid); return e ? e.s.reduce((s, l) => s + l[1], 0) : 0; }
+
+// Jita coverage — the exact rule the Sell tool uses
+function coversJita(o){
+  if (o.location_id === STATION) return true;
+  if (!o.is_buy_order) return false;
+  if (o.range === 'region') return true;
+  if (o.system_id === SYSTEM && o.range !== 'station') return true;
+  return false;
+}
+
+async function loadCaches(){
+  [book, adjusted, indices, ownedBp] = await Promise.all(
+    ['book', 'adjusted', 'indices', 'ownedBp'].map(k => idb.get(k).catch(() => null)));
+  book = book || null; adjusted = adjusted || null; indices = indices || null; ownedBp = ownedBp || null;
+  renderAges();
+}
+
+function renderAges(){
+  const box = $('dataAges');
+  box.textContent = '';
+  const mk = (label, ds, extra) => {
+    const span = document.createElement('span');
+    const b = document.createElement('b');
+    b.textContent = label + ': ';
+    const age = document.createElement('span');
+    age.textContent = ds ? ago(ds.fetched) : 'never';
+    if (!ds || Date.now() - ds.fetched > 86400e3) age.className = 'warn';
+    span.append(b, age);
+    if (ds && extra){ const x = document.createElement('span'); x.textContent = ' · ' + extra; span.appendChild(x); }
+    box.appendChild(span);
+  };
+  mk('Forge order book', book, book ? fmt0.format(book.typeCount) + ' types' : '');
+  mk('adjusted prices', adjusted, adjusted ? fmt0.format(Object.keys(adjusted.map).length) + ' types' : '');
+  mk('cost indices', indices, indices ? fmt0.format(Object.keys(indices.map).length) + ' systems' : '');
+  mk('owned blueprints', ownedBp,
+    ownedBp ? Object.entries(ownedBp.counts || {}).map(([o, n]) => `${o}: ${n}`).join(', ') || '0 blueprints' : '');
+  renderBpNote();
+}
+
+function renderBpNote(){
+  const el = $('bpNote');
+  el.textContent = '';
+  if (!window.EveAuth) return;
+  const missing = ownedBp && ownedBp.missing ? ownedBp.missing : [];
+  if (missing.length){
+    el.textContent = `owned blueprints skipped for ${missing.join(', ')} — add ${BP_SCOPE} to the app in the `
+      + 'EVE developer portal and log in again with that character';
+    el.className = 'hint warn';
+  }
+}
+
+let esiRunning = false;
+async function updateEsi(){
+  if (esiRunning) return;
+  esiRunning = true;
+  const btn = $('btnEsi'), status = $('esiStatus'), bar = $('fetchBar'), fill = $('fetchFill');
+  btn.disabled = true; bar.hidden = false; fill.classList.add('ind'); fill.style.width = '0%';
+  status.className = '';
+  try{
+    /* (a) the FULL Forge order book, condensed to Jita levels per type */
+    status.textContent = 'order book: page 1/?';
+    const first = await esiFetch(`${ESI}/markets/${REGION}/orders/?datasource=tranquility&order_type=all&page=1`);
+    const pages = Number(first.headers.get('x-pages') || '1');
+    const sells = new Map(), buys = new Map();   // tid -> Map(orderId -> [p,v,minv])
+    let unk = 0;
+    const ingest = orders => {
+      for (const o of orders){
+        if (!coversJita(o)) continue;
+        const side = o.is_buy_order ? buys : sells;
+        let m = side.get(o.type_id);
+        if (!m) side.set(o.type_id, m = new Map());
+        m.set(o.order_id ?? 'x' + unk++, [o.price, o.volume_remain, o.min_volume || 1]);
+      }
+    };
+    ingest(await first.json());
+    let done = 1;
+    const prog = () => {
+      status.textContent = `order book: page ${done}/${pages}`;
+      fill.classList.remove('ind');
+      fill.style.width = Math.round(done / pages * 100) + '%';
+    };
+    prog();
+    let next = 2;
+    const worker = async () => {
+      for (;;){
+        const p = next++;
+        if (p > pages) return;
+        const res = await esiFetch(`${ESI}/markets/${REGION}/orders/?datasource=tranquility&order_type=all&page=${p}`);
+        ingest(await res.json());
+        done++; prog();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, Math.max(1, pages - 1)) }, worker));
+    const types = {};
+    const tids = new Set([...sells.keys(), ...buys.keys()]);
+    for (const tid of tids){
+      const s = sells.has(tid) ? [...sells.get(tid).values()].sort((a, b) => a[0] - b[0]).slice(0, BOOK_CAP) : [];
+      const b = buys.has(tid) ? [...buys.get(tid).values()].sort((a, b2) => b2[0] - a[0]).slice(0, BOOK_CAP) : [];
+      types[tid] = { s, b };
+    }
+    book = { fetched: Date.now(), pages, typeCount: tids.size, types };
+    await idb.set('book', book);
+    renderAges();
+
+    /* (b) adjusted prices */
+    status.textContent = 'adjusted prices…'; fill.classList.add('ind');
+    const adjRaw = await (await esiFetch(`${ESI}/markets/prices/?datasource=tranquility`)).json();
+    const amap = {};
+    for (const e of adjRaw) if (e.adjusted_price != null) amap[e.type_id] = e.adjusted_price;
+    adjusted = { fetched: Date.now(), map: amap };
+    await idb.set('adjusted', adjusted);
+    renderAges();
+
+    /* (c) per-system industry cost indices */
+    status.textContent = 'system cost indices…';
+    const sysRaw = await (await esiFetch(`${ESI}/industry/systems/?datasource=tranquility`)).json();
+    const ACT = { manufacturing: 'man', reaction: 'rea', reactions: 'rea', invention: 'inv', copying: 'cop',
+                  researching_material_efficiency: 'me', researching_time_efficiency: 'te' };
+    const imap = {};
+    for (const s of sysRaw){
+      const e = {};
+      for (const ci of (s.cost_indices || [])){
+        const k = ACT[ci.activity];
+        if (k) e[k] = ci.cost_index;
+      }
+      imap[s.solar_system_id] = e;
+    }
+    indices = { fetched: Date.now(), map: imap };
+    await idb.set('indices', indices);
+    renderAges();
+
+    /* (d) owned blueprints — every logged-in character carrying the scope */
+    status.textContent = 'owned blueprints…';
+    const map = {}, counts = {}, missing = [];
+    const chars = window.EveAuth ? EveAuth.characters() : [];
+    for (const ch of chars){
+      if (!EveAuth.tokenScopes(ch.id).includes(BP_SCOPE)){ missing.push(ch.name); continue; }
+      let n = 0;
+      try{
+        const hdrs = { headers: { Authorization: 'Bearer ' + await EveAuth.token(ch.id) } };
+        for (let p = 1, tot = 1; p <= tot; p++){
+          const res = await esiFetch(`${ESI}/characters/${ch.id}/blueprints/?datasource=tranquility&page=${p}`, hdrs);
+          tot = Number(res.headers.get('x-pages') || '1');
+          for (const it of await res.json()){
+            n += it.quantity > 0 ? it.quantity : 1;
+            const cand = { me: it.material_efficiency, te: it.time_efficiency,
+                           isBpo: it.quantity === -1, count: it.quantity > 0 ? it.quantity : 1, owner: ch.name };
+            const cur = map[it.type_id];
+            if (!cur) map[it.type_id] = cand;
+            else{
+              cur.count += cand.count;
+              // keep the best-researched copy, BPOs first
+              if ((cand.isBpo && !cur.isBpo) ||
+                  (cand.isBpo === cur.isBpo && (cand.me > cur.me || (cand.me === cur.me && cand.te > cur.te)))){
+                cur.me = cand.me; cur.te = cand.te; cur.isBpo = cand.isBpo; cur.owner = cand.owner;
+              }
+            }
+          }
+        }
+        counts[ch.name] = n;
+      }catch(e){
+        console.error('blueprints fetch failed for ' + ch.name + ':', e);
+        missing.push(ch.name + ' (fetch failed)');
+      }
+    }
+    ownedBp = { fetched: Date.now(), map, counts, missing };
+    await idb.set('ownedBp', ownedBp);
+    renderAges();
+
+    status.textContent = `ESI data updated — ${fmt0.format(book.typeCount)} priced types, ${pages} book pages`;
+    status.className = 'ok';
+    markStale();
+  }catch(e){
+    status.textContent = 'update failed: ' + (e.message || e);
+    status.className = 'err';
+  }finally{
+    esiRunning = false;
+    btn.disabled = false;
+    bar.hidden = true; fill.classList.remove('ind');
+  }
+}
+$('btnEsi').addEventListener('click', updateEsi);
+
+/* ---------- profiles ---------- */
+const PROF_KEY = 'eveHelper.industryProfiles.v1';
+const uid = () => 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const STRUCT_DEFAULTS = {   // role bonuses by structure type — presets, verify in game
+  35825: { bonuses: { me: 1, te: 15, cost: 3 }, acts: ['man', 'inv', 'cop', 'me', 'te'] },   // Raitaru
+  35826: { bonuses: { me: 1, te: 20, cost: 4 }, acts: ['man', 'inv', 'cop', 'me', 'te'] },   // Azbel
+  35827: { bonuses: { me: 1, te: 30, cost: 5 }, acts: ['man', 'inv', 'cop', 'me', 'te'] },   // Sotiyo
+  35835: { bonuses: { me: 0, te: 25, cost: 0 }, acts: ['rea'] },                             // Athanor
+  35836: { bonuses: { me: 0, te: 25, cost: 0 }, acts: ['rea'] },                             // Tatara
+};
+const RIG_PRESETS = {   // Standup engineering rigs — base values, verify in game
+  t1me:   { label: 'T1 Material Efficiency (−2.0% mat)', attr: 'me', base: 2.0 },
+  t2me:   { label: 'T2 Material Efficiency (−2.4% mat)', attr: 'me', base: 2.4 },
+  t1te:   { label: 'T1 Time Efficiency (−20% time)',     attr: 'te', base: 20 },
+  t2te:   { label: 'T2 Time Efficiency (−24% time)',     attr: 'te', base: 24 },
+  t1cost: { label: 'T1 Cost Optimization (−10% job fee)', attr: 'cost', base: 10 },
+  t2cost: { label: 'T2 Cost Optimization (−12% job fee)', attr: 'cost', base: 12 },
+};
+function secMult(sec){ return sec == null || sec >= 0.45 ? 1.0 : sec > 0 ? 1.9 : 2.1; }
+function secLabel(sec){ return sec == null ? 'HS' : sec >= 0.45 ? 'HS' : sec > 0 ? 'LS' : 'NS/WH'; }
+
+function defaultProfile(name){
+  return {
+    id: uid(), name,
+    facilities: [],
+    market: { auto: true, inputSide: 'sell', outputSide: 'sellOrder', brokerPct: 3, taxPct: 7.5 },
+    shipping: { base: 10000000, perM3: 653.4, collateralPct: 1, roundUp: true, inbound: true, outbound: true },
+    assumptions: { ownedBpoMe: 10, ownedBpoTe: 20, decryptor: 'auto', sccPct: 4 },
+    forceBuy: [], forceBuild: [],
+  };
+}
+let profStore = { active: null, profiles: [] };
+function loadProfiles(){
+  try{ const s = JSON.parse(localStorage.getItem(PROF_KEY) || 'null'); if (s && Array.isArray(s.profiles)) profStore = s; }
+  catch(_e){}
+  if (!profStore.profiles.length) profStore.profiles.push(defaultProfile('Default'));
+  if (!profStore.profiles.some(p => p.id === profStore.active)) profStore.active = profStore.profiles[0].id;
+}
+function saveProfiles(){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} markStale(); }
+const activeProfile = () => profStore.profiles.find(p => p.id === profStore.active);
+
+function renderProfBar(){
+  const sel = $('profSel');
+  sel.textContent = '';
+  for (const p of profStore.profiles){
+    const o = document.createElement('option');
+    o.value = p.id; o.textContent = p.name;
+    sel.appendChild(o);
+  }
+  sel.value = profStore.active;
+  $('btnProfDel').disabled = profStore.profiles.length <= 1;
+}
+$('profSel').addEventListener('change', () => {
+  profStore.active = $('profSel').value;
+  saveProfiles(); renderProfileEditor(); autoFees();
+});
+$('btnProfNew').addEventListener('click', () => {
+  const name = (window.prompt('Profile name:', 'New profile') || '').trim();
+  if (!name) return;
+  const p = defaultProfile(name);
+  profStore.profiles.push(p); profStore.active = p.id;
+  saveProfiles(); renderProfBar(); renderProfileEditor(); autoFees();
+});
+$('btnProfRen').addEventListener('click', () => {
+  const p = activeProfile();
+  const name = (window.prompt('Rename profile:', p.name) || '').trim();
+  if (!name) return;
+  p.name = name; saveProfiles(); renderProfBar();
+});
+$('btnProfDup').addEventListener('click', () => {
+  const src = activeProfile();
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = uid(); copy.name = src.name + ' (copy)';
+  copy.facilities.forEach(f => { f.uid = uid(); });
+  profStore.profiles.push(copy); profStore.active = copy.id;
+  saveProfiles(); renderProfBar(); renderProfileEditor(); autoFees();
+});
+$('btnProfDel').addEventListener('click', () => {
+  if (profStore.profiles.length <= 1) return;
+  if (!window.confirm(`Delete profile "${activeProfile().name}"?`)) return;
+  profStore.profiles = profStore.profiles.filter(p => p.id !== profStore.active);
+  profStore.active = profStore.profiles[0].id;
+  saveProfiles(); renderProfBar(); renderProfileEditor(); autoFees();
+});
+
+/* ----- facilities ----- */
+const ACT_LABELS = { man: 'Manufacturing', rea: 'Reactions', inv: 'Invention', cop: 'Copying', me: 'ME research', te: 'TE research' };
+function scopeSummary(ids){
+  if (!ids || !ids.length) return 'everything';
+  return ids.map(id => (D && D.marketGroups[id] && D.marketGroups[id][0]) || id).join(', ');
+}
+function scopePicker(ids, onChange){
+  const det = document.createElement('details');
+  det.className = 'scopebox';
+  const sum = document.createElement('summary');
+  const refresh = () => { sum.textContent = 'products: ' + scopeSummary(ids) + ' ▾'; };
+  refresh();
+  const pop = document.createElement('div');
+  pop.className = 'pop';
+  for (const mgid of TOP_MGIDS){
+    const lab = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = ids.includes(mgid);
+    cb.addEventListener('change', () => {
+      const i = ids.indexOf(mgid);
+      if (cb.checked && i < 0) ids.push(mgid);
+      if (!cb.checked && i >= 0) ids.splice(i, 1);
+      refresh(); onChange();
+    });
+    lab.append(cb, document.createTextNode(' ' + D.marketGroups[mgid][0]));
+    pop.appendChild(lab);
+  }
+  det.append(sum, pop);
+  return det;
+}
+
+function facilityIdxText(f){
+  const acts = f.activities || [];
+  const m = indices && f.system != null ? indices.map[f.system] : null;
+  const bits = acts.map(a => a + ' ' + (f.sciOverride != null ? (+f.sciOverride).toFixed(2) + '%*'
+    : m && m[a] != null ? (m[a] * 100).toFixed(2) + '%' : '—'));
+  return 'cost index: ' + (bits.join(' · ') || '—');
+}
+
+function renderFacilities(){
+  const p = activeProfile();
+  const box = $('facList');
+  box.textContent = '';
+  if (!p.facilities.length){
+    const d = document.createElement('div');
+    d.className = 'hint'; d.style.marginTop = '10px';
+    d.textContent = 'no facilities yet — add your home structure(s) or an NPC station; without a facility nothing can be computed';
+    box.appendChild(d);
+    return;
+  }
+  p.facilities.forEach((f, fi) => {
+    const card = document.createElement('div');
+    card.className = 'fac';
+
+    const head = document.createElement('div');
+    head.className = 'fhead';
+    const up = document.createElement('button'); up.className = 'mini'; up.textContent = '↑'; up.disabled = fi === 0;
+    up.title = 'move up — earlier facilities win ties';
+    up.addEventListener('click', () => { p.facilities.splice(fi - 1, 0, p.facilities.splice(fi, 1)[0]); saveProfiles(); renderFacilities(); });
+    const down = document.createElement('button'); down.className = 'mini'; down.textContent = '↓'; down.disabled = fi === p.facilities.length - 1;
+    down.addEventListener('click', () => { p.facilities.splice(fi + 1, 0, p.facilities.splice(fi, 1)[0]); saveProfiles(); renderFacilities(); });
+    const label = document.createElement('input');
+    label.type = 'text'; label.className = 'flabel'; label.value = f.label;
+    label.addEventListener('change', () => { f.label = label.value.trim() || f.label; saveProfiles(); });
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = [f.systemName || (f.npc ? null : '?'),
+      f.security != null ? 'sec ' + f.security.toFixed(2) + ' (' + secLabel(f.security) + ')' : null,
+      f.typeName].filter(Boolean).join(' · ');
+    const x = document.createElement('span');
+    x.className = 'x'; x.textContent = '×'; x.title = 'remove facility';
+    x.addEventListener('click', () => { p.facilities.splice(fi, 1); saveProfiles(); renderFacilities(); });
+    head.append(up, down, label, sub, x);
+    card.appendChild(head);
+
+    // NPC stations need a system for the cost index — free-text, resolved via ESI
+    if (f.npc){
+      const line = document.createElement('div');
+      line.className = 'rowline';
+      const lab = document.createElement('span'); lab.className = 'hint'; lab.textContent = 'system';
+      const sysIn = document.createElement('input');
+      sysIn.type = 'text'; sysIn.style.width = '130px';
+      sysIn.value = f.systemName || '';
+      sysIn.placeholder = 'e.g. Jita';
+      const msg = document.createElement('span'); msg.className = 'hint';
+      sysIn.addEventListener('change', async () => {
+        const q = sysIn.value.trim();
+        if (!q){ f.system = null; f.systemName = null; saveProfiles(); renderFacilities(); return; }
+        msg.textContent = 'resolving…';
+        try{
+          const res = await esiFetch(`${ESI}/universe/ids/?datasource=tranquility`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([q]),
+          });
+          const sys = ((await res.json()).systems || [])[0];
+          if (!sys) throw new Error('no such system');
+          f.system = sys.id; f.systemName = sys.name;
+          try{
+            const si = await (await esiFetch(`${ESI}/universe/systems/${sys.id}/?datasource=tranquility`)).json();
+            if (typeof si.security_status === 'number') f.security = si.security_status;
+          }catch(_e){}
+          saveProfiles(); renderFacilities();
+        }catch(e){ msg.textContent = 'could not resolve: ' + (e.message || e); msg.className = 'hint err'; }
+      });
+      line.append(lab, sysIn, msg);
+      card.appendChild(line);
+    }
+
+    const acts = document.createElement('div');
+    acts.className = 'acts rowline';
+    for (const a of ['man', 'rea', 'inv', 'cop', 'me', 'te']){
+      const lab = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = (f.activities || []).includes(a);
+      cb.addEventListener('change', () => {
+        f.activities = ['man', 'rea', 'inv', 'cop', 'me', 'te'].filter(k =>
+          k === a ? cb.checked : (f.activities || []).includes(k));
+        saveProfiles();
+      });
+      lab.append(cb, document.createTextNode(ACT_LABELS[a]));
+      acts.appendChild(lab);
+    }
+    acts.appendChild(scopePicker(f.scope = f.scope || [], () => saveProfiles()));
+    card.appendChild(acts);
+
+    const kvs = document.createElement('div');
+    kvs.className = 'rowline';
+    const mkNum = (labelTxt, get, set, title, step) => {
+      const wrap = document.createElement('span');
+      wrap.className = 'kv';
+      if (title) wrap.title = title;
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = step || '0.1';
+      inp.value = get() == null ? '' : get();
+      inp.addEventListener('change', () => { set(inp.value === '' ? null : Number(inp.value)); saveProfiles(); });
+      wrap.append(document.createTextNode(labelTxt + ' '), inp);
+      return wrap;
+    };
+    const bonusTitle = 'structure role bonus preset from the detected type — VERIFY IN GAME, then override here if needed';
+    kvs.append(
+      mkNum('ME bonus %', () => f.bonuses.me, v => { f.bonuses.me = v || 0; }, bonusTitle),
+      mkNum('TE bonus %', () => f.bonuses.te, v => { f.bonuses.te = v || 0; }, bonusTitle),
+      mkNum('cost bonus %', () => f.bonuses.cost, v => { f.bonuses.cost = v || 0; }, bonusTitle),
+      mkNum('facility tax %', () => f.tax, v => { f.tax = v || 0; },
+        f.npc ? 'NPC station job fee (0.25% by default)' : 'owner-set job tax — ESI does not publish it; read it off the in-game industry window', '0.01'),
+    );
+    const idx = document.createElement('span');
+    idx.className = 'kv';
+    idx.textContent = facilityIdxText(f);
+    idx.title = 'system cost indices from the ESI cache (Update ESI data refreshes them)';
+    const ovr = mkNum('override %', () => f.sciOverride, v => { f.sciOverride = v; renderFacilities(); },
+      'manual cost-index override in % — applies to every activity at this facility; clear to go back to ESI values', '0.01');
+    kvs.append(idx, ovr);
+    card.appendChild(kvs);
+
+    if (!f.npc){
+      const rigBox = document.createElement('div');
+      rigBox.style.marginTop = '6px';
+      const cap = document.createElement('span');
+      cap.className = 'hint';
+      cap.title = 'rig bonus × security multiplier (HS ×1.0, LS ×1.9, NS/WH ×2.1) — engineering-rig values; '
+        + 'reaction-rig multipliers may differ, VERIFY IN GAME';
+      cap.textContent = `rigs (sec multiplier ×${secMult(f.security)})`;
+      rigBox.appendChild(cap);
+      (f.rigs = f.rigs || []).forEach((r, ri) => {
+        const row = document.createElement('div');
+        row.className = 'rig';
+        const sel = document.createElement('select');
+        for (const [k, pr] of Object.entries(RIG_PRESETS)){
+          const o = document.createElement('option');
+          o.value = k; o.textContent = pr.label;
+          sel.appendChild(o);
+        }
+        sel.value = r.preset;
+        sel.addEventListener('change', () => { r.preset = sel.value; saveProfiles(); });
+        const eff = document.createElement('span');
+        eff.className = 'hint';
+        const pr = RIG_PRESETS[r.preset];
+        eff.textContent = `→ ${(pr.base * secMult(f.security)).toFixed(2)}% ${pr.attr}`;
+        const rx = document.createElement('span');
+        rx.className = 'x'; rx.textContent = '×'; rx.title = 'remove rig';
+        rx.addEventListener('click', () => { f.rigs.splice(ri, 1); saveProfiles(); renderFacilities(); });
+        row.append(sel, eff, scopePicker(r.scope = r.scope || [], () => saveProfiles()), rx);
+        rigBox.appendChild(row);
+      });
+      const addRig = document.createElement('button');
+      addRig.className = 'mini'; addRig.type = 'button'; addRig.textContent = '+ rig';
+      addRig.style.marginTop = '4px';
+      addRig.addEventListener('click', () => { f.rigs.push({ preset: 't1me', scope: [] }); saveProfiles(); renderFacilities(); });
+      rigBox.appendChild(addRig);
+      card.appendChild(rigBox);
+    }
+
+    box.appendChild(card);
+  });
+}
+
+$('btnAddNpc').addEventListener('click', () => {
+  const p = activeProfile();
+  p.facilities.push({
+    uid: uid(), npc: true, id: null, label: 'NPC station', typeId: null, typeName: 'NPC station',
+    system: null, systemName: null, security: null,
+    activities: ['man', 'inv', 'cop', 'me', 'te'], scope: [],
+    bonuses: { me: 0, te: 0, cost: 0 }, tax: 0.25, sciOverride: null, rigs: [],
+  });
+  saveProfiles(); renderFacilities();
+});
+$('btnAddStruct').addEventListener('click', async () => {
+  const s = await EveStructures.pick({ title: 'Industry facility', manage: true });
+  if (!s) return;
+  const p = activeProfile();
+  const def = STRUCT_DEFAULTS[s.typeId] || { bonuses: { me: 0, te: 0, cost: 0 }, acts: ['man', 'inv', 'cop', 'me', 'te'] };
+  p.facilities.push({
+    uid: uid(), npc: false, id: s.id, label: s.name, typeId: s.typeId, typeName: s.typeName,
+    system: s.systemId, systemName: s.systemName, security: s.security,
+    activities: def.acts.slice(), scope: [],
+    bonuses: { ...def.bonuses }, tax: 0, sciOverride: null, rigs: [],
+  });
+  saveProfiles(); renderFacilities();
+});
+
+/* ----- market / shipping / assumptions binding ----- */
+function fillDecOptions(){
+  const sel = $('asDec');
+  sel.textContent = '';
+  const add = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); };
+  add('auto', 'auto — cheapest per unit (compares all)');
+  add('none', 'no decryptor');
+  for (const n of Object.keys(IndustryEngine.DECRYPTORS)) add(n, n);
+}
+function renderSettings(){
+  const p = activeProfile();
+  $('inSell').checked = p.market.inputSide === 'sell';
+  $('inBuy').checked = p.market.inputSide === 'buy';
+  $('outOrder').checked = p.market.outputSide === 'sellOrder';
+  $('outInstant').checked = p.market.outputSide === 'instant';
+  $('feeAuto').checked = !!p.market.auto;
+  $('brokerPct').value = p.market.brokerPct;
+  $('taxPct').value = p.market.taxPct;
+  $('brokerPct').disabled = $('taxPct').disabled = !!p.market.auto;
+  $('shipBase').value = p.shipping.base;
+  $('shipM3').value = p.shipping.perM3;
+  $('shipColl').value = p.shipping.collateralPct;
+  $('shipRound').checked = !!p.shipping.roundUp;
+  $('shipIn').checked = !!p.shipping.inbound;
+  $('shipOut').checked = !!p.shipping.outbound;
+  $('asMe').value = p.assumptions.ownedBpoMe;
+  $('asTe').value = p.assumptions.ownedBpoTe;
+  $('asDec').value = p.assumptions.decryptor;
+  $('asScc').value = p.assumptions.sccPct;
+}
+function bindSettings(){
+  const num = el => el.value === '' ? 0 : Number(el.value);
+  $('inSell').addEventListener('change', () => { activeProfile().market.inputSide = 'sell'; saveProfiles(); });
+  $('inBuy').addEventListener('change', () => { activeProfile().market.inputSide = 'buy'; saveProfiles(); });
+  $('outOrder').addEventListener('change', () => { activeProfile().market.outputSide = 'sellOrder'; saveProfiles(); });
+  $('outInstant').addEventListener('change', () => { activeProfile().market.outputSide = 'instant'; saveProfiles(); });
+  $('feeAuto').addEventListener('change', () => {
+    activeProfile().market.auto = $('feeAuto').checked;
+    $('brokerPct').disabled = $('taxPct').disabled = $('feeAuto').checked;
+    saveProfiles(); autoFees();
+  });
+  $('brokerPct').addEventListener('change', () => { activeProfile().market.brokerPct = num($('brokerPct')); saveProfiles(); });
+  $('taxPct').addEventListener('change', () => { activeProfile().market.taxPct = num($('taxPct')); saveProfiles(); });
+  $('shipBase').addEventListener('change', () => { activeProfile().shipping.base = num($('shipBase')); saveProfiles(); });
+  $('shipM3').addEventListener('change', () => { activeProfile().shipping.perM3 = num($('shipM3')); saveProfiles(); });
+  $('shipColl').addEventListener('change', () => { activeProfile().shipping.collateralPct = num($('shipColl')); saveProfiles(); });
+  $('shipRound').addEventListener('change', () => { activeProfile().shipping.roundUp = $('shipRound').checked; saveProfiles(); });
+  $('shipIn').addEventListener('change', () => { activeProfile().shipping.inbound = $('shipIn').checked; saveProfiles(); });
+  $('shipOut').addEventListener('change', () => { activeProfile().shipping.outbound = $('shipOut').checked; saveProfiles(); });
+  $('asMe').addEventListener('change', () => { activeProfile().assumptions.ownedBpoMe = num($('asMe')); saveProfiles(); });
+  $('asTe').addEventListener('change', () => { activeProfile().assumptions.ownedBpoTe = num($('asTe')); saveProfiles(); });
+  $('asDec').addEventListener('change', () => { activeProfile().assumptions.decryptor = $('asDec').value; saveProfiles(); });
+  $('asScc').addEventListener('change', () => { activeProfile().assumptions.sccPct = num($('asScc')); saveProfiles(); });
+}
+function renderProfileEditor(){ renderFacilities(); renderSettings(); }
+
+/* ----- broker/tax auto-fill from the ACTIVE character (same formulas as the Sell tool) ----- */
+const OWNERS_KEY = 'eveHelper.stationOwners.v1';
+async function stationOwner(stationId){
+  let cache;
+  try{ cache = JSON.parse(localStorage.getItem(OWNERS_KEY) || '{}'); }catch(_e){ cache = {}; }
+  if (cache[stationId]) return cache[stationId];
+  const get = async url => {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(url.split('/latest/')[1] + ': HTTP ' + r.status);
+    return r.json();
+  };
+  const st = await get(`${ESI}/universe/stations/${stationId}/?datasource=tranquility`);
+  const corp = await get(`${ESI}/corporations/${st.owner}/?datasource=tranquility`);
+  const own = { corp: st.owner, corpName: corp.name || null, faction: corp.faction_id || null };
+  cache[stationId] = own;
+  try{ localStorage.setItem(OWNERS_KEY, JSON.stringify(cache)); }catch(_e){}
+  return own;
+}
+const eff = (base, sk) => base
+  ? base + (10 - base) * 0.04 * (base > 0 ? (sk.connections || 0) : (sk.diplomacy || 0))
+  : 0;
+let feeSeq = 0;
+async function autoFees(){
+  const my = ++feeSeq;
+  const p = activeProfile();
+  const note = $('feeNote');
+  if (!p.market.auto){ note.textContent = 'manual fees'; return; }
+  if (!window.EveAuth || !EveAuth.isLoggedIn()){
+    note.textContent = 'log in with EVE to auto-fill Jita fees from your skills and standings';
+    return;
+  }
+  try{
+    let sk = EveAuth.skills();
+    if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+    let st = EveAuth.standings();
+    if (!st){ try{ st = await EveAuth.fetchStandings(); }catch(_e){ st = null; } }
+    let own = null;
+    try{ own = await stationOwner(STATION); }catch(_e){}
+    if (my !== feeSeq) return;
+    const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
+    const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
+    const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
+    const tax = Math.round(7.5 * (1 - 0.11 * sk.accounting) * 100) / 100;
+    const broker = Math.round(Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff) * 100) / 100;
+    const changed = p.market.brokerPct !== broker || p.market.taxPct !== tax;
+    p.market.brokerPct = broker;
+    p.market.taxPct = tax;
+    $('brokerPct').value = broker;
+    $('taxPct').value = tax;
+    if (changed){
+      try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){}
+      markStale();
+    }
+    note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · `
+      + `broker ${broker.toFixed(2)} (Broker ${sk.brokerRelations}) at Jita 4-4`;
+  }catch(e){ note.textContent = 'fee auto-fill failed: ' + (e.message || e); }
+}
+
+/* ---------- engine wiring ---------- */
+const engineCache = new Map();
+let ovrIdx = {};                    // 'ovr:<uid>' -> cost-index fraction
+function clearEngines(){ engineCache.clear(); }
+function activeAllSkills(){ return window.EveAuth && EveAuth.allSkills ? EveAuth.allSkills() : null; }
+
+function facilityToEngine(f){
+  const rigs = (f.rigs || []).map(r => {
+    const pr = RIG_PRESETS[r.preset] || RIG_PRESETS.t1me;
+    const e = { match: (r.scope && r.scope.length ? r.scope : TOP_MGIDS).slice(), me: 0, te: 0, cost: 0 };
+    e[pr.attr] = pr.base * secMult(f.security);
+    return e;
+  });
+  let system = f.system;
+  if (f.sciOverride != null){
+    system = 'ovr:' + f.uid;
+    ovrIdx[system] = f.sciOverride / 100;
+  }
+  return {
+    id: f.uid, label: f.label, system,
+    tax: f.tax || 0,
+    activities: (f.activities || []).slice(),
+    bonuses: { me: f.bonuses.me || 0, te: f.bonuses.te || 0, cost: f.bonuses.cost || 0 },
+    rigs,
+  };
+}
+function engineProfile(fs){
+  const p = activeProfile();
+  const dec = p.assumptions.decryptor;
+  return {
+    facilities: fs.map(facilityToEngine),
+    market: {
+      inputSide: p.market.inputSide, outputSide: p.market.outputSide,
+      brokerPct: p.market.brokerPct || 0, taxPct: p.market.taxPct || 0,
+    },
+    shipping: {
+      base: p.shipping.base || 0, perM3: p.shipping.perM3 || 0,
+      collateralPct: (p.shipping.collateralPct || 0) / 100,
+      roundUpToMillion: !!p.shipping.roundUp,
+      applyInbound: !!p.shipping.inbound, applyOutbound: !!p.shipping.outbound,
+    },
+    assumptions: {
+      ownedBpoMe: p.assumptions.ownedBpoMe, ownedBpoTe: p.assumptions.ownedBpoTe,
+      sccPct: p.assumptions.sccPct,
+      decryptor: dec === 'auto' ? 'auto' : dec === 'none' ? null : dec,
+    },
+  };
+}
+function engineFor(tid){
+  const p = activeProfile();
+  const top = topMg(tid);
+  const fs = p.facilities.filter(f => !f.scope || !f.scope.length || f.scope.includes(top));
+  const key = fs.map(f => f.uid).join(',');
+  let e = engineCache.get(key);
+  if (!e){
+    ovrIdx = ovrIdx || {};
+    e = IndustryEngine.create({
+      data: D,
+      prices: t => {
+        const s = bestSell(t), b = bestBuy(t);
+        return s == null && b == null ? null : { sell: s, buy: b };
+      },
+      adjusted: t => (adjusted && adjusted.map[t]) || 0,
+      indices: (sys, act) => {
+        if (typeof sys === 'string' && sys.startsWith('ovr:')) return ovrIdx[sys] || 0;
+        const m = indices && indices.map[sys];
+        return (m && m[act]) || 0;
+      },
+      profile: engineProfile(fs),
+      skills: { byId: activeAllSkills() || {} },
+      params: {},
+    });
+    engineCache.set(key, e);
+  }
+  return e;
+}
+function evalOpts(tid){
+  const p = activeProfile();
+  const o = { runs: 1, forceBuy: new Set(p.forceBuy || []), forceBuild: new Set(p.forceBuild || []) };
+  const pe = productToBp.get(tid);
+  const own = pe && ownedBp && ownedBp.map && ownedBp.map[pe.bpid];
+  if (own){
+    if (own.isBpo){ o.meOverride = own.me; o.teOverride = own.te; o.noInvention = true; }
+    else if (!inventedBy.has(pe.bpid)){ o.meOverride = own.me; o.teOverride = own.te; }
+  }
+  return o;
+}
+function evalOne(tid){ return engineFor(tid).evaluate(tid, evalOpts(tid)); }
+
+/* ---------- compute all products ---------- */
+const state = {
+  rows: [],                 // computed row objects
+  sortKey: 'iskh', sortDir: -1,
+  filters: { text: '', cats: [], metas: [], minRoi: '', minProfit: '', minIskh: '', minDemand: '',
+             owned: false, skilled: false, priced: false },
+  showCap: SHOW_STEP,
+};
+const UI_KEY = 'eveHelper.industryUi.v1';
+function loadUi(){
+  try{
+    const s = JSON.parse(localStorage.getItem(UI_KEY) || 'null');
+    if (s){ Object.assign(state.filters, s.filters || {}); state.sortKey = s.sortKey || state.sortKey; state.sortDir = s.sortDir || state.sortDir; }
+  }catch(_e){}
+  $('fltText').value = state.filters.text;
+  $('fltRoi').value = state.filters.minRoi;
+  $('fltProfit').value = state.filters.minProfit;
+  $('fltIskh').value = state.filters.minIskh;
+  $('fltDemand').value = state.filters.minDemand;
+  $('fltOwned').checked = state.filters.owned;
+  $('fltSkilled').checked = state.filters.skilled;
+  $('fltPriced').checked = state.filters.priced;
+}
+function saveUi(){
+  try{ localStorage.setItem(UI_KEY, JSON.stringify({ filters: state.filters, sortKey: state.sortKey, sortDir: state.sortDir })); }
+  catch(_e){}
+}
+
+const META_NAMES = { 1: 'T1', 2: 'T2', 14: 'T3', 4: 'Faction', 3: 'Storyline' };
+const metaOf = tid => META_NAMES[D.types[tid][5]] || (D.types[tid][5] ? 'Other' : 'T1');
+
+function bpDescr(tid){
+  const pe = productToBp.get(tid);
+  if (!pe) return { kind: 'none', label: '—' };
+  const own = ownedBp && ownedBp.map && ownedBp.map[pe.bpid];
+  if (own && own.isBpo) return { kind: 'bpo', label: `ME${own.me}/TE${own.te}`, own };
+  if (own) return { kind: 'bpc', label: `BPC ME${own.me}/TE${own.te}`, own };
+  if (inventedBy.has(pe.bpid)) return { kind: 'invent', label: 'invent' };
+  return { kind: 'buy', label: 'buy BPO' };
+}
+function skillReqs(tid){
+  const pe = productToBp.get(tid);
+  if (!pe) return [];
+  const reqs = [...(pe.bp[pe.activity].s || [])];
+  const bpi = bpDescr(tid);
+  if (bpi.kind === 'invent'){
+    const src = inventedBy.get(pe.bpid);
+    const t1 = D.blueprints[src.t1bpid];
+    if (t1 && t1.inv && t1.inv.s) reqs.push(...t1.inv.s);
+  }
+  return reqs;
+}
+function isSkilled(tid, all){
+  for (const [sid, lvl] of skillReqs(tid)) if ((all[sid] || 0) < lvl) return false;
+  return true;
+}
+function countNodes(node, acc, seen){
+  if (seen.has(node)) return;
+  seen.add(node);
+  if (node.decision === 'buy'){ acc.buy++; return; }
+  acc.build++;
+  for (const c of node.children || []) countNodes(c, acc, seen);
+}
+
+function rowFrom(tid, res, err){
+  const t = D.types[tid];
+  const m3 = t[2] != null ? t[2] : t[1];
+  const catId = topMg(tid);
+  const base = {
+    tid, name: t[0],
+    cat: (D.marketGroups[catId] && D.marketGroups[catId][0]) || '—', catId,
+    meta: metaOf(tid),
+    m3, demand: undefined, dos: undefined,
+    bp: bpDescr(tid), owned: false, skillOk: true, err: err ? (err.message || String(err)) : null,
+  };
+  base.owned = base.bp.kind === 'bpo' || base.bp.kind === 'bpc';
+  const all = activeAllSkills();
+  base.skillOk = all ? isSkilled(tid, all) : null;
+  if (err || !res){
+    Object.assign(base, { cost: null, rev: null, profit: null, margin: null, roi: null, iskh: null,
+      ship: null, tax: null, iskm3: null, buildN: 0, buyN: 0, unpriced: true, produced: 1 });
+    return base;
+  }
+  const tt = res.totals;
+  const acc = { build: 0, buy: 0 };
+  countNodes(res.tree, acc, new Set());
+  const cost = isFinite(tt.costPerItem) ? tt.costPerItem : null;
+  base.cost = cost;
+  base.rev = tt.revenuePerItem;
+  base.profit = cost != null && tt.profitPerItem != null && isFinite(tt.profitPerItem) ? tt.profitPerItem : null;
+  base.margin = base.profit != null ? tt.marginPct : null;
+  base.roi = base.profit != null ? tt.roiPct : null;
+  base.iskh = base.profit != null && tt.iskPerHour != null && isFinite(tt.iskPerHour) ? tt.iskPerHour : null;
+  base.ship = tt.shippingInPerItem + tt.shippingOutPerItem;
+  base.tax = tt.salesTax / res.produced;
+  base.iskm3 = base.profit != null && m3 > 0 ? base.profit / m3 : null;
+  base.buildN = acc.build; base.buyN = acc.buy;
+  base.produced = res.produced;
+  base.unpriced = base.profit == null;
+  return base;
+}
+
+let computeToken = 0;
+let lastSig = null;
+function curSig(){
+  return JSON.stringify({
+    p: activeProfile(), v: D && D.v,
+    b: book && book.fetched, a: adjusted && adjusted.fetched,
+    i: indices && indices.fetched, o: ownedBp && ownedBp.fetched,
+    c: window.EveAuth && EveAuth.active ? EveAuth.active() : null,
+  });
+}
+function markStale(){
+  if (!state.rows.length) return;
+  $('staleBanner').hidden = curSig() === lastSig;
+}
+
+async function computeAll(){
+  const status = $('compStatus');
+  if (!D){ status.textContent = 'static data missing'; status.className = 'err'; return; }
+  if (!book){ status.textContent = 'no order book — Update ESI data first'; status.className = 'err'; return; }
+  if (!activeProfile().facilities.length){
+    status.textContent = 'add at least one facility to the profile first'; status.className = 'err'; return;
+  }
+  const my = ++computeToken;
+  $('btnCompute').disabled = true; $('btnCancel').hidden = false;
+  $('compBar').hidden = false; $('compFill').style.width = '0%';
+  status.className = '';
+  clearEngines(); ovrIdx = {};
+  const sig = curSig();
+  const rows = [];
+  const CHUNK = 250;
+  for (let i = 0; i < PRODUCTS.length; i += CHUNK){
+    if (my !== computeToken) return;   // cancelled / superseded
+    for (const tid of PRODUCTS.slice(i, i + CHUNK)){
+      let res = null, err = null;
+      try{ res = evalOne(tid); }catch(e){ err = e; }
+      rows.push(rowFrom(tid, res, err));
+    }
+    const doneN = Math.min(i + CHUNK, PRODUCTS.length);
+    status.textContent = `computing ${doneN}/${PRODUCTS.length}…`;
+    $('compFill').style.width = Math.round(doneN / PRODUCTS.length * 100) + '%';
+    await sleep(0);
+  }
+  if (my !== computeToken) return;
+  // demand cache carries over between computes
+  for (const r of rows){
+    const h = histMem.get(r.tid);
+    if (h && h !== 'loading'){ r.demand = h.demand; r.dos = dosOf(r.tid, h.demand); }
+  }
+  state.rows = rows;
+  lastSig = sig;
+  $('staleBanner').hidden = true;
+  $('btnCompute').disabled = false; $('btnCancel').hidden = true; $('compBar').hidden = true;
+  const priced = rows.filter(r => !r.unpriced).length;
+  status.textContent = `computed ${rows.length} products (${priced} priced) — ${new Date().toLocaleTimeString()}`;
+  status.className = 'ok';
+  state.showCap = SHOW_STEP;
+  render();
+}
+$('btnCompute').addEventListener('click', computeAll);
+$('btnRecompute').addEventListener('click', computeAll);
+$('btnCancel').addEventListener('click', () => {
+  computeToken++;
+  $('btnCompute').disabled = false; $('btnCancel').hidden = true; $('compBar').hidden = true;
+  $('compStatus').textContent = 'cancelled';
+});
+
+function recomputeOne(tid){
+  clearEngines(); ovrIdx = {};
+  const i = state.rows.findIndex(r => r.tid === tid);
+  if (i < 0) return;
+  let res = null, err = null;
+  try{ res = evalOne(tid); }catch(e){ err = e; }
+  const row = rowFrom(tid, res, err);
+  const h = histMem.get(tid);
+  if (h && h !== 'loading'){ row.demand = h.demand; row.dos = dosOf(tid, h.demand); }
+  state.rows[i] = row;
+  render();
+}
+
+/* ---------- demand / D.O.S. — lazy per-visible-row history ---------- */
+const histMem = new Map();     // tid -> {demand} | 'loading'
+const histQueue = [];
+let histActive = 0;
+function dosOf(tid, demand){
+  if (demand == null) return null;
+  const depth = sellDepth(tid);
+  return demand > 0 ? depth / demand : (depth > 0 ? Infinity : null);
+}
+async function needHist(tid){
+  if (histMem.has(tid)) return;
+  histMem.set(tid, 'loading');
+  try{
+    const c = await idb.get('hist:' + tid);
+    if (c && Date.now() - c.fetched < 86400e3){
+      histMem.set(tid, { demand: c.demand });
+      applyHist(tid, c.demand);
+      return;
+    }
+  }catch(_e){}
+  histQueue.push(tid);
+  pumpHist();
+}
+function pumpHist(){
+  while (histActive < 3 && histQueue.length){
+    histActive++;
+    histWorker(histQueue.shift());
+  }
+}
+async function histWorker(tid){
+  let demand = null;
+  try{
+    const res = await esiFetch(`${ESI}/markets/${REGION}/history/?datasource=tranquility&type_id=${tid}`);
+    const days = await res.json();
+    const cutoff = Date.now() - 30 * 86400e3;
+    let sum = 0;
+    for (const d of days) if (Date.parse(d.date) >= cutoff) sum += d.volume;
+    demand = sum / 30;
+    await idb.set('hist:' + tid, { fetched: Date.now(), demand });
+  }catch(_e){ /* leave null — shown as — */ }
+  histMem.set(tid, { demand });
+  applyHist(tid, demand);
+  histActive--;
+  pumpHist();
+}
+function applyHist(tid, demand){
+  const r = state.rows.find(x => x.tid === tid);
+  if (r){ r.demand = demand; r.dos = dosOf(tid, demand); }
+  const cells = renderedHist.get(tid);
+  if (cells){
+    cells.demand.textContent = demand == null ? '—' : fmt.format(Math.round(demand * 10) / 10);
+    const dos = r ? r.dos : null;
+    cells.dos.textContent = dos == null ? '—' : dos === Infinity ? '∞' : fmt.format(Math.round(dos * 10) / 10);
+  }
+}
+const renderedHist = new Map();  // tid -> {demand: td, dos: td}
+const io = new IntersectionObserver(entries => {
+  for (const en of entries)
+    if (en.isIntersecting && en.target.dataset.tid) needHist(Number(en.target.dataset.tid));
+}, { root: $('twrap'), rootMargin: '250px' });
+
+/* ---------- table ---------- */
+function rowFilter(r){
+  const f = state.filters;
+  if (f.text && !r.name.toLowerCase().includes(f.text.toLowerCase())) return false;
+  if (f.cats.length && !f.cats.includes(r.catId)) return false;
+  if (f.metas.length && !f.metas.includes(r.meta)) return false;
+  if (f.minRoi !== '' && f.minRoi != null && !(r.roi >= Number(f.minRoi))) return false;
+  if (f.minProfit !== '' && f.minProfit != null && !(r.profit >= Number(f.minProfit))) return false;
+  if (f.minIskh !== '' && f.minIskh != null && !(r.iskh >= Number(f.minIskh))) return false;
+  if (f.minDemand !== '' && f.minDemand != null && r.demand != null && !(r.demand >= Number(f.minDemand))) return false;
+  if (f.owned && !r.owned) return false;
+  if (f.skilled && r.skillOk === false) return false;
+  if (f.priced && r.unpriced) return false;
+  return true;
+}
+function sortedRows(){
+  const k = state.sortKey, d = state.sortDir;
+  const rows = state.rows.filter(rowFilter);
+  const str = k === 'name' || k === 'cat' || k === 'meta' || k === 'bp';
+  rows.sort((a, b) => {
+    if (str){
+      const x = k === 'bp' ? a.bp.label : a[k], y = k === 'bp' ? b.bp.label : b[k];
+      return String(x).localeCompare(String(y)) * -d || a.name.localeCompare(b.name);
+    }
+    let x = k === 'nodes' ? a.buildN : a[k], y = k === 'nodes' ? b.buildN : b[k];
+    x = x == null || !isFinite(x) ? -Infinity : x;
+    y = y == null || !isFinite(y) ? -Infinity : y;
+    return (x - y) * d || a.name.localeCompare(b.name);
+  });
+  return rows;
+}
+let openTid = null;
+function render(){
+  const tbody = $('tblBody');
+  io.disconnect();
+  renderedHist.clear();
+  tbody.textContent = '';
+  const rows = sortedRows();
+  const frag = document.createDocumentFragment();
+  const shown = rows.slice(0, state.showCap);
+  for (const r of shown){
+    const tr = document.createElement('tr');
+    tr.dataset.tid = r.tid;
+    if (openTid === r.tid) tr.classList.add('open');
+    const tdName = document.createElement('td');
+    tdName.className = 'name';
+    const exp = document.createElement('span');
+    exp.className = 'exp';
+    exp.textContent = openTid === r.tid ? '▾' : '▸';
+    tdName.append(exp, document.createTextNode(r.name));
+    if (r.err) tdName.title = r.err;
+    tr.appendChild(tdName);
+    const tdCat = document.createElement('td'); tdCat.textContent = r.cat; tr.appendChild(tdCat);
+    const tdMeta = document.createElement('td'); tdMeta.textContent = r.meta; tr.appendChild(tdMeta);
+    const numCell = (v, raw, cls) => {
+      const td = document.createElement('td');
+      td.className = 'num' + (cls || '');
+      td.textContent = v;
+      if (raw != null && isFinite(raw)) td.dataset.copy = String(Math.round(raw * 100) / 100);
+      tr.appendChild(td);
+      return td;
+    };
+    numCell(fmtIsk(r.cost), r.cost);
+    numCell(fmtIsk(r.rev), r.rev);
+    numCell(fmtIsk(r.profit), r.profit, r.profit > 0 ? ' pos' : r.profit != null && r.profit < 0 ? ' neg' : '');
+    numCell(fmtPct(r.margin), r.margin);
+    numCell(fmtPct(r.roi), r.roi);
+    numCell(fmtIsk(r.iskh), r.iskh);
+    numCell(fmtIsk(r.ship), r.ship);
+    numCell(fmtIsk(r.tax), r.tax);
+    numCell(fmt.format(r.m3), r.m3);
+    numCell(fmtIsk(r.iskm3), r.iskm3);
+    const tdDem = numCell(r.demand === undefined ? '…' : r.demand == null ? '—' : fmt.format(Math.round(r.demand * 10) / 10), r.demand);
+    const tdDos = numCell(r.dos === undefined ? '…' : r.dos == null ? '—' : r.dos === Infinity ? '∞' : fmt.format(Math.round(r.dos * 10) / 10), r.dos === Infinity ? null : r.dos);
+    renderedHist.set(r.tid, { demand: tdDem, dos: tdDos });
+    const tdBp = document.createElement('td');
+    tdBp.textContent = r.bp.label;
+    if (r.bp.own) tdBp.title = `${r.bp.own.owner} · ${r.bp.own.count}× owned`;
+    tr.appendChild(tdBp);
+    const tdN = document.createElement('td');
+    tdN.className = 'num';
+    tdN.textContent = `${r.buildN}/${r.buyN}`;
+    tr.appendChild(tdN);
+    frag.appendChild(tr);
+    if (openTid === r.tid) frag.appendChild(buildDrillRow(r.tid));
+    io.observe(tr);
+  }
+  tbody.appendChild(frag);
+  if (!shown.length){
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 17; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
+    td.textContent = state.rows.length ? 'No rows match the current filters.'
+      : 'Load data, set up a profile and hit "Compute all products".';
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
+  document.querySelectorAll('#tbl thead th').forEach(th => {
+    th.classList.remove('s-asc', 's-desc');
+    if (th.dataset.key === state.sortKey){
+      const strCol = ['name', 'cat', 'meta', 'bp'].includes(state.sortKey);
+      th.classList.add((strCol ? state.sortDir === -1 : state.sortDir === 1) ? 's-asc' : 's-desc');
+    }
+  });
+  $('fltCount').textContent = state.rows.length
+    ? (rows.length === state.rows.length ? `${rows.length} products` : `${rows.length} of ${state.rows.length} products`)
+    : '';
+  const note = $('tblNote');
+  note.textContent = '';
+  if (rows.length > state.showCap){
+    note.textContent = `showing the first ${state.showCap} of ${rows.length} rows by the current sort — `;
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = 'show more';
+    a.addEventListener('click', e => { e.preventDefault(); state.showCap += SHOW_STEP; render(); });
+    note.appendChild(a);
+  }
+  renderChips();
+}
+
+function renderChips(){
+  const catBox = $('catChips'), metaBox = $('metaChips');
+  catBox.textContent = ''; metaBox.textContent = '';
+  if (!D) return;
+  const cats = new Map();
+  for (const r of state.rows) if (!cats.has(r.catId)) cats.set(r.catId, r.cat);
+  const catList = cats.size ? [...cats.entries()]
+    : TOP_MGIDS.map(id => [id, D.marketGroups[id][0]]);
+  catList.sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  const mkChip = (box, label, sel, toggle) => {
+    const c = document.createElement('span');
+    c.className = 'chip' + (sel ? ' on' : '');
+    c.textContent = label;
+    c.addEventListener('click', () => { toggle(); saveUi(); render(); });
+    box.appendChild(c);
+  };
+  for (const [id, name] of catList)
+    mkChip(catBox, name, state.filters.cats.includes(id), () => {
+      const i = state.filters.cats.indexOf(id);
+      if (i >= 0) state.filters.cats.splice(i, 1); else state.filters.cats.push(id);
+    });
+  for (const m of ['T1', 'T2', 'T3', 'Faction', 'Storyline', 'Other'])
+    mkChip(metaBox, m, state.filters.metas.includes(m), () => {
+      const i = state.filters.metas.indexOf(m);
+      if (i >= 0) state.filters.metas.splice(i, 1); else state.filters.metas.push(m);
+    });
+}
+
+document.querySelectorAll('#tbl thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.key;
+    if (state.sortKey === k) state.sortDir *= -1;
+    else { state.sortKey = k; state.sortDir = -1; }
+    saveUi(); render();
+  });
+});
+const bindFilter = (id, key, isCheck) => {
+  $(id).addEventListener(isCheck ? 'change' : 'input', () => {
+    state.filters[key] = isCheck ? $(id).checked : $(id).value;
+    if (id === 'fltSkilled' && $(id).checked && !activeAllSkills())
+      $('fltCount').textContent = 'skill filter needs the full skill list — hit ↻ in the top bar to refetch skills';
+    saveUi(); render();
+  });
+};
+bindFilter('fltText', 'text'); bindFilter('fltRoi', 'minRoi'); bindFilter('fltProfit', 'minProfit');
+bindFilter('fltIskh', 'minIskh'); bindFilter('fltDemand', 'minDemand');
+bindFilter('fltOwned', 'owned', true); bindFilter('fltSkilled', 'skilled', true); bindFilter('fltPriced', 'priced', true);
+
+/* ---------- clipboard ---------- */
+async function copyText(text, statusEl, msg){
+  try{ await navigator.clipboard.writeText(text); if (statusEl){ statusEl.textContent = msg; statusEl.className = 'hint ok'; } }
+  catch(_e){
+    const ta = $('copyPad');
+    ta.value = text; ta.select();
+    try{ document.execCommand('copy'); if (statusEl){ statusEl.textContent = msg; statusEl.className = 'hint ok'; } }
+    catch(_e2){ if (statusEl){ statusEl.textContent = 'copy failed'; statusEl.className = 'hint err'; } }
+  }
+}
+async function cellCopy(text, td){
+  await copyText(text, null, '');
+  td.classList.add('copied');
+  setTimeout(() => td.classList.remove('copied'), 600);
+}
+$('tblBody').addEventListener('click', e => {
+  const tr = e.target.closest('tr');
+  if (!tr || !tr.dataset.tid) return;
+  const td = e.target.closest('td');
+  if (!td) return;
+  const tid = Number(tr.dataset.tid);
+  if (td.cellIndex === 0){ toggleDrill(tid); return; }
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed) return;
+  const text = (td.dataset.copy ?? td.textContent).trim();
+  if (!text || text === '—' || text === '…') return;
+  cellCopy(text, td);
+});
+
+function tableTsv(){
+  const head = ['Item', 'Category', 'Meta', 'Cost/Item', 'Revenue/Item', 'Profit/Item', 'Margin %', 'ROI %',
+    'ISK/h', 'Shipping/Item', 'Sales tax/Item', 'm3', 'ISK/m3', 'Demand/Day', 'D.O.S.', 'BP', 'Build nodes', 'Buy nodes'];
+  const lines = [head.join('\t')];
+  const n = v => v == null || !isFinite(v) ? '' : String(Math.round(v * 100) / 100);
+  for (const r of sortedRows())
+    lines.push([r.name, r.cat, r.meta, n(r.cost), n(r.rev), n(r.profit), n(r.margin), n(r.roi), n(r.iskh),
+      n(r.ship), n(r.tax), n(r.m3), n(r.iskm3), n(r.demand), r.dos === Infinity ? 'inf' : n(r.dos),
+      r.bp.label, r.buildN, r.buyN].join('\t'));
+  return lines.join('\n');
+}
+$('btnTsv').addEventListener('click', () =>
+  copyText(tableTsv(), $('tsvStatus'), `copied ${sortedRows().length} rows as TSV`));
+
+/* ---------- drilldown ---------- */
+function toggleDrill(tid){
+  openTid = openTid === tid ? null : tid;
+  render();
+}
+function buildDrillRow(tid){
+  const tr = document.createElement('tr');
+  tr.className = 'drill';
+  const td = document.createElement('td');
+  td.colSpan = 17;
+  tr.appendChild(td);
+  let res = null, err = null;
+  try{ res = evalOne(tid); }catch(e){ err = e; }
+  if (err){
+    td.textContent = 'cannot evaluate: ' + (err.message || err);
+    td.className = 'err';
+    return tr;
+  }
+  const p = activeProfile();
+  const tt = res.totals;
+
+  const sum = document.createElement('div');
+  sum.className = 'dsummary';
+  const stat = (label, val) => {
+    const s = document.createElement('span');
+    const b = document.createElement('b'); b.textContent = val;
+    s.append(document.createTextNode(label + ' '), b);
+    sum.appendChild(s);
+  };
+  stat('run produces', fmt0.format(res.produced));
+  stat('cost/item', fmtIsk(tt.costPerItem));
+  stat('revenue/item', fmtIsk(tt.revenuePerItem));
+  stat('profit/item', fmtIsk(tt.profitPerItem));
+  stat('job time Σ', fmtDur(tt.totalJobTime));
+  stat('shipping in', fmtIsk(tt.shippingIn));
+  stat('shipping out', fmtIsk(tt.shippingOut));
+  stat('sales tax', fmtIsk(tt.salesTax));
+  stat('broker fee', fmtIsk(tt.brokerFee));
+  stat('tree depth', String(tt.treeDepth));
+  td.appendChild(sum);
+
+  const ctl = document.createElement('div');
+  ctl.className = 'rowline';
+  ctl.style.marginTop = '0';
+  const tsvBtn = document.createElement('button');
+  tsvBtn.className = 'mini'; tsvBtn.type = 'button'; tsvBtn.textContent = 'Copy tree TSV';
+  const tsvNote = document.createElement('span'); tsvNote.className = 'hint';
+  tsvBtn.addEventListener('click', () => copyText(treeTsv(res), tsvNote, 'tree copied'));
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = 'force toggles persist in the profile and recompute this product; other rows go stale';
+  ctl.append(tsvBtn, tsvNote, hint);
+  td.appendChild(ctl);
+
+  const treeBox = document.createElement('div');
+  treeBox.style.marginTop = '8px';
+  treeBox.appendChild(renderNode(res.tree, tid, 0, p));
+  td.appendChild(treeBox);
+  return tr;
+}
+function forceStateOf(p, tid){
+  if ((p.forceBuy || []).includes(tid)) return 'buy';
+  if ((p.forceBuild || []).includes(tid)) return 'build';
+  return 'auto';
+}
+function setForce(rootTid, tid, mode){
+  const p = activeProfile();
+  p.forceBuy = (p.forceBuy || []).filter(t => t !== tid);
+  p.forceBuild = (p.forceBuild || []).filter(t => t !== tid);
+  if (mode === 'buy') p.forceBuy.push(tid);
+  if (mode === 'build') p.forceBuild.push(tid);
+  saveProfiles();
+  recomputeOne(rootTid);
+}
+function renderNode(node, rootTid, depth, p){
+  const box = document.createElement('div');
+  box.className = 'dnode';
+  const line = document.createElement('div');
+  line.className = 'line';
+
+  const hasKids = node.children && node.children.length && node.decision === 'build';
+  const tg = document.createElement('span');
+  tg.className = 'tg';
+  tg.textContent = hasKids ? (depth < 2 ? '▾' : '▸') : '';
+  line.appendChild(tg);
+
+  const badge = document.createElement('span');
+  badge.className = 'badge ' + (node.decision === 'build' ? 'build' : 'buy') + (node.forced ? ' forced' : '');
+  badge.textContent = (node.forced ? '⚑ ' : '') + node.decision.toUpperCase();
+  line.appendChild(badge);
+
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = node.name;
+  const qty = document.createElement('span');
+  qty.className = 'qty';
+  qty.textContent = '× ' + fmt0.format(node.qty);
+  line.append(nm, qty);
+
+  const cst = document.createElement('span');
+  cst.className = 'cst';
+  const buyTxt = node.buyCost == null ? 'unpriced' : fmtIsk(node.buyCost);
+  const buildTxt = node.buildCost == null ? (node.depthCapped ? 'depth-capped' : '—') : fmtIsk(node.buildCost);
+  cst.innerHTML = '';
+  const bb = document.createElement('span');
+  bb.append('buy ');
+  const b1 = document.createElement(node.decision === 'buy' ? 'b' : 'span'); b1.textContent = buyTxt;
+  bb.appendChild(b1);
+  bb.append(' · build ');
+  const b2 = document.createElement(node.decision === 'build' ? 'b' : 'span'); b2.textContent = buildTxt;
+  bb.appendChild(b2);
+  cst.appendChild(bb);
+  line.appendChild(cst);
+
+  if (node.job){
+    const fac = document.createElement('span');
+    fac.className = 'qty';
+    fac.textContent = `@ ${node.job.facilityLabel} · ${node.job.runs} run${node.job.runs > 1 ? 's' : ''} · ${fmtDur(node.job.time)}`;
+    line.appendChild(fac);
+  }
+  if (node.note === 'unpriced'){
+    const w = document.createElement('span');
+    w.className = 'warn';
+    w.textContent = 'unpriced';
+    line.appendChild(w);
+  }
+
+  if (depth > 0){   // force toggles on materials, not on the root product itself
+    const cur = forceStateOf(p, node.tid);
+    for (const m of ['auto', 'buy', 'build']){
+      const b = document.createElement('span');
+      b.className = 'fbtn' + (cur === m ? ' on' : '');
+      b.textContent = m;
+      b.title = 'force this material to ' + m;
+      b.addEventListener('click', () => setForce(rootTid, node.tid, m));
+      line.appendChild(b);
+    }
+  }
+  box.appendChild(line);
+
+  if (node.decision === 'build' && node.job){
+    const cb = node.job.costBreakdown, mm = node.job.matModifierBreakdown;
+    const fee = document.createElement('div');
+    fee.className = 'feeline';
+    fee.textContent = `job fee: SCI gross ${fmtIsk(cb.sciGross)} · struct/rig bonus ${fmtIsk(cb.bonus)} · `
+      + `SCC ${fmtIsk(cb.scc)} · facility tax ${fmtIsk(cb.tax)} · EIV ${fmtIsk(node.job.eiv)}`;
+    const mod = document.createElement('div');
+    mod.className = 'feeline';
+    mod.textContent = `modifiers: ME bp ${mm.bpMe}% / struct ${mm.structMe}% / rig ${mm.rigMe.toFixed(2)}% — `
+      + `TE bp ${mm.bpTe}% / struct ${mm.structTe}% / rig ${mm.rigTe.toFixed(2)}%`;
+    box.append(fee, mod);
+  }
+  if (node.invention) box.appendChild(renderInvention(node.invention));
+
+  if (hasKids){
+    const kids = document.createElement('div');
+    kids.className = 'kids';
+    kids.hidden = depth >= 2;
+    for (const c of node.children) kids.appendChild(renderNode(c, rootTid, depth + 1, p));
+    box.appendChild(kids);
+    tg.addEventListener('click', () => { kids.hidden = !kids.hidden; tg.textContent = kids.hidden ? '▸' : '▾'; });
+    tg.style.cursor = 'pointer';
+  }
+  return box;
+}
+function renderInvention(inv){
+  const d = document.createElement('div');
+  d.className = 'invpanel';
+  const head = document.createElement('div');
+  head.textContent = `invention: ${inv.decryptor || 'no decryptor'} — chance ${(inv.chance * 100).toFixed(1)}%, `
+    + `${inv.attemptsPerSuccess.toFixed(2)} attempts/success, BPC ${inv.bpcRuns} run${inv.bpcRuns > 1 ? 's' : ''} `
+    + `ME${inv.me}/TE${inv.te} · ${fmtIsk(inv.costPerSuccess)} per success (${fmtIsk(inv.perUnit)}/unit)`;
+  d.appendChild(head);
+  if (inv.options && inv.options.length > 1){
+    const tbl = document.createElement('table');
+    const tr0 = document.createElement('tr');
+    for (const h of ['decryptor', 'chance', 'runs', 'ME', 'TE', 'cost/success', 'ISK/unit']){
+      const th = document.createElement('th'); th.textContent = h; tr0.appendChild(th);
+    }
+    tbl.appendChild(tr0);
+    for (const o of inv.options){
+      const tr = document.createElement('tr');
+      if ((o.decryptor || null) === (inv.decryptor || null)) tr.className = 'pick';
+      const cells = [o.decryptor || '—', (o.chance * 100).toFixed(1) + '%', o.bpcRuns, o.me, o.te,
+        fmtIsk(o.costPerSuccess), fmtIsk(o.perUnit)];
+      for (const c of cells){ const td = document.createElement('td'); td.textContent = String(c); tr.appendChild(td); }
+      tbl.appendChild(tr);
+    }
+    d.appendChild(tbl);
+  }
+  return d;
+}
+function treeTsv(res){
+  const lines = [['Depth', 'Item', 'Decision', 'Qty', 'Buy cost', 'Build cost', 'Chosen cost', 'Facility', 'Job time s', 'Invention'].join('\t')];
+  const n = v => v == null || !isFinite(v) ? '' : String(Math.round(v * 100) / 100);
+  (function walk(node, depth){
+    lines.push([depth, node.name, node.decision + (node.forced ? ' (forced)' : ''), node.qty,
+      n(node.buyCost), n(node.buildCost), n(node.cost),
+      node.job ? node.job.facilityLabel : '', node.job ? Math.round(node.job.time) : '',
+      node.invention ? `${node.invention.decryptor || 'none'} ${(node.invention.chance * 100).toFixed(1)}%` : ''].join('\t'));
+    if (node.decision === 'build') for (const c of node.children || []) walk(c, depth + 1);
+  })(res.tree, 0);
+  return lines.join('\n');
+}
+
+/* ---------- boot ---------- */
+(async () => {
+  loadUi();
+  loadProfiles();
+  fillDecOptions();
+  renderProfBar();
+  bindSettings();
+  await loadStatic();
+  renderProfileEditor();
+  await loadCaches();
+  render();
+  if (window.EveAuth){
+    await EveAuth.ready;
+    EveAuth.onChange(() => { autoFees(); renderBpNote(); markStale(); });
+    autoFees();
+  }
+  // test/debug handle — lets the smoke tests read computed state without scraping every cell
+  window.IndustryPage = { state, evalOne, activeProfile, computeAll, curSig,
+    get lastSig(){ return lastSig; }, get book(){ return book; },
+    get adjusted(){ return adjusted; }, get indices(){ return indices; }, get ownedBp(){ return ownedBp; } };
+})();
+</script>
+</body>
+</html>
