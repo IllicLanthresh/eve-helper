@@ -230,6 +230,21 @@ Each holds:
   reaction families) and its own activity (Thukker rigs keep their lowsec-only enhanced
   capital-component ME). Old profiles with the former generic T1/T2 presets are migrated
   best-effort — unmappable rows are dropped with a one-time inline notice.
+
+  **Not the structure owner?** ESI never exposes a structure's fitting — but the in-game
+  industry window shows anyone who can use the facility the bonused material quantities
+  and the job duration. The per-facility **"infer rigs…" wizard** picks a probe blueprint
+  per rig domain (your own blueprints first — their ME/TE are known; unresearched-BPC
+  toggle otherwise), tells you what to look up in game, then strips blueprint ME/TE, the
+  structure role bonuses and the manufacturer's Industry/Advanced Industry/Reactions
+  skills from the numbers you enter. The residual is matched against the rig catalog for
+  that hull size and security band using the exact in-game rounding (quantities are
+  rounded to 2 decimals then ceiled, so each shown integer pins an ME interval — a second
+  material or the job time disambiguates T1 vs T2). Verdicts are exact / ambiguous
+  (pick one) / no rig / conflict, ME and TE tiers are cross-checked (one Efficiency rig
+  carries both), and one click installs the detected rigs into the facility's slots,
+  merging with rigs inferred for other domains. Everything runs client-side on data
+  already loaded; nothing is stored until the install click.
 - **Market settings**: buy inputs instantly vs at buy order; sell output via sell order
   vs instant — and **three market roles**, each a dropdown of your logged-in characters
   (defaulting to whoever was active when the profile was created, persisted per profile;

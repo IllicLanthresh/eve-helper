@@ -102,6 +102,30 @@
   .chip.on{color:var(--text);border-color:var(--cyan);background:#14344a}
   #staleBanner{margin-top:10px;padding:8px 12px;border:1px solid #6b571f;background:#3a2f14;color:var(--amber);
     border-radius:8px;display:flex;gap:12px;align-items:center;font-size:13px}
+  /* rig-inference wizard (modal pattern shared with structures.js' picker) */
+  #rigWizard{position:fixed;inset:0;background:rgba(4,6,10,.72);z-index:100;display:flex;
+    align-items:flex-start;justify-content:center;padding-top:8vh}
+  #rigWizard .panel{width:600px;max-width:94vw;max-height:82vh;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:14px 16px 16px;
+    box-shadow:0 14px 44px rgba(0,0,0,.55);font-size:13px}
+  #rigWizard h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:1px;
+    color:var(--cyan);display:flex;align-items:center}
+  #rigWizard .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:17px;line-height:1;
+    text-transform:none;padding:0 3px;border-radius:4px}
+  #rigWizard .x:hover{color:var(--text);background:#1b2434}
+  #rigWizard .wstep{margin-top:8px}
+  #rigWizard label{display:inline-flex;gap:6px;align-items:center;color:var(--dim);font-size:12px;margin:0}
+  #rigWizard select{max-width:100%}
+  #rigWizard .mats{margin:8px 0;font-family:var(--mono);font-size:12px;color:var(--dim);
+    border:1px solid var(--line);border-radius:6px;padding:6px 10px;max-height:150px;overflow-y:auto}
+  #rigWizard .mats b{color:var(--text)}
+  #rigWizard .instr{margin:8px 0;padding:7px 10px;border-left:3px solid var(--cyan);background:var(--panel2);
+    color:var(--text);font-size:12px;border-radius:0 6px 6px 0}
+  #rigWizard .res{margin:8px 0;padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+  #rigWizard .res.exact{border-color:#2c5c3b}
+  #rigWizard .res .cand{display:flex;gap:8px;align-items:center;margin:3px 0}
+  #rigWizard .wbtns{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+  #rigWizard .werr{color:var(--red);font-size:12px}
   #staleBanner[hidden]{display:none}  /* the explicit display would defeat the hidden attribute */
   /* drilldown */
   tr.drill>td{background:#0d1119;padding:10px 16px;cursor:default}
@@ -346,7 +370,9 @@
           facility if your numbers differ. Rigs are the REAL Standup catalog extracted from the SDE
           (per-rig ME/TE/cost base %, product scope and security multipliers: engineering HS ×1.0,
           LS ×1.9, NS/WH ×2.1 — an Efficiency rig grants BOTH ME and TE, e.g. XL T1 in null =
-          4.2% / 42%).</li>
+          4.2% / 42%). Not the structure owner? ESI hides fittings, but "infer rigs…" works the
+          installed rigs out from the bonused quantities and job duration the in-game industry
+          window shows anyone who can use the facility.</li>
     </ul>
   </details>
 </section>
@@ -1111,7 +1137,12 @@ function renderFacilities(){
         f.rigs.push({ tid: valid[0][0] });
         saveProfiles(); renderFacilities();
       });
+      const wiz = document.createElement('a');
+      wiz.href = '#'; wiz.className = 'hint'; wiz.textContent = 'infer rigs…';
+      wiz.title = 'work out the installed rigs from what the in-game industry window shows you — no structure ownership needed';
+      wiz.addEventListener('click', e => { e.preventDefault(); openRigWizard(f); });
       ctlLine.append(addRig);
+      if (valid.length) ctlLine.append(wiz);
       rigBox.appendChild(ctlLine);
       card.appendChild(rigBox);
     }
@@ -1143,6 +1174,438 @@ $('btnAddStruct').addEventListener('click', async () => {
   });
   saveProfiles(); renderFacilities();
 });
+
+/* ----- rig-inference wizard ---------------------------------------------------
+   ESI never exposes a structure's fitting, and most industrialists are not the
+   owner — but the in-game industry window shows anyone who can USE a facility the
+   bonused material quantities, the job duration and the job cost. The wizard picks
+   a PROBE blueprint per rig domain, asks for the numbers the window shows, strips
+   everything known (blueprint ME/TE, structure role bonuses, the manufacturer's
+   Industry/Adv.Industry/Reactions skills) and matches the residual against the rig
+   catalog for the structure's size and security band. Everything runs client-side
+   on already-loaded data; nothing persists until the final install click. ----- */
+function wizSkills(){   // engine-shaped skill levels from the manufacturer's full list
+  const all = manufAllSkills() || {};
+  return { industry: all[3380] || 0, advanced: all[3388] || 0, reactions: all[45746] || 0,
+           science: all[3402] || 0, metallurgy: all[3409] || 0, research: all[3403] || 0 };
+}
+/* "3h 42m 10s", "3:42:10" (right-aligned …h:m:s), "83:20" (m:s), "90m", plain
+   minutes → {sec, tol}. tol widens when the entry carries no seconds component —
+   the in-game window truncates to the minute in longer jobs. */
+function wizParseDur(str){
+  const s = String(str || '').trim().toLowerCase();
+  if (!s) return null;
+  let m = /^(?:(\d+)\s*d[a-z]*[\s,]*)?(?:(\d+)\s*h[a-z]*[\s,]*)?(?:(\d+)\s*m[a-z]*[\s,]*)?(?:(\d+)\s*s[a-z]*)?$/.exec(s);
+  if (m && (m[1] || m[2] || m[3] || m[4]) != null && /[dhms]/.test(s))
+    return { sec: (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0),
+             tol: m[4] != null ? 2 : 61 };
+  if (/^\d+(\.\d+)?$/.test(s)) return { sec: parseFloat(s) * 60, tol: 61 };   // plain number = minutes
+  const parts = s.split(':');
+  if (parts.length >= 2 && parts.length <= 3 && parts.every(p => /^\d+$/.test(p))){
+    let sec = 0;
+    for (const p of parts) sec = sec * 60 + Number(p);
+    return { sec, tol: 2 };
+  }
+  return null;
+}
+/* Core solve: which catalog rigs are consistent with the observed numbers?
+   o = { f, domRigs:[[tid,rig]…], groupId, act, baseT, bpMe, bpTe,
+         mats:[{base, shown}…], dur:{sec,tol}|null }
+   Returns { meCands, teCands } — arrays of rig tids, null meaning "no rig";
+   teCands is null when no duration was entered. Quantities use the engine's
+   exact matQty (round to 2 decimals, then ceil), so a candidate matches only
+   if it reproduces the shown integer for EVERY entered material. */
+function wizSolve(o){
+  const structMe = o.f.bonuses.me || 0, structTe = o.f.bonuses.te || 0;
+  const band = secBand(o.f.security);
+  const effMe = rig => {
+    const mult = rig.sec[band] || 0;
+    const base = rig.thuk && band === 'ls' && rig.thuk.scope.includes(o.groupId) ? rig.thuk.me : rig.me;
+    return base * mult;
+  };
+  const effTe = rig => (rig.sec[band] || 0) * rig.te;
+  const qtyOk = me => o.mats.every(m => IndustryEngine.matQty(m.base, 1, o.bpMe, structMe, me) === m.shown);
+  const sk = wizSkills();
+  const timeOk = te => {
+    const exp = o.baseT * IndustryEngine.timeSkillMult(o.act, sk)
+      * (1 - o.bpTe / 100) * (1 - structTe / 100) * (1 - te / 100);
+    return Math.abs(exp - o.dur.sec) <= o.dur.tol;
+  };
+  const meCands = [], teCands = [];
+  if (qtyOk(0)) meCands.push(null);
+  for (const [tid, rig] of o.domRigs) if (effMe(rig) > 0 && qtyOk(effMe(rig))) meCands.push(tid);
+  if (o.dur){
+    if (timeOk(0)) teCands.push(null);
+    for (const [tid, rig] of o.domRigs) if (effTe(rig) > 0 && timeOk(effTe(rig))) teCands.push(tid);
+  }
+  return { meCands, teCands: o.dur ? teCands : null };
+}
+/* install: replace this domain's previous rigs, keep other domains, respect slots */
+function wizInstallRigs(f, tids){
+  const st = structInfo(f);
+  const slots = st ? st[3] : 3;
+  const doms = new Set(tids.map(t => D.rigs[t].dom));
+  const next = (f.rigs || []).filter(r => r.tid != null && D.rigs[r.tid] && !doms.has(D.rigs[r.tid].dom));
+  for (const t of tids) if (!next.some(r => r.tid === t)) next.push({ tid: t });
+  if (next.length > slots) return { ok: false, msg: `that needs ${next.length} rig slots — the structure has ${slots}` };
+  f.rigs = next;
+  saveProfiles();
+  renderFacilities();
+  return { ok: true };
+}
+
+function openRigWizard(f){
+  const stale = document.getElementById('rigWizard');
+  if (stale) stale.remove();
+  const valid = rigsForFacility(f).filter(([, r]) => !r.unk
+    && (r.act.includes('man') || r.act.includes('rea')));   // only job-probeable domains
+  const doms = [...new Set(valid.map(([, r]) => r.dom))].sort();
+  const overlay = document.createElement('div');
+  overlay.id = 'rigWizard';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  overlay.appendChild(panel);
+  const h = document.createElement('h3');
+  h.textContent = `Infer rigs — ${f.label}`;
+  const x = document.createElement('span');
+  x.className = 'x'; x.textContent = '×'; x.title = 'close (Esc)';
+  h.appendChild(x);
+  panel.appendChild(h);
+  const steps = [1, 2, 3].map(() => {
+    const d = document.createElement('div');
+    d.className = 'wstep';
+    panel.appendChild(d);
+    return d;
+  });
+  document.body.appendChild(overlay);
+  const close = () => { document.removeEventListener('keydown', onKey, true); overlay.remove(); };
+  const onKey = e => { if (e.key === 'Escape'){ e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(); });
+  x.addEventListener('click', close);
+
+  let cur = {};   // {dom, domRigs, act, probeTid, pe, mats}
+  const show = i => steps.forEach((s, j) => { s.hidden = j !== i; });
+
+  /* ---- step 1: domain + probe blueprint ---- */
+  function renderStep1(){
+    const s = steps[0];
+    s.textContent = '';
+    if (!doms.length){
+      s.textContent = 'No probeable rig domains for this structure.';
+      show(0);
+      return;
+    }
+    const line1 = document.createElement('div');
+    line1.className = 'rowline';
+    const domLab = document.createElement('label');
+    domLab.textContent = 'rig domain to check';
+    const domSel = document.createElement('select');
+    domSel.id = 'wizDom';
+    for (const d of doms){
+      const o = document.createElement('option');
+      o.value = d; o.textContent = d;
+      domSel.appendChild(o);
+    }
+    if (cur.dom) domSel.value = cur.dom;
+    line1.append(domLab, domSel);
+    const line2 = document.createElement('div');
+    line2.className = 'rowline';
+    const bpLab = document.createElement('label');
+    bpLab.textContent = 'probe blueprint';
+    const bpSel = document.createElement('select');
+    bpSel.id = 'wizProbe';
+    bpSel.style.width = '320px';
+    line2.append(bpLab, bpSel);
+    const matBox = document.createElement('div');
+    matBox.className = 'mats';
+    const instr = document.createElement('div');
+    instr.className = 'instr';
+    const note = document.createElement('div');
+    note.className = 'hint';
+
+    const domRigsOf = dom => valid.filter(([, r]) => r.dom === dom);
+    const fillProbes = () => {
+      const domRigs = domRigsOf(domSel.value);
+      const act = domRigs[0][1].act.includes('rea') ? 'rea' : 'man';
+      // probe products: covered by EVERY rig of the domain (identical scopes in
+      // practice) and produced by the matching activity
+      let scope = null;
+      for (const [, r] of domRigs)
+        scope = scope ? scope.filter(g => (r.scope || []).includes(g)) : (r.scope || []).slice();
+      const owned = [], rest = [];
+      for (const tid of PRODUCTS){
+        const pe = productToBp.get(tid);
+        if (!pe || pe.activity !== act) continue;
+        if (!scope.includes(D.types[tid][3])) continue;
+        (ownedEntryFor(pe.bpid) ? owned : rest).push(tid);
+      }
+      bpSel.textContent = '';
+      const og1 = document.createElement('optgroup');
+      og1.label = 'your blueprints (ME/TE known)';
+      for (const tid of owned){
+        const own = ownedEntryFor(productToBp.get(tid).bpid);
+        const o = document.createElement('option');
+        o.value = String(tid);
+        o.textContent = `${D.types[tid][0]} — ME${own.me}/TE${own.te}${own.isBpo ? '' : ' (BPC)'}`;
+        og1.appendChild(o);
+      }
+      if (owned.length) bpSel.appendChild(og1);
+      const og2 = document.createElement('optgroup');
+      og2.label = owned.length ? 'all blueprints (enter ME/TE yourself)' : 'all blueprints (no owned ones here — enter ME/TE yourself)';
+      for (const tid of rest){
+        const o = document.createElement('option');
+        o.value = String(tid);
+        o.textContent = D.types[tid][0];
+        og2.appendChild(o);
+      }
+      bpSel.appendChild(og2);
+      note.textContent = owned.length ? '' : 'tip: probing with an owned blueprint avoids guessing its research levels';
+      fillMats();
+    };
+    const fillMats = () => {
+      const tid = Number(bpSel.value);
+      const pe = productToBp.get(tid);
+      if (!pe){ matBox.textContent = 'no blueprint'; return; }
+      const mats = pe.bp[pe.activity].m.slice().sort((a, b) => b[1] - a[1]);
+      matBox.textContent = '';
+      const capN = 12;
+      for (const [mTid, q] of mats.slice(0, capN)){
+        const d = document.createElement('div');
+        const b = document.createElement('b');
+        b.textContent = fmt0.format(q);
+        d.append(b, document.createTextNode(' × ' + (D.types[mTid] ? D.types[mTid][0] : 'type#' + mTid)));
+        matBox.appendChild(d);
+      }
+      if (mats.length > capN){
+        const d = document.createElement('div');
+        d.textContent = `… +${mats.length - capN} more`;
+        matBox.appendChild(d);
+      }
+      instr.textContent = `In game: open the Industry window, load ${D.types[tid][0]} Blueprint, set runs to 1 `
+        + `and pick "${f.label}" as the facility — then enter what the window shows on the next step. `
+        + '(Base quantities per run are listed above; the wizard assumes no time-modifying implants.)';
+      cur = { dom: domSel.value, domRigs: domRigsOf(domSel.value), act: pe.activity, probeTid: tid, pe, mats };
+    };
+    domSel.addEventListener('change', fillProbes);
+    bpSel.addEventListener('change', fillMats);
+    const btns = document.createElement('div');
+    btns.className = 'wbtns';
+    const next = document.createElement('button');
+    next.className = 'primary'; next.type = 'button'; next.textContent = 'enter the numbers →';
+    next.addEventListener('click', () => { renderStep2(); show(1); });
+    btns.appendChild(next);
+    s.append(line1, line2, matBox, instr, note, btns);
+    fillProbes();
+    show(0);
+  }
+
+  /* ---- step 2: observed numbers ---- */
+  function renderStep2(){
+    const s = steps[1];
+    s.textContent = '';
+    const own = ownedEntryFor(cur.pe.bpid);
+    const isRea = cur.act === 'rea';
+    const meIn = document.createElement('input');
+    const teIn = document.createElement('input');
+    meIn.type = teIn.type = 'number';
+    meIn.id = 'wizBpMe'; teIn.id = 'wizBpTe';
+    meIn.min = 0; meIn.max = 10; teIn.min = 0; teIn.max = 20;
+    meIn.style.width = teIn.style.width = '58px';
+    meIn.value = own ? own.me : 0;
+    teIn.value = own ? own.te : 0;
+    const bpc = document.createElement('input');
+    bpc.type = 'checkbox'; bpc.id = 'wizBpc';
+    bpc.addEventListener('change', () => {
+      meIn.disabled = teIn.disabled = bpc.checked;
+      if (bpc.checked){ meIn.value = 0; teIn.value = 0; }
+    });
+    if (!isRea){
+      const line = document.createElement('div');
+      line.className = 'rowline';
+      const l1 = document.createElement('label');
+      l1.append('blueprint ME ', meIn);
+      const l2 = document.createElement('label');
+      l2.append('TE ', teIn);
+      const l3 = document.createElement('label');
+      l3.append(bpc, ' unresearched BPO/BPC (ME0/TE0)');
+      line.append(l1, l2, l3);
+      s.appendChild(line);
+    }
+    const [m0tid, m0base] = cur.mats[0];
+    const q1 = document.createElement('input');
+    q1.type = 'number'; q1.id = 'wizQty1'; q1.min = 1; q1.style.width = '110px';
+    const line2 = document.createElement('div');
+    line2.className = 'rowline';
+    const l4 = document.createElement('label');
+    l4.append(`shown quantity of ${D.types[m0tid][0]} (base ${fmt0.format(m0base)}): `, q1);
+    line2.appendChild(l4);
+    s.appendChild(line2);
+    // optional second material — disambiguates when one integer is not enough
+    let q2 = null, m2Sel = null;
+    if (cur.mats.length > 1){
+      const line3 = document.createElement('div');
+      line3.className = 'rowline';
+      m2Sel = document.createElement('select');
+      m2Sel.id = 'wizMat2';
+      const o0 = document.createElement('option');
+      o0.value = ''; o0.textContent = '— optional second material —';
+      m2Sel.appendChild(o0);
+      for (let i = 1; i < cur.mats.length; i++){
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = `${D.types[cur.mats[i][0]][0]} (base ${fmt0.format(cur.mats[i][1])})`;
+        m2Sel.appendChild(o);
+      }
+      q2 = document.createElement('input');
+      q2.type = 'number'; q2.id = 'wizQty2'; q2.min = 1; q2.style.width = '110px';
+      const l5 = document.createElement('label');
+      l5.append(m2Sel, ' shown ', q2);
+      line3.appendChild(l5);
+      s.appendChild(line3);
+    }
+    const dur = document.createElement('input');
+    dur.type = 'text'; dur.id = 'wizDur'; dur.placeholder = 'e.g. 3h 42m 10s or 3:42:10';
+    dur.style.width = '170px';
+    const line4 = document.createElement('div');
+    line4.className = 'rowline';
+    const l6 = document.createElement('label');
+    l6.append('shown job duration ', dur);
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = 'blank = skip the time check (tier cross-check unavailable)';
+    line4.append(l6, hint);
+    s.appendChild(line4);
+    const err = document.createElement('div');
+    err.className = 'werr';
+    const btns = document.createElement('div');
+    btns.className = 'wbtns';
+    const back = document.createElement('button');
+    back.type = 'button'; back.textContent = '← blueprint';
+    back.addEventListener('click', () => show(0));
+    const solveB = document.createElement('button');
+    solveB.className = 'primary'; solveB.type = 'button'; solveB.id = 'wizSolveBtn';
+    solveB.textContent = 'solve →';
+    solveB.addEventListener('click', () => {
+      err.textContent = '';
+      const mats = [];
+      const v1 = Number(q1.value);
+      if (!(v1 >= 1)){ err.textContent = 'enter the shown quantity of the largest material'; return; }
+      mats.push({ base: m0base, shown: v1 });
+      if (q2 && m2Sel.value !== ''){
+        const v2 = Number(q2.value);
+        if (!(v2 >= 1)){ err.textContent = 'second material selected but its quantity is empty'; return; }
+        mats.push({ base: cur.mats[Number(m2Sel.value)][1], shown: v2 });
+      }
+      let d = null;
+      if (dur.value.trim()){
+        d = wizParseDur(dur.value);
+        if (!d){ err.textContent = 'could not parse the duration — use h:m:s, "3h 42m 10s" or minutes'; return; }
+      }
+      const solved = wizSolve({
+        f, domRigs: cur.domRigs, groupId: D.types[cur.probeTid][3], act: cur.act,
+        baseT: cur.pe.bp[cur.act].t || 0,
+        bpMe: isRea ? 0 : Number(meIn.value) || 0, bpTe: isRea ? 0 : Number(teIn.value) || 0,
+        mats, dur: d,
+      });
+      renderStep3(solved);
+      show(2);
+    });
+    btns.append(back, solveB, err);
+    s.appendChild(btns);
+  }
+
+  /* ---- step 3: verdict + install ---- */
+  function renderStep3(solved){
+    const s = steps[2];
+    s.textContent = '';
+    const combined = cur.domRigs.every(([, r]) => r.me > 0 && r.te > 0);
+    const rigLabel = tid => tid == null ? 'no rig'
+      : `${rigShortName(D.rigs[tid].n)} (${/ II$/.test(D.rigs[tid].n) ? 'T2' : 'T1'})`;
+    const chosen = new Map();   // sectionKey -> selected tid|null
+    const sectionKeys = [];
+    const section = (key, title, cands, extra) => {
+      sectionKeys.push(key);
+      const box = document.createElement('div');
+      box.className = 'res' + (cands.length === 1 ? ' exact' : '');
+      const head = document.createElement('div');
+      const status = cands.length === 0 ? 'CONFLICT — nothing matches all inputs'
+        : cands.length === 1 ? (cands[0] == null ? 'no rig detected' : 'detected: ' + rigLabel(cands[0]))
+        : `ambiguous between ${cands.map(rigLabel).join(' and ')} — pick one`;
+      head.textContent = `${title}: ${status}${extra || ''}`;
+      box.appendChild(head);
+      if (cands.length === 1) chosen.set(key, cands[0]);
+      if (cands.length > 1){
+        for (const c of cands){
+          const row = document.createElement('div');
+          row.className = 'cand';
+          const rb = document.createElement('input');
+          rb.type = 'radio'; rb.name = 'wizPick' + key;
+          rb.addEventListener('change', () => chosen.set(key, c));
+          const lab = document.createElement('label');
+          lab.append(rb, ` ${rigLabel(c)}${c != null ? ' — ' + rigEffText(D.rigs[c], f).replace(/^→ /, '') : ''}`);
+          row.appendChild(lab);
+          box.appendChild(row);
+        }
+      }
+      s.appendChild(box);
+    };
+    if (combined){
+      const cands = solved.teCands == null ? solved.meCands
+        : solved.meCands.filter(c => solved.teCands.includes(c));
+      const extra = solved.teCands == null ? ' (quantities only — no time cross-check)'
+        : cands.length === 1 && cands[0] != null ? ' — ME and TE agree ✓' : '';
+      section('c', `${cur.dom}`, cands, extra);
+      if (solved.teCands != null && !cands.length){
+        const w = document.createElement('div');
+        w.className = 'werr';
+        w.textContent = `quantities point at ${solved.meCands.map(rigLabel).join('/') || 'nothing'}, `
+          + `the job time at ${solved.teCands.map(rigLabel).join('/') || 'nothing'} — double-check the inputs`;
+        s.appendChild(w);
+      }
+    } else {
+      section('me', `${cur.dom} — ME rig`, solved.meCands);
+      if (solved.teCands != null) section('te', `${cur.dom} — TE rig`, solved.teCands);
+      else {
+        const n = document.createElement('div');
+        n.className = 'hint';
+        n.textContent = 'no duration entered — a separate TE rig cannot be detected';
+        s.appendChild(n);
+      }
+    }
+    const err = document.createElement('div');
+    err.className = 'werr';
+    const done = document.createElement('div');
+    done.className = 'hint';
+    const btns = document.createElement('div');
+    btns.className = 'wbtns';
+    const install = document.createElement('button');
+    install.className = 'primary'; install.type = 'button'; install.id = 'wizInstall';
+    install.textContent = 'install into the facility';
+    install.addEventListener('click', () => {
+      err.textContent = '';
+      for (const k of sectionKeys)
+        if (!chosen.has(k)){ err.textContent = 'pick one of the candidates first (or fix the inputs — a CONFLICT section cannot install)'; return; }
+      if (!sectionKeys.length){ err.textContent = 'nothing detected to install'; return; }
+      const picks = [...chosen.values()].filter(t => t != null);
+      const r = wizInstallRigs(f, picks);
+      if (!r.ok){ err.textContent = r.msg; return; }
+      done.textContent = picks.length
+        ? `installed: ${picks.map(t => rigShortName(D.rigs[t].n)).join(' + ')} ✓ (other domains kept)`
+        : `no rig for ${cur.dom} — cleared any previous ${cur.dom} rig ✓`;
+    });
+    const again = document.createElement('button');
+    again.type = 'button'; again.textContent = '↺ another domain';
+    again.addEventListener('click', () => { renderStep1(); });
+    const back = document.createElement('button');
+    back.type = 'button'; back.textContent = '← numbers';
+    back.addEventListener('click', () => show(1));
+    btns.append(install, again, back, err);
+    s.append(btns, done);
+  }
+
+  renderStep1();
+}
 
 /* ----- market / shipping / assumptions binding ----- */
 function fillDecOptions(){
@@ -2250,6 +2713,7 @@ function treeTsv(res){
   }
   // test/debug handle — lets the smoke tests read computed state without scraping every cell
   window.IndustryPage = { state, evalOne, activeProfile, computeAll, curSig,
+    wizSolve, wizParseDur,
     get lastSig(){ return lastSig; }, get book(){ return book; },
     get adjusted(){ return adjusted; }, get indices(){ return indices; }, get ownedBp(){ return ownedBp; } };
 })();
