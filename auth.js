@@ -19,7 +19,8 @@
     'esi-universe.read_structures.v1',    // structure name/system lookup
     'esi-search.search_structures.v1',    // find structures by name
   ];
-  const SCOPES = ['esi-skills.read_skills.v1', STANDINGS_SCOPE, ...STRUCTURE_SCOPES].join(' ');
+  const BLUEPRINTS_SCOPE = 'esi-characters.read_blueprints.v1';  // owned BPs with real ME/TE (Industry tool)
+  const SCOPES = ['esi-skills.read_skills.v1', STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE].join(' ');
 
   const SKILL_IDS = {
     accounting: 16622,
