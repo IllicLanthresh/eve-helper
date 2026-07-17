@@ -1,2 +1,8 @@
 # Claude Code session artifacts (agent worktrees, local settings)
 .claude/
+
+# CI-generated static data (built from the EVE SDE at deploy time)
+data/industry.json
+
+# node deps for the build tooling
+tools/node_modules/

@@ -26,6 +26,43 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install build dependencies
+        working-directory: tools
+        run: npm ci || npm install
+      - name: Check SDE version
+        id: sde
+        env:
+          SDE_URL: https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip
+        run: |
+          etag=$(curl -sSI --retry 4 --retry-delay 5 "$SDE_URL" | tr -d '"\r' | awk 'tolower($1)=="etag:" {print $2}')
+          echo "etag=${etag:-nocache-$GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: Cache SDE archive
+        id: sde-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sde/sde.zip
+          key: sde-zip-${{ steps.sde.outputs.etag }}
+      - name: Download SDE
+        if: steps.sde-cache.outputs.cache-hit != 'true'
+        env:
+          SDE_URL: https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip
+        run: |
+          mkdir -p ~/.cache/sde
+          curl -sS --fail --retry 4 --retry-delay 10 --retry-all-errors \
+            -o ~/.cache/sde/sde.zip "$SDE_URL"
+      - name: Build industry data
+        run: |
+          unzip -q -o ~/.cache/sde/sde.zip \
+            'fsd/blueprints.yaml' 'fsd/types.yaml' 'fsd/groups.yaml' 'fsd/marketGroups.yaml' \
+            -d "$RUNNER_TEMP/sde"
+          node --max-old-space-size=4096 tools/build-industry-data.mjs \
+            --sde "$RUNNER_TEMP/sde" --out data/industry.json
+          echo "gzip -9 size: $(gzip -9 -c data/industry.json | wc -c) bytes"
+      - name: Prune build tooling from site artifact
+        run: rm -rf tools/node_modules
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
