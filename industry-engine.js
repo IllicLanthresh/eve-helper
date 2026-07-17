@@ -32,7 +32,11 @@
                me→researching_material_efficiency, te→researching_time_efficiency.
    - profile:  { facilities:[{ id, label, system, tax, activities:['man','rea','inv','cop','me','te'],
                                bonuses:{me,te,cost},            // structure bonuses, percent
-                               rigs:[{match:[ids], me, te, cost}] }],  // match: marketGroup ancestor ids or groupIds
+                               rigs:[{match:[ids]|null, me, te, cost, act?, n?}] }],
+               // rig match: marketGroup ancestor ids or groupIds; null = matches EVERY product
+               // (activity-wide rigs such as lab rigs); [] matches nothing.
+               // act (optional): activity codes the rig applies to; absent = all activities.
+               // n (optional): display label — surfaced in matModifierBreakdown.rigMeName/rigTeName.
                  market: { inputSide:'sell'|'buy', outputSide:'sellOrder'|'instant',
                            buyerBrokerPct, sellerBrokerPct, sellerTaxPct,
                            brokerPct, taxPct },   // legacy fallbacks for the seller fields
@@ -78,7 +82,7 @@
    { tid, name, decision:'buy'|'build', qty, buyCost, buildCost, cost, forced?, depthCapped?, note?,
      thinBook?,                        // {filled, needed} — sell book thinner than qty
      job:{activity, facilityLabel, runs, time, eiv, costBreakdown:{sciGross,bonus,scc,tax},
-          matModifierBreakdown:{bpMe,structMe,rigMe,bpTe,structTe,rigTe}},
+          matModifierBreakdown:{bpMe,structMe,rigMe,bpTe,structTe,rigTe,rigMeName,rigTeName}},
      invention?:{decryptor, chance, attemptsPerSuccess, bpcRuns, me, te, costPerSuccess, perUnit, options:[...]},
      children:[...] }.
 
@@ -275,20 +279,29 @@
       return set;
     }
 
-    /* Best matching rig bonuses (max per attribute across matching rigs). */
-    function rigBonuses(facility, productTid) {
-      var out = { me: 0, te: 0, cost: 0 };
+    /* Best matching rig bonuses (max per attribute across matching rigs).
+       activity filters rigs carrying an `act` list (rigs without one apply to every
+       activity — the legacy behavior). Alongside the maxima the SOURCE rig's label
+       (entry.n) is tracked per attribute so the UI can name the actual rig. */
+    function rigBonuses(facility, productTid, activity) {
+      var out = { me: 0, te: 0, cost: 0, meRig: null, teRig: null, costRig: null };
       if (!facility || !facility.rigs) return out;
-      var anc = ancestrySet(productTid);
+      var anc = null; // ancestry computed lazily — activity-filtered rigs may skip it
       for (var i = 0; i < facility.rigs.length; i++) {
         var rig = facility.rigs[i];
-        var match = Array.isArray(rig.match) ? rig.match : [rig.match];
-        var hit = false;
-        for (var j = 0; j < match.length; j++) if (anc.has(match[j])) { hit = true; break; }
+        if (rig.act && activity && rig.act.indexOf(activity) < 0) continue;
+        var hit;
+        if (rig.match == null) hit = true; // null scope = applies to every product
+        else {
+          var match = Array.isArray(rig.match) ? rig.match : [rig.match];
+          if (!anc) anc = ancestrySet(productTid);
+          hit = false;
+          for (var j = 0; j < match.length; j++) if (anc.has(match[j])) { hit = true; break; }
+        }
         if (!hit) continue;
-        out.me = Math.max(out.me, rig.me || 0);
-        out.te = Math.max(out.te, rig.te || 0);
-        out.cost = Math.max(out.cost, rig.cost || 0);
+        if ((rig.me || 0) > out.me) { out.me = rig.me || 0; out.meRig = rig.n || null; }
+        if ((rig.te || 0) > out.te) { out.te = rig.te || 0; out.teRig = rig.n || null; }
+        if ((rig.cost || 0) > out.cost) { out.cost = rig.cost || 0; out.costRig = rig.n || null; }
       }
       return out;
     }
@@ -374,7 +387,7 @@
       var b = (fac.bonuses || {});
       return jobCost('cop', eiv, sci, {
         structCostBonusPct: b.cost || 0,
-        rigCostBonusPct: rigBonuses(fac, t1bp.man.p[0][0]).cost,
+        rigCostBonusPct: rigBonuses(fac, t1bp.man.p[0][0], 'cop').cost,
         sccPct: sccPct, taxPct: fac.tax || 0,
       });
     }
@@ -405,7 +418,7 @@
         var b = (fac.bonuses || {});
         invJob = jobCost('inv', eivOf(t1bp.man.m, 1), indices(fac.system, 'inv') || 0, {
           structCostBonusPct: b.cost || 0,
-          rigCostBonusPct: rigBonuses(fac, t1bp.man.p[0][0]).cost,
+          rigCostBonusPct: rigBonuses(fac, t1bp.man.p[0][0], 'inv').cost,
           sccPct: sccPct, taxPct: fac.tax || 0,
         });
       }
@@ -446,7 +459,7 @@
       var runsNeeded = Math.ceil(qty / pe.qtyPerRun);
       var produced = runsNeeded * pe.qtyPerRun;
       var structB = fac.bonuses || {};
-      var rig = rigBonuses(fac, tid);
+      var rig = rigBonuses(fac, tid, pe.activity);
       var sci = indices(fac.system, pe.activity) || 0;
       var eiv = eivOf(actData.m, runsNeeded);
       var isRoot = depth === 0;
@@ -491,7 +504,8 @@
             activity: pe.activity, facilityLabel: fac.label, runs: runsNeeded, time: time, eiv: eiv,
             costBreakdown: { sciGross: jc.sciGross, bonus: jc.bonus, scc: jc.scc, tax: jc.tax },
             matModifierBreakdown: { bpMe: v.me, structMe: structB.me || 0, rigMe: rig.me,
-                                    bpTe: v.te, structTe: structB.te || 0, rigTe: rig.te },
+                                    bpTe: v.te, structTe: structB.te || 0, rigTe: rig.te,
+                                    rigMeName: rig.meRig, rigTeName: rig.teRig },
           },
           children: children,
           invention: v.inv ? {
@@ -591,7 +605,7 @@
     function jobTimeFor(baseT, activity, productTid) {
       var fac = facilityFor(activity);
       var b = fac ? (fac.bonuses || {}) : {};
-      var rigTe = fac ? rigBonuses(fac, productTid).te : 0;
+      var rigTe = fac ? rigBonuses(fac, productTid, activity).te : 0;
       return (baseT || 0) * timeSkillMult(activity, sk) * (1 - (b.te || 0) / 100) * (1 - rigTe / 100);
     }
 
@@ -786,7 +800,8 @@
     return { evaluate: evaluate };
   }
 
-  var IndustryEngine = { create: create, matQty: matQty, jobCost: jobCost, DECRYPTORS: DECRYPTORS };
+  var IndustryEngine = { create: create, matQty: matQty, jobCost: jobCost,
+    timeSkillMult: timeSkillMult, DECRYPTORS: DECRYPTORS };
   if (typeof window !== 'undefined') window.IndustryEngine = IndustryEngine;
   if (typeof module !== 'undefined' && module.exports) module.exports = IndustryEngine;
 })();

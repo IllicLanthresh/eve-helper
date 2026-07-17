@@ -342,8 +342,11 @@
           facilities its scope selects; intermediates are not re-scoped mid-tree.</li>
       <li>Owned-blueprint ME/TE applies to the end product's own blueprint; intermediate blueprints use the
           "unowned BPO" defaults above. Owned T2 BPCs are shown in the BP column but priced via invention.</li>
-      <li>Structure role bonuses and rig values are hardcoded presets (marked "verify in game") — override
-          them per facility if your numbers differ.</li>
+      <li>Structure role bonuses are hardcoded presets (marked "verify in game") — override them per
+          facility if your numbers differ. Rigs are the REAL Standup catalog extracted from the SDE
+          (per-rig ME/TE/cost base %, product scope and security multipliers: engineering HS ×1.0,
+          LS ×1.9, NS/WH ×2.1 — an Efficiency rig grants BOTH ME and TE, e.g. XL T1 in null =
+          4.2% / 42%).</li>
     </ul>
   </details>
 </section>
@@ -678,16 +681,62 @@ const STRUCT_DEFAULTS = {   // role bonuses by structure type — presets, verif
   35835: { bonuses: { me: 0, te: 25, cost: 0 }, acts: ['rea'] },                             // Athanor
   35836: { bonuses: { me: 0, te: 25, cost: 0 }, acts: ['rea'] },                             // Tatara
 };
-const RIG_PRESETS = {   // Standup engineering rigs — base values, verify in game
-  t1me:   { label: 'T1 Material Efficiency (−2.0% mat)', attr: 'me', base: 2.0 },
-  t2me:   { label: 'T2 Material Efficiency (−2.4% mat)', attr: 'me', base: 2.4 },
-  t1te:   { label: 'T1 Time Efficiency (−20% time)',     attr: 'te', base: 20 },
-  t2te:   { label: 'T2 Time Efficiency (−24% time)',     attr: 'te', base: 24 },
-  t1cost: { label: 'T1 Cost Optimization (−10% job fee)', attr: 'cost', base: 10 },
-  t2cost: { label: 'T2 Cost Optimization (−12% job fee)', attr: 'cost', base: 12 },
+/* ----- real Standup rig catalog (data/industry.json "rigs" section, built from the
+   SDE). Each rig carries its own base %s, security-band multipliers, product scope
+   (groupIds; null = any product), activity list and structure fit. The legacy table
+   below only survives to migrate old stored profiles. ----- */
+const LEGACY_RIG_PRESETS = {
+  t1me:   { label: 'T1 Material Efficiency', attr: 'me', base: 2.0 },
+  t2me:   { label: 'T2 Material Efficiency', attr: 'me', base: 2.4 },
+  t1te:   { label: 'T1 Time Efficiency',     attr: 'te', base: 20 },
+  t2te:   { label: 'T2 Time Efficiency',     attr: 'te', base: 24 },
+  t1cost: { label: 'T1 Cost Optimization',   attr: 'cost', base: 10 },
+  t2cost: { label: 'T2 Cost Optimization',   attr: 'cost', base: 12 },
 };
-function secMult(sec){ return sec == null || sec >= 0.45 ? 1.0 : sec > 0 ? 1.9 : 2.1; }
+function secBand(sec){ return sec == null || sec >= 0.45 ? 'hs' : sec > 0 ? 'ls' : 'ns'; }
 function secLabel(sec){ return sec == null ? 'HS' : sec >= 0.45 ? 'HS' : sec > 0 ? 'LS' : 'NS/WH'; }
+const rigShortName = n => n.replace(/^Standup /, '');
+function structInfo(f){ return !f.npc && D && D.structures && f.typeId ? D.structures[f.typeId] || null : null; }
+/* rigs a facility's hull accepts: size match + the rig's canFitShipGroup list */
+function rigsForFacility(f){
+  const st = structInfo(f);
+  if (!st || !D.rigs) return [];
+  return Object.entries(D.rigs)
+    .filter(([, r]) => r.sz === st[2] && r.fit.includes(st[1]))
+    .map(([tid, r]) => [Number(tid), r])
+    .sort((a, b) => a[1].dom.localeCompare(b[1].dom) || a[1].n.localeCompare(b[1].n));
+}
+/* effective %s of a rig at a facility (base × the facility's security-band multiplier) */
+function rigEffective(rig, f){
+  const mult = rig.sec[secBand(f.security)] || 0;
+  return { me: rig.me * mult, te: rig.te * mult, cost: rig.cost * mult, mult };
+}
+function rigEffText(rig, f){
+  const e = rigEffective(rig, f);
+  const parts = [];
+  if (rig.me) parts.push(`ME ${e.me.toFixed(2)}%`);
+  if (rig.thuk && secBand(f.security) === 'ls') parts.push(`ME ${(rig.thuk.me * e.mult).toFixed(2)}% (capital comps)`);
+  if (rig.te) parts.push(`TE ${e.te.toFixed(1)}%`);
+  if (rig.cost) parts.push(`job cost ${e.cost.toFixed(1)}%`);
+  if (rig.unk) parts.push('⚠ unmapped scope — inert');
+  const acts = rig.act.every(a => a === 'man' || a === 'rea') ? '' : ` [${rig.act.join('/')}]`;
+  return parts.length ? `→ ${parts.join(' · ')}${acts} here` : '→ no effect here';
+}
+/* one selected rig → engine rig entries ({match, me, te, cost, act, n}); Thukker rigs
+   add a second LOWSEC-only entry carrying the enhanced capital-component ME */
+function rigEngineEntries(f, tid){
+  const rig = D && D.rigs ? D.rigs[tid] : null;
+  if (!rig) return [];
+  const band = secBand(f.security);
+  const mult = rig.sec[band] || 0;
+  const out = [{ n: rigShortName(rig.n),
+    match: rig.unk ? [] : (rig.scope ? rig.scope.slice() : null), // null = every product
+    me: rig.me * mult, te: rig.te * mult, cost: rig.cost * mult, act: rig.act.slice() }];
+  if (rig.thuk && band === 'ls')
+    out.push({ n: rigShortName(rig.n), match: rig.thuk.scope.slice(),
+      me: rig.thuk.me * mult, te: 0, cost: 0, act: rig.act.slice() });
+  return out;
+}
 
 function defaultProfile(name){
   // the three market roles default to whoever is ACTIVE when the profile is created
@@ -716,6 +765,51 @@ function normalizeProfile(p){
   if (pl.demandCapPct == null) pl.demandCapPct = 100;
   if (pl.maxHaulM3 == null) pl.maxHaulM3 = 350000;
   return p;
+}
+/* One-time migration of legacy generic rig rows ({preset, scope:[topMgids]}) to real
+   catalog rigs. Needs the static data (catalog + structure sizes), so it runs right
+   after loadStatic() rather than inside normalizeProfile(). Best-effort: a legacy row
+   maps only when its top-market-group scope pins a single known domain AND the preset's
+   base value matches exactly one size-appropriate manufacturing rig; everything else is
+   dropped and listed in a one-time inline notice on the facility list. */
+const LEGACY_SCOPE_DOMAIN = {   // legacy scope top mgid → catalog rig name fragment
+  9: 'Equipment Manufacturing',         // Ship Equipment
+  11: 'Ammunition Manufacturing',       // Ammunition & Charges
+  157: 'Drone and Fighter Manufacturing',
+  4: '-Set Ship Manufacturing',         // Ships — resolves only at XL (one rig, all ships)
+};
+function migrateRigs(){
+  if (!D || !D.rigs) return;
+  let changed = false;
+  for (const p of profStore.profiles){
+    const mapped = [], dropped = [];
+    for (const f of p.facilities || []){
+      if (!f.rigs || !f.rigs.some(r => r && r.preset != null)) continue;
+      const valid = rigsForFacility(f);
+      const next = [];
+      for (const r of f.rigs){
+        if (!r || r.preset == null){ if (r && r.tid != null) next.push(r); continue; }
+        const pr = LEGACY_RIG_PRESETS[r.preset];
+        const scopeIds = (r.scope || []).filter(Boolean);
+        const frag = pr && scopeIds.length === 1 ? LEGACY_SCOPE_DOMAIN[scopeIds[0]] : null;
+        const cands = frag ? valid.filter(([, rig]) => rig.n.includes(frag) && rig.act.includes('man')
+          && (pr.attr === 'me' ? rig.me === pr.base : pr.attr === 'te' ? rig.te === pr.base : false)) : [];
+        const label = `${f.label}: ${pr ? pr.label : r.preset} (${scopeSummary(scopeIds)})`;
+        if (cands.length === 1 && next.length < 3){
+          if (next.some(x => x.tid === cands[0][0]))
+            mapped.push(`${label} → ${rigShortName(cands[0][1].n)} (merged — one rig grants both)`);
+          else{
+            next.push({ tid: cands[0][0] });
+            mapped.push(`${label} → ${rigShortName(cands[0][1].n)}`);
+          }
+        } else dropped.push(label);
+      }
+      f.rigs = next;
+      changed = true;
+    }
+    if (mapped.length || dropped.length) p.rigMigration = { mapped, dropped };
+  }
+  if (changed){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} }
 }
 let profStore = { active: null, profiles: [] };
 function loadProfiles(){
@@ -816,6 +910,31 @@ function renderFacilities(){
   const p = activeProfile();
   const box = $('facList');
   box.textContent = '';
+  if (p.rigMigration){
+    const note = document.createElement('div');
+    note.id = 'rigMigNote';
+    note.style.cssText = 'margin-top:10px;padding:8px 12px;border:1px solid #6b571f;background:#3a2f14;color:var(--amber);border-radius:8px;font-size:12px';
+    const head = document.createElement('div');
+    head.textContent = 'Generic rig presets were replaced by the real Standup rig catalog — your stored rig rows were migrated:';
+    note.appendChild(head);
+    for (const m of p.rigMigration.mapped || []){
+      const d = document.createElement('div');
+      d.textContent = '✓ ' + m;
+      d.style.color = 'var(--green)';
+      note.appendChild(d);
+    }
+    for (const m of p.rigMigration.dropped || []){
+      const d = document.createElement('div');
+      d.textContent = '✗ dropped (no unambiguous catalog match): ' + m;
+      note.appendChild(d);
+    }
+    const ok = document.createElement('button');
+    ok.className = 'mini'; ok.type = 'button'; ok.textContent = 'got it';
+    ok.style.marginTop = '4px';
+    ok.addEventListener('click', () => { delete p.rigMigration; saveProfiles(); renderFacilities(); });
+    note.appendChild(ok);
+    box.appendChild(note);
+  }
   if (!p.facilities.length){
     const d = document.createElement('div');
     d.className = 'hint'; d.style.marginTop = '10px';
@@ -930,38 +1049,70 @@ function renderFacilities(){
     if (!f.npc){
       const rigBox = document.createElement('div');
       rigBox.style.marginTop = '6px';
+      const st = structInfo(f);
+      const valid = rigsForFacility(f);
+      // rig slot count from the SDE structures map (dogma rigSlots — 3 for every
+      // industry-capable Upwell hull; the fallback 3 covers unknown types)
+      const slots = st ? st[3] : 3;
       const cap = document.createElement('span');
       cap.className = 'hint';
-      cap.title = 'rig bonus × security multiplier (HS ×1.0, LS ×1.9, NS/WH ×2.1) — engineering-rig values; '
-        + 'reaction-rig multipliers may differ, VERIFY IN GAME';
-      cap.textContent = `rigs (sec multiplier ×${secMult(f.security)})`;
+      cap.title = 'real Standup rig catalog from the SDE — bonuses shown are base % × this '
+        + 'system’s security-band multiplier (engineering rigs: HS ×1.0, LS ×1.9, NS/WH ×2.1; '
+        + 'reactor rigs: LS ×1.0, NS/WH ×1.1, never HS)';
+      cap.textContent = st
+        ? `rigs — ${st[2]}-Set, ${slots} slots, ${secLabel(f.security)} multipliers`
+        : 'rigs — unknown structure type, catalog unavailable';
       rigBox.appendChild(cap);
       (f.rigs = f.rigs || []).forEach((r, ri) => {
         const row = document.createElement('div');
         row.className = 'rig';
         const sel = document.createElement('select');
-        for (const [k, pr] of Object.entries(RIG_PRESETS)){
+        sel.style.width = '340px';
+        let og = null, ogDom = null;
+        for (const [tid, rig] of valid){
+          if (rig.dom !== ogDom){
+            og = document.createElement('optgroup');
+            og.label = rig.dom; ogDom = rig.dom;
+            sel.appendChild(og);
+          }
           const o = document.createElement('option');
-          o.value = k; o.textContent = pr.label;
+          o.value = String(tid);
+          o.textContent = rigShortName(rig.n) + (rig.unk ? ' ⚠' : '');
+          og.appendChild(o);
+        }
+        const known = r.tid != null && D && D.rigs && D.rigs[r.tid];
+        if (known && !valid.some(([tid]) => tid === r.tid)){
+          // stored rig no longer fits (structure type changed) — keep it selectable but flagged
+          const o = document.createElement('option');
+          o.value = String(r.tid);
+          o.textContent = rigShortName(D.rigs[r.tid].n) + ' ⚠ wrong size for this hull';
           sel.appendChild(o);
         }
-        sel.value = r.preset;
-        sel.addEventListener('change', () => { r.preset = sel.value; saveProfiles(); });
+        sel.value = String(r.tid);
+        sel.addEventListener('change', () => { r.tid = Number(sel.value); saveProfiles(); renderFacilities(); });
         const eff = document.createElement('span');
         eff.className = 'hint';
-        const pr = RIG_PRESETS[r.preset];
-        eff.textContent = `→ ${(pr.base * secMult(f.security)).toFixed(2)}% ${pr.attr}`;
+        eff.textContent = known ? rigEffText(D.rigs[r.tid], f) : '→ unknown rig';
         const rx = document.createElement('span');
         rx.className = 'x'; rx.textContent = '×'; rx.title = 'remove rig';
         rx.addEventListener('click', () => { f.rigs.splice(ri, 1); saveProfiles(); renderFacilities(); });
-        row.append(sel, eff, scopePicker(r.scope = r.scope || [], () => saveProfiles()), rx);
+        row.append(sel, eff, rx);
         rigBox.appendChild(row);
       });
+      const ctlLine = document.createElement('div');
+      ctlLine.className = 'rowline';
+      ctlLine.style.marginTop = '4px';
       const addRig = document.createElement('button');
       addRig.className = 'mini'; addRig.type = 'button'; addRig.textContent = '+ rig';
-      addRig.style.marginTop = '4px';
-      addRig.addEventListener('click', () => { f.rigs.push({ preset: 't1me', scope: [] }); saveProfiles(); renderFacilities(); });
-      rigBox.appendChild(addRig);
+      addRig.disabled = !valid.length || f.rigs.length >= slots;
+      addRig.title = !valid.length ? 'no catalog rigs fit this structure'
+        : f.rigs.length >= slots ? `all ${slots} rig slots used` : '';
+      addRig.addEventListener('click', () => {
+        f.rigs.push({ tid: valid[0][0] });
+        saveProfiles(); renderFacilities();
+      });
+      ctlLine.append(addRig);
+      rigBox.appendChild(ctlLine);
       card.appendChild(rigBox);
     }
 
@@ -1223,12 +1374,9 @@ let ovrIdx = {};                    // 'ovr:<uid>' -> cost-index fraction
 function clearEngines(){ engineCache.clear(); }
 
 function facilityToEngine(f){
-  const rigs = (f.rigs || []).map(r => {
-    const pr = RIG_PRESETS[r.preset] || RIG_PRESETS.t1me;
-    const e = { match: (r.scope && r.scope.length ? r.scope : TOP_MGIDS).slice(), me: 0, te: 0, cost: 0 };
-    e[pr.attr] = pr.base * secMult(f.security);
-    return e;
-  });
+  const rigs = [];
+  for (const r of f.rigs || [])
+    if (r.tid != null) rigs.push(...rigEngineEntries(f, r.tid));
   let system = f.system;
   if (f.sciOverride != null){
     system = 'ovr:' + f.uid;
@@ -2023,8 +2171,11 @@ function renderNode(node, rootTid, depth, p){
       + `SCC ${fmtIsk(cb.scc)} · facility tax ${fmtIsk(cb.tax)} · EIV ${fmtIsk(node.job.eiv)}`;
     const mod = document.createElement('div');
     mod.className = 'feeline';
-    mod.textContent = `modifiers: ME bp ${mm.bpMe}% / struct ${mm.structMe}% / rig ${mm.rigMe.toFixed(2)}% — `
-      + `TE bp ${mm.bpTe}% / struct ${mm.structTe}% / rig ${mm.rigTe.toFixed(2)}%`;
+    // the engine reports WHICH catalog rig supplied each bonus — name it
+    const rigMe = mm.rigMe.toFixed(2) + '%' + (mm.rigMeName ? ` (${mm.rigMeName})` : '');
+    const rigTe = mm.rigTe.toFixed(2) + '%' + (mm.rigTeName && mm.rigTeName !== mm.rigMeName ? ` (${mm.rigTeName})` : '');
+    mod.textContent = `modifiers: ME bp ${mm.bpMe}% / struct ${mm.structMe}% / rig ${rigMe} — `
+      + `TE bp ${mm.bpTe}% / struct ${mm.structTe}% / rig ${rigTe}`;
     box.append(fee, mod);
   }
   if (node.invention) box.appendChild(renderInvention(node.invention));
@@ -2088,6 +2239,7 @@ function treeTsv(res){
   renderProfBar();
   bindSettings();
   await loadStatic();
+  migrateRigs();               // legacy generic rig rows → real catalog rigs (one-time)
   renderProfileEditor();
   await loadCaches();
   render();

@@ -219,9 +219,17 @@ Each holds:
   security and structure type auto-detected; Raitaru/Azbel/Sotiyo/Athanor/Tatara role
   bonuses pre-filled as editable presets marked *verify in game*) or NPC stations (type
   the system name for its cost index). Per facility: activity checkboxes, owner-set
-  facility tax, optional cost-index override, and **rigs** as T1/T2 × ME/TE/Cost presets
-  with the security-band multiplier applied automatically (HS ×1.0, LS ×1.9, NS/WH ×2.1)
-  plus an optional market-group scope per rig.
+  facility tax, optional cost-index override, and **rigs from the real Standup catalog**
+  (extracted from the SDE at build time): the picker lists exactly the rigs the hull
+  accepts (M/L/XL-Set by structure size, up to its 3 rig slots), grouped by domain and
+  showing the effective bonus at the structure's security band (engineering rigs HS ×1.0,
+  LS ×1.9, NS/WH ×2.1; reactor rigs LS ×1.0, NS/WH ×1.1). A single L/XL *Manufacturing
+  Efficiency* rig grants **both** ME and TE (e.g. XL T1 in null: 4.2% / 42%); M-size
+  structures use separate ME and TE rigs, exactly as in game. Each rig applies only to
+  its real product scope (ship classes, equipment, ammo, drones, components, structures,
+  reaction families) and its own activity (Thukker rigs keep their lowsec-only enhanced
+  capital-component ME). Old profiles with the former generic T1/T2 presets are migrated
+  best-effort — unmappable rows are dropped with a one-time inline notice.
 - **Market settings**: buy inputs instantly vs at buy order; sell output via sell order
   vs instant — and **three market roles**, each a dropdown of your logged-in characters
   (defaulting to whoever was active when the profile was created, persisted per profile;
@@ -300,5 +308,6 @@ and TSV export of the tree or the whole table.
 - Demand/history is regional (The Forge), both order sides combined.
 - Facility product scopes and owned-BP ME/TE apply per end product; intermediates use the
   unowned-BPO defaults. Owned T2 BPCs are displayed but priced via invention.
-- Structure role/rig bonus presets are hardcoded — verify in game and override per
-  facility if needed.
+- Structure ROLE bonus presets (ME 1% / TE 15-30% / cost) are hardcoded — verify in game
+  and override per facility if needed. Rig bonuses are real SDE dogma values, applied to
+  each rig's real product scope and activity.
