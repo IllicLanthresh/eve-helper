@@ -30,7 +30,10 @@
 
    evaluate(productTypeId, opts) opts:
    - runs (default 1), meOverride/teOverride (root blueprint only), maxDepth,
-     forceBuy: Set<tid>, forceBuild: Set<tid>.
+     forceBuy: Set<tid>, forceBuild: Set<tid>,
+     noInvention (root only) — price the root straight off its blueprint (owned
+     BPO/BPC in hand), skipping the invention variants and their amortized overhead;
+     pair it with meOverride/teOverride carrying the owned blueprint's research.
 
    Returns { tid, name, produced, runs, totals, tree, stats } where totals =
    { costPerItem, revenuePerItem, profitPerItem, marginPct, roiPct, iskPerHour,
@@ -223,7 +226,7 @@
 
     /* Copy job cost for a 1-run T1 copy (v1: EIV = T1 man materials × 1 run). */
     function copyCost(t1bp) {
-      if (!t1bp.cop || !t1bp.man) return { total: 0 };
+      if (!t1bp.cop || !t1bp.man || !t1bp.man.p.length) return { total: 0 };
       var fac = facilityFor('cop');
       if (!fac) return { total: 0 };
       var eiv = eivOf(t1bp.man.m, 1);
@@ -257,7 +260,8 @@
       }
       var fac = facilityFor('inv');
       var invJob = { total: 0 };
-      if (fac && t1bp.man) {
+      // SDE edge: a handful of T1 blueprints carry an empty man.p (e.g. Standup rig BPOs)
+      if (fac && t1bp.man && t1bp.man.p.length) {
         var b = (fac.bonuses || {});
         invJob = jobCost('inv', eivOf(t1bp.man.m, 1), indices(fac.system, 'inv') || 0, {
           structCostBonusPct: b.cost || 0,
@@ -308,7 +312,8 @@
       var isRoot = depth === 0;
 
       // ME/TE variants: plain BPO, or invention options (each with its own ME/TE + overhead)
-      var invInfo = pe.activity === 'man' ? inventionOptions(pe.bpid, ctx) : null;
+      var invInfo = pe.activity === 'man' && !(isRoot && ctx.noInvention)
+        ? inventionOptions(pe.bpid, ctx) : null;
       var variants;
       if (invInfo && invInfo.options.length) {
         variants = invInfo.options.map(function (o) {
@@ -424,6 +429,7 @@
         maxDepth: opts.maxDepth != null ? opts.maxDepth : (params.maxDepth != null ? params.maxDepth : 10),
         forceBuy: opts.forceBuy || new Set(), forceBuild: opts.forceBuild || new Set(),
         meOverride: opts.meOverride, teOverride: opts.teOverride,
+        noInvention: !!opts.noInvention,
         memo: new Map(), stats: { nodesResolved: 0, memoHits: 0 },
       };
       var produced = pe.qtyPerRun * ctx.runs;

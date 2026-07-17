@@ -276,6 +276,9 @@
       }
     }catch(_e){ /* groups stay empty — pages fall back to the flat refine input */ }
     c.skills = { ...skills, groups, fetched: new Date().toISOString() };
+    // full trained-skill list {typeId: level} — the Industry tool feeds it to the calc
+    // engine and the "only if skilled" filter, which need arbitrary skills by type id
+    c.allSkills = byId;
     save(auth);
     return c.skills;
   }
@@ -417,6 +420,9 @@
     characters,
     active: () => (auth.active != null ? auth.active : null),
     skills: id => { const c = auth.chars[id != null ? id : auth.active]; return (c && c.skills) || null; },
+    // {skillTypeId: activeLevel} for every trained skill — null until skills were
+    // (re)fetched by this version (topbar ↻ or a fresh login backfills it)
+    allSkills: id => { const c = auth.chars[id != null ? id : auth.active]; return (c && c.allSkills) || null; },
     standings: id => { const c = auth.chars[id != null ? id : auth.active]; return (c && c.standings) || null; },
     // for pages that call authenticated ESI endpoints themselves (structure markets)
     token: id => getToken(id != null ? id : auth.active),
