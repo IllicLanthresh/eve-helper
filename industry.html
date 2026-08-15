@@ -545,17 +545,52 @@ function renderAges(){
   mk('owned blueprints', ownedBp,
     ownedBp ? Object.entries(ownedBp.counts || {}).map(([o, n]) => `${o}: ${n}`).join(', ') || '0 blueprints' : '');
   renderBpNote();
+  renderOwnedFilterNote();
 }
 
 function renderBpNote(){
   const el = $('bpNote');
   el.textContent = '';
+  el.className = 'hint';
   if (!window.EveAuth) return;
   const missing = ownedBp && ownedBp.missing ? ownedBp.missing : [];
-  if (missing.length){
-    el.textContent = `owned blueprints skipped for ${missing.join(', ')} — add ${BP_SCOPE} to the app in the `
-      + 'EVE developer portal and log in again with that character';
+  // the blueprints scope is what turns "assumed ME/TE" into "your actual ME/TE" — say
+  // so plainly, and hand over the permissions panel instead of prose instructions
+  const permNote = EveAuth.permissionNote
+    ? EveAuth.permissionNote(BP_SCOPE, null, { label: 'owned blueprints unavailable' })
+    : null;
+  if (permNote){
+    const p = activeProfile();
     el.className = 'hint warn';
+    el.append(`this table is using the profile's ASSUMED ME ${p.assumptions.ownedBpoMe} / TE `
+      + `${p.assumptions.ownedBpoTe} for every blueprint, not your researched values — `);
+    el.appendChild(permNote);
+    return;
+  }
+  if (missing.length){
+    el.className = 'hint warn';
+    el.append(`owned blueprints skipped for ${missing.join(', ')} — that character's token predates `
+      + `${BP_SCOPE}; their blueprints fall back to the profile's assumed ME/TE. `);
+    if (EveAuth.showPermissions){
+      const link = document.createElement('span');
+      link.className = 'evePermLink';
+      link.textContent = 'see permissions';
+      link.addEventListener('click', () => EveAuth.showPermissions());
+      el.appendChild(link);
+    }
+  }
+}
+
+// the "only owned BPs" filter silently shows nothing useful without the scope — flag it
+function renderOwnedFilterNote(){
+  const lab = $('fltOwned').closest('label');
+  const old = lab.querySelector('.evePermLink');
+  if (old) old.remove();
+  if (!window.EveAuth || !EveAuth.permissionNote) return;
+  const note = EveAuth.permissionNote(BP_SCOPE, null, { label: "can't be trusted" });
+  if (note){
+    note.textContent = "⚠ can't be trusted without the blueprints permission";
+    lab.appendChild(note);
   }
 }
 

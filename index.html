@@ -1803,15 +1803,21 @@ if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state 
       computedBroker = brokerPctFor(sk, factionSt, corpSt);
       $('brokerFee').value = (obsB != null ? obsB : computedBroker).toFixed(2);
       const r2 = x => Math.round(x * 100) / 100;
-      const standingsBit = st && st.unavailable
-        ? 'standings scope no longer exists on EVE SSO — edit the broker fee by hand if you have standings'
-        : st && st.needsRelogin
-          ? 'standings n/a — log in again to grant standings access'
-          : `${(own && own.corpName) || 'corp'} ${r2(corpSt)} / ${(own && own.factionName) || 'faction'} ${r2(factionSt)} unmodified`;
+      const degraded = st && (st.unavailable || st.needsRelogin);
+      const standingsBit = degraded
+        ? 'standings unavailable, so the fee is computed as if they were zero'
+        : `${(own && own.corpName) || 'corp'} ${r2(corpSt)} / ${(own && own.factionName) || 'faction'} ${r2(factionSt)} unmodified`;
       const brokerBit = obsB != null
         ? `broker ${obsB.toFixed(2)}% — your observed rate for ${hNow.label} (overrides the computed ${computedBroker.toFixed(2)}%)`
         : `broker ${computedBroker.toFixed(2)}% (Broker ${sk.brokerRelations}, ${standingsBit})`;
       note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · ${brokerBit} — every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee, so cheap stacks pay more than the nominal rate`;
+      // when the standings scope is what is missing, route to the permissions panel
+      // rather than leaving the user to work out what "n/a" meant
+      if (degraded && EveAuth.permissionNote){
+        note.append(' · ');
+        EveAuth.permissionNote('esi-characters.read_standings.v1', note,
+          { label: 'standings unavailable' });
+      }
       syncObserved();
       rebuild();
     }catch(e){

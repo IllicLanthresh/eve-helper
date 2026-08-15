@@ -79,11 +79,30 @@ The SSO rejects a login outright (`invalid_scope`) when the request names a scop
 doesn't have — or one CCP has removed server-side (it happens: `esi-characterstats.read.v1`
 went away in 2025 with exactly that rejection). Before redirecting to the SSO, the site
 checks the SSO's published metadata and automatically drops scopes that no longer exist,
-so the login itself keeps working. Characters logged in before the standings feature carry
-tokens without the standings scope — the Sell tool then computes with standings 0 and asks
-you to log in again (the "+ alt" / login flow re-grants the character with both scopes);
-if the standings scope itself is gone from the SSO, the tool says so instead and the
-broker fee stays hand-editable.
+so the login itself keeps working.
+
+**Permissions panel** (every page): nothing about a missing permission is left to guess.
+When anything the site asks for is unavailable, the top bar shows a `⚠ N permissions`
+link; clicking it opens a panel listing, per logged-in character, which scopes are granted
+and which are not — each missing one with the plain-language consequence ("disables: your
+real researched ME/TE and which BPOs you own…") and, crucially, **which of three problems
+it is**:
+
+- **not granted** — the character's token predates the scope. A *re-login to grant* button
+  sits right there; a token only carries the scopes that existed when it was issued.
+- **your SSO application is missing it** — the SSO rejected the scope at the authorize
+  step, so it is not ticked on the app in the developer portal. Logging in again changes
+  nothing until that is fixed, and the panel says so in its own section.
+- **CCP retired it** — the scope is gone from the SSO metadata. Not your fault and not
+  fixable by you; the panel says that plainly.
+
+The panel always shows the concrete fix: the exact scope list (with a copy button), the
+exact callback URL to paste, a link to the developer portal, and the reminder that each
+character must log in again afterwards. Everywhere a feature actually degrades — the Sell
+fee note, the structure picker, the Industry owned-blueprints area and its "only owned
+BPs" filter, the Mine skills panel — a short `⚠` line names what is unavailable and opens
+the same panel. Nothing ever blocks: every tool keeps working in its degraded mode, and
+when all permissions are granted the site says nothing at all.
 
 ---
 

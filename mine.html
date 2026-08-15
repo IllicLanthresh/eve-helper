@@ -1676,6 +1676,22 @@ renderAll();
       renderPlan();
       return;
     }
+    // the skills scope is what makes every per-ore yield real — without it the whole
+    // panel is a manual fallback, so say that where the yields would have been
+    const skillsPerm = EveAuth.permissionNote
+      ? EveAuth.permissionNote('esi-skills.read_skills.v1', null, { label: 'refine yields unavailable' })
+      : null;
+    if (skillsPerm){
+      charSkills = null;
+      note.textContent = ' ';
+      note.appendChild(skillsPerm);
+      renderFacControls();
+      renderSkillsPanel();
+      $('refine').disabled = false;
+      $('refine').title = 'skills unavailable — set the refine rate by hand';
+      renderPlan();
+      return;
+    }
     try{
       let sk = EveAuth.skills();
       if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)

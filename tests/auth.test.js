@@ -185,7 +185,9 @@ H.run('auth', async () => {
     const feeNote = await s.page.evaluate(() =>
       [...document.querySelectorAll('fieldset.grp .hint')].map(n => n.textContent).find(t => /⚡/.test(t)) || '');
     check('the Sell page explains it rather than silently using 0',
-      /log in again to grant standings access/.test(feeNote), feeNote);
+      /as if they were zero/.test(feeNote), feeNote);
+    check('...and routes to the permissions panel (see permissions.test.js)',
+      await s.page.evaluate(() => !!document.querySelector('.evePermLink[data-perm-scope="esi-characters.read_standings.v1"]')));
     await s.close();
 
     /* ---------- the SSO itself no longer offering the scope reads differently ---------- */

@@ -20,7 +20,29 @@
     'esi-search.search_structures.v1',    // find structures by name
   ];
   const BLUEPRINTS_SCOPE = 'esi-characters.read_blueprints.v1';  // owned BPs with real ME/TE (Industry tool)
-  const SCOPES = ['esi-skills.read_skills.v1', STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE].join(' ');
+  const SKILLS_SCOPE = 'esi-skills.read_skills.v1';
+  const SCOPES = [SKILLS_SCOPE, STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE].join(' ');
+
+  /* What the user actually loses when a scope is missing, in plain language. These
+     strings are shown verbatim in the permissions modal and in the inline notes next to
+     the feature that degraded, so they must read as consequences, not as scope names. */
+  const SCOPE_FEATURES = {
+    [SKILLS_SCOPE]: [
+      'auto-filled fees, refine yields, job times and invention chance — without it every skill-derived number falls back to a manual input',
+    ],
+    [STANDINGS_SCOPE]: [
+      'the standings part of the NPC broker fee — without it the fee is computed as if your standings were zero',
+    ],
+    'esi-markets.structure_markets.v1': ['prices from player-structure markets'],
+    'esi-universe.read_structures.v1': [
+      'structure names and systems in the picker (Sell market, Mine refinery, Industry facilities)',
+    ],
+    'esi-search.search_structures.v1': ['searching for your structures by name'],
+    [BLUEPRINTS_SCOPE]: [
+      "your real researched ME/TE and which BPOs you own — without it the Industry tab uses the profile's assumed ME/TE",
+    ],
+  };
+  const featuresOf = scope => SCOPE_FEATURES[scope] || [];
 
   const SKILL_IDS = {
     accounting: 16622,
@@ -194,6 +216,8 @@
     };
     if (!keepActive) auth.active = id;
     delete auth.pkce;
+    // a login that got all the way to a token supersedes any earlier authorize failure
+    if (!keepActive) delete auth.lastAuthError;
     save(auth);
   }
 
@@ -201,12 +225,24 @@
     const q = new URLSearchParams(location.search);
     const err = q.get('error');
     if (err){
-      // the SSO bounced the login (e.g. invalid_scope when the app lacks a requested
-      // scope, or CCP removed it server-side) — never fail silently
+      // The SSO bounced the login — most often invalid_scope, which means the scope is
+      // not assigned to the APPLICATION in the developer portal (a portal fix), not that
+      // the character merely needs to log in again. Remember it: the permissions report
+      // uses it to tell those two very different situations apart.
+      const description = q.get('error_description') || '';
+      auth.lastAuthError = {
+        error: err,
+        description,
+        at: Date.now(),
+        // the SSO usually names the offending scope in the description
+        scope: SCOPES.split(' ').find(s => description.includes(s)) || null,
+      };
       delete auth.pkce;
       save(auth);
       history.replaceState(null, '', location.pathname);
-      alert('EVE login failed: ' + (q.get('error_description') || err));
+      renderUI();
+      alert('EVE login failed: ' + (description || err)
+        + '\nSee the ⚠ permissions panel in the top bar for what this disables and how to fix it.');
       return false;
     }
     const code = q.get('code');
@@ -315,6 +351,82 @@
     return c.standings;
   }
 
+  /* ---------- permissions report ----------
+     One place that answers "what can this site not do right now, and whose fault is it".
+     Three very different situations get three different reasons:
+       'not-granted' — the site asks for the scope and the app offers it, but THIS
+                       character's token predates it: they just need to log in again.
+       'app-missing' — the SSO rejected the scope at the authorize step, i.e. it is not
+                       ticked on the application in the developer portal: a portal fix,
+                       and logging in again changes nothing until it is done.
+       'sso-removed' — CCP no longer publishes the scope at all (it vanished from the
+                       SSO metadata). Not the user's fault and not fixable by them.
+
+     @typedef {Object} MissingScope
+     @property {string} scope                       ESI scope name
+     @property {string[]} features                  plain-language consequences
+     @property {'not-granted'|'app-missing'|'sso-removed'} reason
+
+     @typedef {Object} CharPermissions
+     @property {number} id
+     @property {string} name
+     @property {string[]} granted
+     @property {MissingScope[]} missing
+
+     @typedef {Object} AppIssue
+     @property {string} scope
+     @property {'app-missing'|'sso-removed'} reason
+     @property {string} detail                      human-readable explanation
+
+     @typedef {Object} PermissionsReport
+     @property {CharPermissions[]} chars
+     @property {AppIssue[]} appIssues
+     @property {boolean} allGood                    nothing missing anywhere
+
+     @returns {PermissionsReport} */
+  function permissions(){
+    const want = SCOPES.split(' ');
+    const dropped = auth.droppedScopes || [];
+    const authErr = auth.lastAuthError || null;
+    const appMissing = authErr && authErr.scope ? [authErr.scope] : [];
+
+    const reasonFor = scope => dropped.includes(scope) ? 'sso-removed'
+      : appMissing.includes(scope) ? 'app-missing'
+      : 'not-granted';
+
+    const chars = Object.values(auth.chars).map(c => {
+      const granted = c.tokens ? scopesOf(c.tokens.access) : [];
+      return {
+        id: c.character.id,
+        name: c.character.name,
+        granted,
+        missing: want.filter(s => !granted.includes(s))
+          .map(scope => ({ scope, features: featuresOf(scope), reason: reasonFor(scope) })),
+      };
+    });
+
+    const appIssues = [];
+    for (const scope of dropped) appIssues.push({
+      scope, reason: 'sso-removed',
+      detail: 'EVE SSO no longer publishes this scope, so it cannot be requested at all. '
+        + 'CCP retired it server-side — there is nothing you can do about it, and nothing you did wrong.',
+    });
+    if (authErr && !dropped.includes(authErr.scope)) appIssues.push({
+      scope: authErr.scope,
+      reason: 'app-missing',
+      detail: 'The SSO rejected the last login with "' + (authErr.error || 'error') + '"'
+        + (authErr.description ? ': ' + authErr.description : '')
+        + '. That means your SSO application does not have this scope ticked in the developer '
+        + 'portal. Add it there first — logging in again will keep failing until you do.',
+    });
+
+    return {
+      chars,
+      appIssues,
+      allGood: !appIssues.length && chars.every(c => !c.missing.length),
+    };
+  }
+
   function setActive(charId){
     const id = Number(charId);
     if (!auth.chars[id] || auth.active === id) return;
@@ -337,6 +449,298 @@
     save(auth);
     renderUI();
     fireChange();
+  }
+
+  /* ---------- shared modal chrome ----------
+     One stylesheet for every modal on the site (this one and the structure picker),
+     injected once from here because auth.js loads first on every page. Anything wanting
+     a modal builds .eveModal > .panel and calls EveAuth.modalCss(). */
+  let cssDone = false;
+  function modalCss(){
+    if (cssDone) return;
+    cssDone = true;
+    const s = document.createElement('style');
+    s.textContent = `
+.eveModal{position:fixed;inset:0;background:rgba(4,6,10,.72);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:12vh}
+.eveModal .panel{width:480px;max-width:92vw;background:var(--panel,#121722);border:1px solid var(--line,#232c3d);border-radius:10px;padding:14px 16px 16px;box-shadow:0 14px 44px rgba(0,0,0,.55);font-size:13px;color:var(--text,#d5dce8)}
+.eveModal .panel.wide{width:640px}
+.eveModal h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan,#5bc8e8);display:flex;align-items:center}
+.eveModal .x{margin-left:auto;cursor:pointer;color:var(--dim,#8b96a8);font-size:17px;line-height:1;text-transform:none;padding:0 3px;border-radius:4px}
+.eveModal .x:hover{color:var(--text,#d5dce8);background:#1b2434}
+.eveModal input{width:100%;background:var(--panel2,#0e131d);color:var(--text,#d5dce8);border:1px solid var(--line,#232c3d);border-radius:6px;padding:6px 9px;font:13px var(--mono,ui-monospace,monospace)}
+.eveModal .rows{margin-top:6px;max-height:38vh;overflow-y:auto}
+.eveModal .row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer}
+.eveModal .row:hover,.eveModal .row.active{background:#1b2434}
+.eveModal .row .sub{color:var(--dim,#8b96a8);font-size:12px;margin-left:6px}
+.eveModal .row .del{margin-left:auto;color:var(--dim,#8b96a8);padding:0 6px;border-radius:4px;font-size:15px}
+.eveModal .row .del:hover{color:var(--red,#e06c75);background:#242e42}
+.eveModal .msg{color:var(--dim,#8b96a8);margin-top:8px;min-height:16px}
+.eveModal .msg.err{color:var(--red,#e06c75)}
+.eveModal .sect{color:var(--dim,#8b96a8);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:2px 0 4px}
+.eveModal .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line,#232c3d);border-top-color:var(--cyan,#5bc8e8);border-radius:50%;animation:evemodalspin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes evemodalspin{to{transform:rotate(360deg)}}
+/* permissions panel */
+.eveModal .body{max-height:60vh;overflow-y:auto;margin-top:4px}
+.eveModal .pchar{border:1px solid var(--line,#232c3d);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.eveModal .pchar .hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.eveModal .pchar .hd b{color:var(--text,#d5dce8)}
+.eveModal .pscope{display:flex;gap:7px;align-items:flex-start;padding:3px 0;line-height:1.45}
+.eveModal .pscope .ic{flex:0 0 auto;width:13px}
+.eveModal .pscope.ok .ic{color:var(--green,#7ec699)}
+.eveModal .pscope.bad .ic{color:var(--amber,#e5b567)}
+.eveModal .pscope code{font:12px var(--mono,ui-monospace,monospace);color:var(--dim,#8b96a8)}
+.eveModal .pscope .why{display:block;color:var(--dim,#8b96a8);font-size:12px}
+.eveModal .app{border:1px solid var(--red,#e06c75);border-radius:8px;padding:8px 10px;margin:10px 0 8px}
+.eveModal .app .sect{color:var(--red,#e06c75)}
+.eveModal .fix{border-top:1px solid var(--line,#232c3d);margin-top:8px;padding-top:8px}
+.eveModal .fix ol{margin:6px 0 0;padding-left:18px;line-height:1.6}
+.eveModal .fix code{font:12px var(--mono,ui-monospace,monospace);color:var(--cyan,#5bc8e8);word-break:break-all}
+.eveModal button{background:#1b2434;color:var(--text,#d5dce8);border:1px solid var(--line,#232c3d);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.eveModal button:hover{background:#242e42}
+.eveModal button.primary{border-color:var(--cyan,#5bc8e8);color:var(--cyan,#5bc8e8)}
+.evePermLink{color:var(--amber,#e5b567);cursor:pointer;text-decoration:underline dotted}`;
+    document.head.appendChild(s);
+  }
+
+  const REASON_LABEL = {
+    'not-granted': 'this character has not granted it — log in again',
+    'app-missing': 'your SSO application does not have this scope — fix it in the developer portal',
+    'sso-removed': 'CCP retired this scope — nothing you can do, and nothing you did wrong',
+  };
+
+  /* The permissions panel: what is missing, what it costs you, and exactly how to fix
+     it. Never opens by itself — everything keeps working degraded. */
+  function showPermissions(){
+    modalCss();
+    const stale = document.getElementById('evePerms');
+    if (stale) stale.remove();
+    const rep = permissions();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'evePerms';
+    overlay.className = 'eveModal';
+    const panel = document.createElement('div');
+    panel.className = 'panel wide';
+    overlay.appendChild(panel);
+
+    const h = document.createElement('h3');
+    h.textContent = 'ESI permissions';
+    const x = document.createElement('span');
+    x.className = 'x'; x.textContent = '×'; x.title = 'close (Esc)';
+    h.appendChild(x);
+    panel.appendChild(h);
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    panel.appendChild(body);
+
+    const close = () => {
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+    };
+    overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(); });
+    x.addEventListener('click', close);
+    function onKey(e){ if (e.key === 'Escape'){ e.stopPropagation(); close(); } }
+    document.addEventListener('keydown', onKey, true);
+
+    if (rep.allGood && rep.chars.length){
+      const ok = document.createElement('div');
+      ok.className = 'msg';
+      ok.textContent = 'Everything this site asks for has been granted. Nothing is degraded.';
+      body.appendChild(ok);
+    }
+
+    // the application's own problems come first — they block every character
+    if (rep.appIssues.length){
+      const box = document.createElement('div');
+      box.className = 'app';
+      const cap = document.createElement('div');
+      cap.className = 'sect';
+      cap.textContent = 'your SSO application';
+      box.appendChild(cap);
+      for (const iss of rep.appIssues){
+        const line = document.createElement('div');
+        line.className = 'pscope bad';
+        const ic = document.createElement('span');
+        ic.className = 'ic'; ic.textContent = '⚠';
+        const txt = document.createElement('span');
+        if (iss.scope){
+          const c = document.createElement('code');
+          c.textContent = iss.scope;
+          txt.append(c, document.createElement('br'));
+        }
+        const why = document.createElement('span');
+        why.className = 'why';
+        why.textContent = iss.detail;
+        txt.appendChild(why);
+        line.append(ic, txt);
+        box.appendChild(line);
+      }
+      body.appendChild(box);
+    }
+
+    for (const c of rep.chars){
+      const box = document.createElement('div');
+      box.className = 'pchar';
+      const hd = document.createElement('div');
+      hd.className = 'hd';
+      const nm = document.createElement('b');
+      nm.textContent = c.name;
+      const cnt = document.createElement('span');
+      cnt.className = 'sub';
+      cnt.style.color = 'var(--dim,#8b96a8)';
+      cnt.textContent = c.missing.length
+        ? c.missing.length + ' of ' + (c.granted.length + c.missing.length) + ' missing'
+        : 'all granted';
+      hd.append(nm, cnt);
+      // re-login only helps when the app actually offers the scope
+      if (c.missing.some(m => m.reason === 'not-granted')){
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'primary';
+        btn.style.marginLeft = 'auto';
+        btn.textContent = 're-login to grant';
+        btn.title = 'log in again as ' + c.name + ' to grant the missing scopes';
+        btn.addEventListener('click', () => { close(); login(); });
+        hd.appendChild(btn);
+      }
+      box.appendChild(hd);
+
+      for (const m of c.missing){
+        const line = document.createElement('div');
+        line.className = 'pscope bad';
+        const ic = document.createElement('span');
+        ic.className = 'ic'; ic.textContent = '⚠';
+        const txt = document.createElement('span');
+        const code = document.createElement('code');
+        code.textContent = m.scope;
+        txt.append(code);
+        for (const f of m.features){
+          const why = document.createElement('span');
+          why.className = 'why';
+          why.textContent = 'disables: ' + f;
+          txt.appendChild(why);
+        }
+        const rz = document.createElement('span');
+        rz.className = 'why';
+        rz.textContent = REASON_LABEL[m.reason] || m.reason;
+        txt.appendChild(rz);
+        line.append(ic, txt);
+        box.appendChild(line);
+      }
+      for (const g of c.granted){
+        const line = document.createElement('div');
+        line.className = 'pscope ok';
+        const ic = document.createElement('span');
+        ic.className = 'ic'; ic.textContent = '✓';
+        const code = document.createElement('code');
+        code.textContent = g;
+        line.append(ic, code);
+        box.appendChild(line);
+      }
+      body.appendChild(box);
+    }
+
+    if (!rep.chars.length){
+      const none = document.createElement('div');
+      none.className = 'msg';
+      none.textContent = 'Nobody is logged in yet, so there is nothing to report. '
+        + 'The scopes below are what the site asks for when you do log in.';
+      body.appendChild(none);
+    }
+
+    // the concrete fix, always shown — it is the thing people come here for
+    const fix = document.createElement('div');
+    fix.className = 'fix';
+    const fcap = document.createElement('div');
+    fcap.className = 'sect';
+    fcap.textContent = 'how to fix';
+    fix.appendChild(fcap);
+
+    const ol = document.createElement('ol');
+    const li = t => { const e = document.createElement('li'); e.append(t); ol.appendChild(e); return e; };
+
+    const l1 = li('Open ');
+    const a = document.createElement('a');
+    a.href = 'https://developers.eveonline.com';
+    a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'developers.eveonline.com';
+    a.style.color = 'var(--cyan,#5bc8e8)';
+    l1.append(a, ' and edit your application.');
+
+    const l2 = li('Tick every one of these scopes:');
+    const scopeBox = document.createElement('div');
+    scopeBox.style.margin = '4px 0';
+    const scopeCode = document.createElement('code');
+    scopeCode.textContent = SCOPES.split(' ').join('  ');
+    scopeBox.appendChild(scopeCode);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'copy list';
+    copy.style.marginLeft = '8px';
+    copy.addEventListener('click', async () => {
+      try{
+        await navigator.clipboard.writeText(SCOPES.split(' ').join('\n'));
+        copy.textContent = 'copied ✓';
+      }catch(_e){ copy.textContent = 'copy failed'; }
+      setTimeout(() => { copy.textContent = 'copy list'; }, 1500);
+    });
+    scopeBox.appendChild(copy);
+    l2.appendChild(scopeBox);
+
+    const l3 = li('Set the callback URL to exactly:');
+    const cbBox = document.createElement('div');
+    cbBox.style.margin = '4px 0';
+    const cbCode = document.createElement('code');
+    cbCode.textContent = callbackUrl();
+    cbBox.appendChild(cbCode);
+    const cbCopy = document.createElement('button');
+    cbCopy.type = 'button';
+    cbCopy.textContent = 'copy URL';
+    cbCopy.style.marginLeft = '8px';
+    cbCopy.addEventListener('click', async () => {
+      try{
+        await navigator.clipboard.writeText(callbackUrl());
+        cbCopy.textContent = 'copied ✓';
+      }catch(_e){ cbCopy.textContent = 'copy failed'; }
+      setTimeout(() => { cbCopy.textContent = 'copy URL'; }, 1500);
+    });
+    cbBox.appendChild(cbCopy);
+    l3.appendChild(cbBox);
+
+    li('Save the application, then log in again with EACH character — a token only '
+      + 'carries the scopes that existed when it was issued.');
+    fix.appendChild(ol);
+    panel.appendChild(fix);
+
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  /* Inline degradation note: a short warn line naming what is unavailable, linking to
+     the panel. Returns the element (already appended when targetEl is given), or null
+     when the scope IS granted — so callers can just say
+       EveAuth.permissionNote(SCOPE, someEl)
+     without checking first. */
+  function permissionNote(scope, targetEl, opts){
+    opts = opts || {};
+    const c0 = activeChar();
+    if (!(c0 && c0.tokens) && !opts.whenLoggedOut) return null;
+    const rep = permissions();
+    let worst = null;
+    for (const c of rep.chars){
+      const m = c.missing.find(x => x.scope === scope);
+      if (m && (!worst || m.reason !== 'not-granted')) worst = m;
+    }
+    if (!worst) return null;
+    const span = document.createElement('span');
+    span.className = 'evePermLink';
+    span.setAttribute('data-perm-scope', scope);
+    span.title = REASON_LABEL[worst.reason] || '';
+    span.textContent = '⚠ ' + (opts.label || (worst.features[0] || scope)) + ' — see permissions';
+    span.addEventListener('click', e => { e.preventDefault(); showPermissions(); });
+    if (targetEl) targetEl.appendChild(span);
+    return span;
   }
 
   function renderUI(){
@@ -371,6 +775,20 @@
       } else {
         bolt.textContent = '⚡ ' + c.character.name;
         box.appendChild(bolt);
+      }
+      // permissions indicator — only when something IS missing; nothing to nag about otherwise
+      const rep = permissions();
+      const shortfall = rep.appIssues.length
+        + rep.chars.reduce((n, ch) => n + ch.missing.length, 0);
+      if (shortfall){
+        const warn = document.createElement('a');
+        warn.href = '#';
+        warn.id = 'authPermWarn';
+        warn.style.color = 'var(--amber, #e5b567)';
+        warn.textContent = `⚠ ${shortfall} permission${shortfall > 1 ? 's' : ''}`;
+        warn.title = 'some ESI permissions are missing — click to see what is disabled and how to fix it';
+        warn.addEventListener('click', e => { e.preventDefault(); showPermissions(); });
+        box.appendChild(warn);
       }
       const ref = document.createElement('a');
       ref.href = '#'; ref.textContent = '↻';
@@ -415,6 +833,9 @@
 
   window.EveAuth = {
     login, logout, fetchSkills, fetchStandings, setActive, onChange, SKILL_IDS,
+    // permissions layer: the report, the panel, the inline note and the shared modal CSS
+    permissions, showPermissions, permissionNote, modalCss,
+    SCOPES: SCOPES.split(' '), SCOPE_FEATURES,
     isLoggedIn: () => { const c = activeChar(); return !!(c && c.tokens && c.character); },
     character: () => { const c = activeChar(); return (c && c.character) || null; },
     characters,

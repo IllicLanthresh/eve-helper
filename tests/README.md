@@ -24,6 +24,7 @@ anywhere but here.
 | `fees.test.js` | the fee model through the real Sell page: tax and broker from skills/standings, unmodified-standings proof, per-market observed-rate overrides | yes |
 | `sell.test.js` | the Sell tool: paste parsing, price ticks, plan selection, the 100 ISK order floor, import list, filters | yes |
 | `auth.test.js` | `auth.js`: PKCE callback, multi-character login, v1→v2 migration, logout, scope dropping, degraded standings | yes |
+| `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on all three pages | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
 
 ## Environment

@@ -75,31 +75,9 @@
     return entry;
   }
 
-  let cssDone = false;
-  function injectCss(){
-    if (cssDone) return;
-    cssDone = true;
-    const s = document.createElement('style');
-    s.textContent = `
-#structPicker{position:fixed;inset:0;background:rgba(4,6,10,.72);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:12vh}
-#structPicker .panel{width:480px;max-width:92vw;background:var(--panel,#121722);border:1px solid var(--line,#232c3d);border-radius:10px;padding:14px 16px 16px;box-shadow:0 14px 44px rgba(0,0,0,.55);font-size:13px;color:var(--text,#d5dce8)}
-#structPicker h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan,#5bc8e8);display:flex;align-items:center}
-#structPicker .x{margin-left:auto;cursor:pointer;color:var(--dim,#8b96a8);font-size:17px;line-height:1;text-transform:none;padding:0 3px;border-radius:4px}
-#structPicker .x:hover{color:var(--text,#d5dce8);background:#1b2434}
-#structPicker input{width:100%;background:var(--panel2,#0e131d);color:var(--text,#d5dce8);border:1px solid var(--line,#232c3d);border-radius:6px;padding:6px 9px;font:13px var(--mono,ui-monospace,monospace)}
-#structPicker .rows{margin-top:6px;max-height:38vh;overflow-y:auto}
-#structPicker .row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer}
-#structPicker .row:hover,#structPicker .row.active{background:#1b2434}
-#structPicker .row .sub{color:var(--dim,#8b96a8);font-size:12px;margin-left:6px}
-#structPicker .row .del{margin-left:auto;color:var(--dim,#8b96a8);padding:0 6px;border-radius:4px;font-size:15px}
-#structPicker .row .del:hover{color:var(--red,#e06c75);background:#242e42}
-#structPicker .msg{color:var(--dim,#8b96a8);margin-top:8px;min-height:16px}
-#structPicker .msg.err{color:var(--red,#e06c75)}
-#structPicker .sect{color:var(--dim,#8b96a8);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:2px 0 4px}
-#structPicker .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line,#232c3d);border-top-color:var(--cyan,#5bc8e8);border-radius:50%;animation:structspin .8s linear infinite;vertical-align:-2px;margin-right:6px}
-@keyframes structspin{to{transform:rotate(360deg)}}`;
-    document.head.appendChild(s);
-  }
+  // the modal chrome is shared with the permissions panel and lives in auth.js, which
+  // every page loads first — no second copy of the same CSS
+  const injectCss = () => { if (window.EveAuth && EveAuth.modalCss) EveAuth.modalCss(); };
 
   // modal picker — resolves the chosen entry, or null on cancel (never rejects)
   function pick(opts = {}){
@@ -109,6 +87,7 @@
     return new Promise(resolve => {
       const overlay = document.createElement('div');
       overlay.id = 'structPicker';
+      overlay.className = 'eveModal';
       const panel = document.createElement('div');
       panel.className = 'panel';
       overlay.appendChild(panel);
@@ -147,8 +126,17 @@
         msg.textContent = 'log in with EVE first — the search runs as your character';
         msg.className = 'msg err';
       } else if (missing.length){
-        msg.textContent = `your login lacks ${missing.join(' + ')} — add them to the app in the EVE developer portal and log in again`;
+        // don't just describe the problem — hand the user the panel that fixes it
         msg.className = 'msg err';
+        msg.textContent = `structure search is unavailable: your login lacks ${missing.join(' + ')} — `;
+        const link = document.createElement('span');
+        link.className = 'evePermLink';
+        link.textContent = 'see permissions';
+        link.addEventListener('click', () => {
+          done(null);
+          if (window.EveAuth && EveAuth.showPermissions) EveAuth.showPermissions();
+        });
+        msg.appendChild(link);
       }
       input.disabled = !searchable;
 
