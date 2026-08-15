@@ -35,7 +35,6 @@
     padding:6px 12px 10px;margin:0;min-width:210px}
   fieldset.grp legend{color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:0 6px}
   fieldset.grp .grow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  fieldset.grp .grow[hidden]{display:none}   /* the flex above would defeat the hidden attribute */
   fieldset.grp label{color:var(--text);font-size:13px}
   button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
     padding:7px 14px;font-size:13px;cursor:pointer}
@@ -126,21 +125,9 @@
         <label for="brokerFee" style="margin:0">broker % <span class="hint">(orders only)</span></label>
         <input id="brokerFee" type="number" step="0.01" min="0" max="20" value="2.1">
       </div>
-      <div class="grow" id="obsBrokerWrap" hidden>
-        <label for="obsBrokerFee" style="margin:0" title="the exact broker % your own client shows at this market — it wins over the computed rate and is remembered per market">game says %</label>
-        <input id="obsBrokerFee" type="number" step="0.01" min="0" max="20" placeholder="—" style="width:76px"
-          title="type the broker fee your in-game market window shows here; CCP retunes the rates and the public formulas lag, so your observation wins">
-        <a href="#" id="obsBrokerClear" class="hint" hidden title="forget the observed broker rate for this market and go back to the computed one">clear</a>
-      </div>
       <div class="grow">
         <label for="salesTax" style="margin:0">sales tax % <span class="hint">(all sales)</span></label>
         <input id="salesTax" type="number" step="0.01" min="0" max="20" value="7.5">
-      </div>
-      <div class="grow" id="obsTaxWrap" hidden>
-        <label for="obsSalesTax" style="margin:0" title="the exact sales tax % your own client shows at this market — it wins over the computed rate and is remembered per market">game says %</label>
-        <input id="obsSalesTax" type="number" step="0.01" min="0" max="20" placeholder="—" style="width:76px"
-          title="type the sales tax your in-game sell window shows here; the computed base is unverified, so your observation wins">
-        <a href="#" id="obsTaxClear" class="hint" hidden title="forget the observed sales tax for this market and go back to the computed one">clear</a>
       </div>
     </fieldset>
     <fieldset class="grp">
@@ -1242,24 +1229,6 @@ let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don'
 let marketWasStructure = false;
 let lastMarket = 'jita';    // real market behind the select ('+ add structure…' is an action)
 
-// Observed fee rates, per market: whatever the player's own client shows there.
-// CCP retunes these rates and the public formulas lag behind, so a number the player
-// read off their own market window always beats the computed one. Keyed by the market
-// select value — an NPC hub id ('jita') or 's:<structureId>'. Player structures set the
-// broker input directly (structBroker), so the broker override only shows at NPC hubs;
-// the sales tax is character-driven and applies everywhere, so its override always shows.
-let obsBroker = {}, obsTax = {};
-let computedBroker = null, computedTax = null;  // last derived values, for "clear"
-let refreshFees = () => {};                     // the fee auto-fill IIFE publishes its apply() here
-
-const marketKey = () => $('market').value;
-const obsRate = (store, k) => {
-  const v = parseFloat(store[k]);
-  return Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
-};
-const obsBrokerFor = k => obsRate(obsBroker, k);
-const obsTaxFor    = k => obsRate(obsTax, k);
-
 const savedStructures = () => window.EveStructures ? EveStructures.saved() : [];
 
 function renderMarketOptions(){
@@ -1299,22 +1268,6 @@ function syncBrokerForMarket(){
     $('brokerFee').value = hubBrokerFee;
   }
   marketWasStructure = !!h.structure;
-  syncObserved();
-}
-
-// the "game says…" overrides: fill the boxes for the market now selected and push any
-// observed value straight into the live fee inputs (an observation always wins)
-function syncObserved(){
-  const h = hub(), k = marketKey();
-  const b = obsBrokerFor(k), t = obsTaxFor(k);
-  $('obsBrokerWrap').hidden = !!h.structure;          // structures: brokerFee IS the owner-set rate
-  $('obsBrokerFee').value = h.structure || b == null ? '' : String(obsBroker[k]);
-  $('obsBrokerClear').hidden = h.structure || b == null;
-  $('obsTaxWrap').hidden = false;
-  $('obsSalesTax').value = t == null ? '' : String(obsTax[k]);
-  $('obsTaxClear').hidden = t == null;
-  if (!h.structure && b != null) $('brokerFee').value = b.toFixed(2);
-  if (t != null) $('salesTax').value = t.toFixed(2);
 }
 
 const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
@@ -1515,7 +1468,7 @@ function persist(){
       // (the saved structure list itself lives in EveStructures' shared storage)
       brokerFee: hubBrokerFee != null ? hubBrokerFee : $('brokerFee').value,
       salesTax: $('salesTax').value,
-      structBroker, obsBroker, obsTax,
+      structBroker,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
@@ -1536,8 +1489,9 @@ function restore(){
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
   structBroker = (saved.structBroker && typeof saved.structBroker === 'object') ? saved.structBroker : {};
-  obsBroker = (saved.obsBroker && typeof saved.obsBroker === 'object') ? saved.obsBroker : {};
-  obsTax    = (saved.obsTax    && typeof saved.obsTax    === 'object') ? saved.obsTax    : {};
+  // NOTE: state saved by an older build may still carry obsBroker/obsTax from the
+  // short-lived observed-rate override. Those keys are simply not read — the next
+  // persist() drops them, silently and without touching anything else.
   renderMarketOptions();
   if (saved.market && saved.market !== '__add'
       && [...$('market').options].some(o => o.value === saved.market))
@@ -1546,7 +1500,6 @@ function restore(){
   marketWasStructure = !!hub().structure;
   if (marketWasStructure && structBroker[hub().structure] != null)
     $('brokerFee').value = structBroker[hub().structure];
-  syncObserved();   // an observed rate for this market wins over the restored value
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
@@ -1566,25 +1519,6 @@ $('brokerFee').addEventListener('change', () => {
   const h = hub();
   if (h.structure) structBroker[h.structure] = $('brokerFee').value;
 });
-// "game says…" overrides: typed once per market, remembered there, and always winning
-// over the computed rate; clearing one hands the fee back to the computed value
-function bindObserved(obsId, clearId, feeId, storeOf, computedOf){
-  $(obsId).addEventListener('change', () => {
-    const store = storeOf(), k = marketKey(), v = parseFloat($(obsId).value);
-    if (Number.isFinite(v) && v >= 0 && v <= 100) store[k] = v; else delete store[k];
-    syncObserved(); refreshFees(); rebuild();
-  });
-  $(clearId).addEventListener('click', e => {
-    e.preventDefault();
-    delete storeOf()[marketKey()];
-    const c = computedOf();
-    if (c != null) $(feeId).value = c.toFixed(2);
-    syncObserved(); refreshFees(); rebuild();
-  });
-}
-bindObserved('obsBrokerFee', 'obsBrokerClear', 'brokerFee', () => obsBroker, () => computedBroker);
-bindObserved('obsSalesTax',  'obsTaxClear',    'salesTax',  () => obsTax,    () => computedTax);
-
 $('manageStructs').addEventListener('click', e => { e.preventDefault(); pickStructureMarket(); });
 
 $('inv').addEventListener('input', () => rebuild());
@@ -1686,12 +1620,11 @@ $('tblBody').addEventListener('click', e => {
   cellCopy(text, td);
 });
 
-if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state and syncs controls on first run
+if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 
 // fees from the ACTIVE character, computed with the constants at the top of this script
 // from Accounting, Broker Relations and the UNMODIFIED standings toward the hub
-// station's owner corp/faction — auto-applied, still editable, and always yielding to
-// a "game says…" rate the player read off their own client for this market
+// station's owner corp/faction — auto-applied, and still hand-editable afterwards
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
@@ -1768,22 +1701,15 @@ if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state 
     try{
       let sk = EveAuth.skills();
       if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-      const hNow = hub(), key = marketKey();
-      const obsT = obsTaxFor(key), obsB = obsBrokerFor(key);
-      // "computed" is what the model says; an observed rate for this market wins, and
-      // the note says which of the two numbers is actually in the box
-      computedTax = salesTaxPctFor(sk);
-      const taxBit = obsT != null
-        ? `tax ${obsT.toFixed(2)}% — your observed rate for ${hNow.label} (overrides the computed ${computedTax.toFixed(2)}%)`
-        : `tax ${computedTax.toFixed(2)}% (Accounting ${sk.accounting}, base unverified against the client)`;
-      $('salesTax').value = (obsT != null ? obsT : computedTax).toFixed(2);
+      const hNow = hub();
+      const tax = salesTaxPctFor(sk);
+      const taxBit = `tax ${tax.toFixed(2)}% (Accounting ${sk.accounting}, base unverified against the client)`;
+      $('salesTax').value = tax.toFixed(2);
       if (hNow.structure){
         // player structure: the broker fee is owner-set (no ESI endpoint, skills and
         // standings don't apply) — only the sales tax comes from the character
         if (my !== seq) return;
-        computedBroker = null;
         note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (remembered per structure). Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
-        syncObserved();
         rebuild();
         return;
       }
@@ -1800,16 +1726,14 @@ if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state 
       // UNMODIFIED standings: market fees ignore Connections/Diplomacy
       const corpSt = (own && usable && usable[own.corp]) || 0;
       const factionSt = (own && own.faction && usable && usable[own.faction]) || 0;
-      computedBroker = brokerPctFor(sk, factionSt, corpSt);
-      $('brokerFee').value = (obsB != null ? obsB : computedBroker).toFixed(2);
+      const broker = brokerPctFor(sk, factionSt, corpSt);
+      $('brokerFee').value = broker.toFixed(2);
       const r2 = x => Math.round(x * 100) / 100;
       const degraded = st && (st.unavailable || st.needsRelogin);
       const standingsBit = degraded
         ? 'standings unavailable, so the fee is computed as if they were zero'
         : `${(own && own.corpName) || 'corp'} ${r2(corpSt)} / ${(own && own.factionName) || 'faction'} ${r2(factionSt)} unmodified`;
-      const brokerBit = obsB != null
-        ? `broker ${obsB.toFixed(2)}% — your observed rate for ${hNow.label} (overrides the computed ${computedBroker.toFixed(2)}%)`
-        : `broker ${computedBroker.toFixed(2)}% (Broker ${sk.brokerRelations}, ${standingsBit})`;
+      const brokerBit = `broker ${broker.toFixed(2)}% (Broker ${sk.brokerRelations}, ${standingsBit})`;
       note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · ${brokerBit} — every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee, so cheap stacks pay more than the nominal rate`;
       // when the standings scope is what is missing, route to the permissions panel
       // rather than leaving the user to work out what "n/a" meant
@@ -1818,13 +1742,11 @@ if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state 
         EveAuth.permissionNote('esi-characters.read_standings.v1', note,
           { label: 'standings unavailable' });
       }
-      syncObserved();
       rebuild();
     }catch(e){
       console.error('skill auto-fill failed:', e);
     }
   }
-  refreshFees = apply;
 
   EveAuth.onChange(() => { renderCharSel(); apply(); });
   $('market').addEventListener('change', () => apply());

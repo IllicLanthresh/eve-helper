@@ -46,15 +46,10 @@ plan chooser prices it in, since it can flip a small stack from ORDER to INSTANT
 tax is `7.5% × (1 − 11%×Accounting)` — that 7.5 base is **not yet verified** against the
 live client.
 
-**"game says…" overrides**: next to each fee input you can type the exact broker % and
-sales tax % your own client shows for the market you have selected. Observed rates are
-remembered **per market** (each NPC hub and each saved structure separately), always win
-over the computed value, and each has a *clear* link that hands the fee back to the
-computed one. CCP retunes these rates and the public formulas lag behind, so what your
-client says is the last word. The note under the fee inputs shows which character and
-standings produced the computed numbers, and which of them an observation replaced.
-Player structures keep their existing behaviour — their broker fee is owner-set, entered
-directly and remembered per structure.
+The note under the fee inputs shows which character, skills and standings produced the
+numbers. Both fee inputs stay hand-editable — anything you type wins until the next
+auto-fill. Player structures are different: their broker fee is owner-set, entered
+directly and remembered per structure (see *Player structure markets*).
 
 The deployed site at `illiclanthresh.github.io` ships with its own registered app, so login
 just works there. Running a fork on another domain needs a one-time app registration
@@ -170,8 +165,7 @@ With a structure selected, a price run fetches:
 The **owner-set broker fee is not in ESI** (there is no endpoint for it): read it once
 from the in-game sell window and type it into the broker % field — it is remembered per
 structure and switching back to an NPC hub restores the skills/standings-derived rate.
-Sales tax (Accounting) applies everywhere and keeps auto-filling — and, like at an NPC
-hub, can be pinned to what your client actually shows via its *game says…* box.
+Sales tax (Accounting) applies everywhere and keeps auto-filling.
 
 ## Flags
 

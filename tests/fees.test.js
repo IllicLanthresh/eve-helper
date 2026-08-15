@@ -1,8 +1,9 @@
 /* Fee model, driven through the real Sell page with mocked SSO/ESI.
 
    Covers: the sales-tax and broker formulas as wired to skills and standings, the proof
-   that Connections/Diplomacy do NOT touch market fees, and the per-market "game says…"
-   observed-rate overrides for both fees. */
+   that Connections/Diplomacy do NOT touch market fees, that the fee inputs stay
+   hand-editable, and that the removed "game says…" observed-rate boxes stay removed —
+   including old persisted state that still carries their keys. */
 'use strict';
 const H = require('./helper');
 const { check, eq, near, section } = H;
@@ -117,74 +118,64 @@ H.run('fees', async () => {
       await val(s.page, 'brokerFee'), '1.75');
     await s.close();
 
-    /* ---------- per-market observed-rate override ---------- */
-    section('per-market "game says…" override — broker');
+    /* ---------- the observed-rate override is gone ----------
+       It was insurance against a formula bug that turned out not to exist (the 2.2% the
+       client showed was the 100 ISK per-order floor, which is now modelled), so the
+       boxes were removed. Guard against them creeping back. */
+    section('the "game says…" override boxes are gone');
     s = await openSell(browser, server, { skills: { accounting: 5, brokerRelations: 5 }, standings: {} });
-    check('the observed-broker box is visible at an NPC hub',
-      await s.page.isVisible('#obsBrokerFee'));
-    check('no clear affordance before anything is observed',
-      await s.page.isHidden('#obsBrokerClear'));
+    const REMOVED_IDS = ['obsBrokerFee', 'obsSalesTax', 'obsBrokerClear', 'obsTaxClear',
+                         'obsBrokerWrap', 'obsTaxWrap'];
+    for (const id of REMOVED_IDS)
+      check('#' + id + ' no longer exists on the Sell page',
+        await s.page.evaluate(i => !document.getElementById(i), id));
+    check('no "game says" label survives anywhere in the page',
+      await s.page.evaluate(() => !/game says/i.test(document.body.textContent)));
+    check('the fee note no longer talks about observed rates',
+      !/observed rate/.test(await feeNote(s.page)), await feeNote(s.page));
 
-    await s.page.fill('#obsBrokerFee', '2.20');
-    await s.page.dispatchEvent('#obsBrokerFee', 'change');
-    await s.page.waitForFunction(() => document.getElementById('brokerFee').value === '2.20');
-    eq('an observed 2.20% wins over the computed 1.50%', await val(s.page, 'brokerFee'), '2.20');
-    let note = await feeNote(s.page);
-    check('note says it is the observed rate for this market',
-      /observed rate for/.test(note) && /2\.20/.test(note), note);
-    check('note still names the computed value it overrode', /1\.50/.test(note), note);
-    check('clear affordance appears', await s.page.isVisible('#obsBrokerClear'));
+    section('the plain fee inputs stay hand-editable');
+    await s.page.fill('#brokerFee', '4.25');
+    await s.page.dispatchEvent('#brokerFee', 'change');
+    near('a hand-typed broker fee drives the planner',
+      await s.page.evaluate(() => feePct('brokerFee')), 0.0425, 1e-12);
+    await s.page.fill('#salesTax', '6');
+    await s.page.dispatchEvent('#salesTax', 'change');
+    near('...and so does a hand-typed sales tax',
+      await s.page.evaluate(() => feePct('salesTax')), 0.06, 1e-12);
+    await s.close();
 
-    // per market: Amarr must not inherit the Jita observation
-    await s.page.selectOption('#market', 'amarr');
-    await s.page.waitForFunction(() => document.getElementById('brokerFee').value === '1.50');
-    eq('the override does not leak to another hub', await val(s.page, 'brokerFee'), '1.50');
-    eq('...and its box is empty there', await val(s.page, 'obsBrokerFee'), '');
-    await s.page.selectOption('#market', 'jita');
-    await s.page.waitForFunction(() => document.getElementById('brokerFee').value === '2.20');
-    eq('switching back restores the observed rate', await val(s.page, 'brokerFee'), '2.20');
-
-    // survives a reload (it lives in the persisted state)
-    await s.page.reload();
-    await waitNote(s.page);
-    eq('the observed rate survives a reload', await val(s.page, 'brokerFee'), '2.20');
-    eq('...and so does the box', await val(s.page, 'obsBrokerFee'), '2.2');
-
-    // clearing reverts to computed
-    await s.page.click('#obsBrokerClear');
-    await s.page.waitForFunction(() => document.getElementById('brokerFee').value === '1.50');
-    eq('clear reverts to the computed rate', await val(s.page, 'brokerFee'), '1.50');
-    eq('...and empties the box', await val(s.page, 'obsBrokerFee'), '');
-    check('...and hides the clear affordance', await s.page.isHidden('#obsBrokerClear'));
-    await s.page.reload();
-    await waitNote(s.page);
-    eq('the clear is persisted too', await val(s.page, 'brokerFee'), '1.50');
-
-    /* ---------- the same for sales tax ---------- */
-    section('per-market "game says…" override — sales tax');
-    check('the observed-tax box is visible', await s.page.isVisible('#obsSalesTax'));
-    await s.page.fill('#obsSalesTax', '2.25');
-    await s.page.dispatchEvent('#obsSalesTax', 'change');
-    await s.page.waitForFunction(() => document.getElementById('salesTax').value === '2.25');
-    eq('an observed sales tax wins over the computed one', await val(s.page, 'salesTax'), '2.25');
-    note = await feeNote(s.page);
-    check('note flags the observed tax', /tax 2\.25% — your observed rate/.test(note), note);
-    await s.page.reload();
-    await s.page.waitForFunction(() => document.getElementById('salesTax').value === '2.25', null, { timeout: 15000 });
-    eq('observed sales tax survives a reload', await val(s.page, 'salesTax'), '2.25');
-    const taxStr = expTax.toFixed(2);
-    await s.page.click('#obsTaxClear');
-    await s.page.waitForFunction(t => document.getElementById('salesTax').value === t, taxStr);
-    eq('clearing the tax override reverts to computed', await val(s.page, 'salesTax'), taxStr);
-
-    /* ---------- the override actually drives the money ---------- */
-    section('an override changes the numbers, not just the box');
-    const netBefore = await s.page.evaluate(() => { $('inv').value = 'Tritanium\t1000'; rebuild(); return feePct('brokerFee'); });
-    await s.page.fill('#obsBrokerFee', '5');
-    await s.page.dispatchEvent('#obsBrokerFee', 'change');
-    const netAfter = await s.page.evaluate(() => feePct('brokerFee'));
-    near('the fee the planner uses follows the observed rate', netAfter, 0.05, 1e-12);
-    check('...and it was different before', Math.abs(netBefore - netAfter) > 1e-9, netBefore + ' vs ' + netAfter);
+    /* ---------- old persisted state must not break anything ---------- */
+    section('state saved by the old build loads cleanly');
+    s = await openSell(browser, server, {
+      skills: { accounting: 5, brokerRelations: 5 },
+      standings: {},
+      storage: [['eveSellHelper.v2', {
+        inv: 'Tritanium\t1000',
+        brokerFee: '2.20', salesTax: '2.25',
+        // the removed feature's leftovers, exactly as the old build wrote them
+        obsBroker: { jita: 2.2, amarr: 1.9, 's:1035466617946': 3.1 },
+        obsTax: { jita: 2.25 },
+        structBroker: { 1035466617946: '3.75' },
+        market: 'jita', ticked: [],
+      }]],
+    });
+    check('the page loads without a console error', true);
+    eq('the computed broker fee is applied, not the stale observed one',
+      await val(s.page, 'brokerFee'), '1.50');
+    eq('...and the computed sales tax likewise', await val(s.page, 'salesTax'), expTax.toFixed(2));
+    check('the legacy keys are ignored silently — no note about them',
+      !/observed|game says/i.test(await feeNote(s.page)), await feeNote(s.page));
+    eq('the rest of the saved state still restores', await val(s.page, 'inv'), 'Tritanium\t1000');
+    // and the next save drops the dead keys rather than carrying them forever
+    await s.page.evaluate(() => persist());
+    const persisted = await s.page.evaluate(() =>
+      JSON.parse(localStorage.getItem('eveSellHelper.v2') || '{}'));
+    check('a re-save drops obsBroker', persisted.obsBroker === undefined, JSON.stringify(persisted.obsBroker));
+    check('...and obsTax', persisted.obsTax === undefined, JSON.stringify(persisted.obsTax));
+    check('...while keeping the per-structure owner-set rates',
+      persisted.structBroker && persisted.structBroker['1035466617946'] === '3.75',
+      JSON.stringify(persisted.structBroker));
     await s.close();
 
     /* ---------- structures keep their own behaviour ---------- */
@@ -201,9 +192,6 @@ H.run('fees', async () => {
       await s.page.waitForFunction(() => /set by its owner/.test(
         [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')), null, { timeout: 15000 });
       await s.page.waitForTimeout(100);
-      check('the broker override is hidden at a structure (owner-set rate lives in the fee box)',
-        await s.page.isHidden('#obsBrokerFee'));
-      check('the tax override still applies there', await s.page.isVisible('#obsSalesTax'));
       await s.page.fill('#brokerFee', '3.75');
       await s.page.dispatchEvent('#brokerFee', 'change');
       await s.page.selectOption('#market', 'jita');
