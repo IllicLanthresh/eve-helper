@@ -52,3 +52,28 @@ fixture at all.
 Assertions are meant to be readable in the output, so name them as sentences
 (`'Connections 5 leaves the broker fee unchanged'`). If a check fails, fix the code —
 never loosen the assertion to make it green.
+
+### Never wait on time — wait on a signal
+
+**No `page.waitForTimeout`, no `setTimeout` inside `page.evaluate`, no
+`waitForFunction(() => true)`.** Every wait must be `waitForFunction`/`waitForSelector`
+on a condition that is actually true only once the work has finished. A sleep that is
+long enough today is a flaky test tomorrow, and a flaky suite is worth less than no
+suite.
+
+This bit us once already: the Industry page re-plans a row's batch asynchronously after
+its history arrives (`needHist` → `refineRow`), which with the test fixture's zero demand
+collapses the batch from 20 runs to 1 and moves cost/item by ~10%. A cost captured before
+that landed was compared against one captured after, and the assertion failed roughly one
+run in four. The fix was to drive the refinement to its fixed point first —
+`row.planDemand === histMem.get(tid).demand`, which is exactly `refineRow`'s own no-op
+guard — so every capture is taken in the same state.
+
+Two rules that follow:
+
+- **Prefer the page's own end-state markers.** `#compStatus.className === 'ok'`, a row's
+  recomputed value, a rendered badge. If a suitable signal genuinely does not exist, add
+  one to the page rather than sleeping.
+- **Negative assertions need a positive wait first.** "no warning is shown" passes
+  trivially on a page that has not rendered yet. Wait for the render to have happened
+  (`#authBox` has children, `#dataAges` is populated), *then* assert the absence.

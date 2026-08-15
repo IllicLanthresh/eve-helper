@@ -122,7 +122,10 @@ H.run('industry-ui', async () => {
     eq('the seeded profile is active', await page.evaluate(() => activeProfile().name), 'Test');
     eq('...with its facility', await page.evaluate(() => activeProfile().facilities.length), 1);
     await page.click('#btnCompute');
-    await page.waitForFunction(() => state.rows.length > 0, null, { timeout: 20000 });
+    // computeAll sets the status class last — wait on that, not on rows appearing
+    await page.waitForFunction(
+      () => document.getElementById('compStatus').className === 'ok' && state.rows.length > 0,
+      null, { timeout: 20000 });
     const compStatus = await page.$eval('#compStatus', el => ({ text: el.textContent, cls: el.className }));
     eq('the compute finishes cleanly', compStatus.cls, 'ok');
     let rows = await rowsOf(page);
@@ -165,24 +168,53 @@ H.run('industry-ui', async () => {
       plateDecision.buildCost < plateDecision.buyCost,
       plateDecision.buildCost + ' vs ' + plateDecision.buyCost);
 
-    /* ---------- force-buy ---------- */
+    /* ---------- force-buy ----------
+       The row's plan is refined asynchronously: an IntersectionObserver calls needHist(),
+       which fetches history and then re-plans the batch against real demand (refineRow).
+       That lands whenever it lands and changes cost/item substantially — with this
+       fixture demand is 0, which collapses the batch from 20 runs to 1. Comparing a cost
+       captured before that refinement with one captured after is a coin flip, which is
+       exactly how this assertion used to fail.
+
+       So: drive the refinement to its FIXED POINT first. needHist() is idempotent, so
+       calling it explicitly removes the dependency on scroll position, and refineRow's
+       own no-op guard (row.planDemand === histMem.get(tid).demand) is the deterministic
+       signal that no further async re-plan can occur. After that every capture below is
+       taken in the same state. */
     section('the force-buy toggle changes the cost');
+    await page.evaluate(tid => needHist(tid), T.WIDGET);
+    await page.waitForFunction(tid => {
+      const h = histMem.get(tid);
+      if (!h || h === 'loading') return false;
+      const r = state.rows.find(x => x.tid === tid);
+      return !!r && r.planDemand === h.demand;      // refineRow is now a no-op: settled
+    }, T.WIDGET, { timeout: 20000 });
+
     const costBefore = (await rowsOf(page)).find(r => r.tid === T.WIDGET).cost;
     await page.evaluate(t => setForce(t.root, t.node, 'buy'), { root: T.WIDGET, node: T.PLATE });
-    await page.waitForFunction(() => true);
+    // setForce -> recomputeOne is synchronous, but assert the observable end state rather
+    // than assuming it: the profile carries the force AND the row has been re-planned
+    await page.waitForFunction(t => {
+      const r = state.rows.find(x => x.tid === t.root);
+      return activeProfile().forceBuy.includes(t.node) && r && r.cost !== t.before;
+    }, { root: T.WIDGET, node: T.PLATE, before: costBefore }, { timeout: 20000 });
     const costAfter = (await rowsOf(page)).find(r => r.tid === T.WIDGET).cost;
     check('forcing the intermediate to BUY raises the cost',
       costAfter > costBefore, costBefore + ' -> ' + costAfter);
     eq('...and the profile remembers the force',
       await page.evaluate(() => activeProfile().forceBuy.join(',')), String(T.PLATE));
-    const forcedBadge = await page.evaluate(() => {
+    // the drilldown is rebuilt by render(); wait for the forced badge to actually appear
+    await page.waitForFunction(() => {
       const tr = document.querySelector('tr.drill');
-      return tr ? [...tr.querySelectorAll('.badge')].map(b => b.textContent.trim()) : [];
-    });
-    check('...and the tree marks the node as forced',
-      forcedBadge.some(b => /⚑/.test(b)), JSON.stringify(forcedBadge));
+      return !!tr && [...tr.querySelectorAll('.badge')].some(b => /⚑/.test(b.textContent));
+    }, null, { timeout: 20000 });
+    check('...and the tree marks the node as forced', true);
 
     await page.evaluate(t => setForce(t.root, t.node, 'auto'), { root: T.WIDGET, node: T.PLATE });
+    await page.waitForFunction(t => {
+      const r = state.rows.find(x => x.tid === t.root);
+      return activeProfile().forceBuy.length === 0 && r && r.cost !== t.forced;
+    }, { root: T.WIDGET, forced: costAfter }, { timeout: 20000 });
     const costBack = (await rowsOf(page)).find(r => r.tid === T.WIDGET).cost;
     near('clearing the force restores the original cost', costBack, costBefore, 1e-6);
     eq('...and empties the profile list',

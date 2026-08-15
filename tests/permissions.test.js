@@ -132,12 +132,12 @@ H.run('permissions', async () => {
     await s.page.waitForSelector('#evePerms');
     check('...which opens it', await s.page.isVisible('#evePerms'));
     await s.page.keyboard.press('Escape');
-    check('the "only owned BPs" filter is flagged as untrustworthy',
-      await s.page.evaluate(() => {
-        const lab = document.getElementById('fltOwned').closest('label');
-        const n = lab.querySelector('.evePermLink');
-        return !!n && /can't be trusted/.test(n.textContent);
-      }));
+    await s.page.waitForFunction(() => {
+      const lab = document.getElementById('fltOwned').closest('label');
+      const n = lab.querySelector('.evePermLink');
+      return !!n && /can't be trusted/.test(n.textContent);
+    }, null, { timeout: 15000 });
+    check('the "only owned BPs" filter is flagged as untrustworthy', true);
     await s.close();
 
     /* ================= app-missing: a stored invalid_scope ================= */
@@ -211,6 +211,12 @@ H.run('permissions', async () => {
     eq('...with nothing missing', rep.chars[0].missing.length, 0);
     eq('...and no application issues', rep.appIssues.length, 0);
     eq('every requested scope is granted', rep.chars[0].granted.length, H.ALL_SCOPES.length);
+    // absence is only meaningful once the topbar has actually rendered — otherwise this
+    // would pass just as happily on an empty page
+    await s.page.waitForFunction(() => {
+      const box = document.getElementById('authBox');
+      return box && box.children.length > 0;
+    }, null, { timeout: 15000 });
     check('the topbar shows NO warning',
       await s.page.evaluate(() => !document.getElementById('authPermWarn')));
     await s.page.waitForFunction(
@@ -229,6 +235,10 @@ H.run('permissions', async () => {
       storage: [['eveHelper.auth.v1', H.authState([MAIN])]],
     });
     await s.page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+    // renderBpNote()/renderOwnedFilterNote() run from renderAges(), which fills #dataAges.
+    // Wait for that to have happened, or "no warning" would be a false green.
+    await s.page.waitForFunction(
+      () => document.getElementById('dataAges').children.length > 0, null, { timeout: 20000 });
     eq('the owned-blueprints note stays empty',
       (await s.page.$eval('#bpNote', el => el.textContent)).trim(), '');
     check('...and the owned filter is unflagged',

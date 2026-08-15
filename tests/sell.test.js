@@ -225,11 +225,12 @@ H.run('sell', async () => {
     check('with the 100 ISK floor priced in, dumping wins instead',
       flip.withFloor <= flip.inst, flip.withFloor + ' vs ' + flip.inst);
 
-    const flipRow = await page.evaluate(async () => {
-      document.getElementById('inv').value = 'Floor Flipper\t40';
-      document.getElementById('inv').dispatchEvent(new Event('input'));
-      document.getElementById('btnEsi').click();
-      await new Promise(r => setTimeout(r, 1200));
+    // re-price through the real ESI path and wait for the fetch to finish, rather than
+    // guessing how long it takes
+    await fetchInventory(page, 'Floor Flipper\t40');
+    await page.waitForFunction(() => state.rows.some(x => x.name === 'Floor Flipper'),
+      null, { timeout: 20000 });
+    const flipRow = await page.evaluate(() => {
       const row = state.rows.find(x => x.name === 'Floor Flipper');
       return row ? { strategy: row.strategy, netInstant: row.netInstant, netOrder: row.netOrder } : null;
     });
@@ -287,7 +288,10 @@ H.run('sell', async () => {
     await s2.page.fill('#fltText', '');
     await s2.page.dispatchEvent('#fltText', 'input');
     await s2.page.selectOption('#fltType', 'ord');
-    await s2.page.waitForFunction(() => state.filterType === 'ord');
+    // wait on the rendered outcome, not just the state flag behind it
+    await s2.page.waitForFunction(() => state.filterType === 'ord'
+      && [...document.querySelectorAll('#tblBody tr')]
+        .every(tr => !/^(Pyerite|Damage Control II)$/.test(tr.children[2].textContent)));
     const shown = await s2.page.evaluate(() =>
       [...document.querySelectorAll('#tblBody tr')].map(tr => tr.children[2].textContent));
     check('the plan filter shows only ORDER rows',

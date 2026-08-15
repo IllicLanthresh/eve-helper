@@ -189,9 +189,13 @@ H.run('fees', async () => {
       [...document.getElementById('market').options].some(o => o.value.startsWith('s:')));
     if (check('the saved structure is offered as a market', hasStruct)) {
       await s.page.selectOption('#market', 's:1035466617946');
-      await s.page.waitForFunction(() => /set by its owner/.test(
-        [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')), null, { timeout: 15000 });
-      await s.page.waitForTimeout(100);
+      // the market switch is settled once syncBrokerForMarket has claimed the structure
+      // AND the auto-fill has finished writing its note — then typing cannot be clobbered
+      await s.page.waitForFunction(() => hub().structure === 1035466617946
+        && structBroker[1035466617946] != null
+        && /set by its owner/.test(
+          [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')),
+        null, { timeout: 15000 });
       await s.page.fill('#brokerFee', '3.75');
       await s.page.dispatchEvent('#brokerFee', 'change');
       await s.page.selectOption('#market', 'jita');
