@@ -180,6 +180,22 @@
   .moondetail .comp{margin-right:14px;white-space:nowrap}
   .moonitem:last-child .moonbtn{border-bottom:0}
   .moonitem:last-child .moondetail{border-bottom:0;border-top:1px solid #1a2233}
+
+  /* fleet mode (survey-scan ranking) */
+  #secFleet summary{cursor:pointer;list-style:none}
+  #secFleet summary::-webkit-details-marker{display:none}
+  #secFleet summary h2{display:inline-block;margin:0}
+  #secFleet summary .caret{display:inline-block;margin-right:4px;color:var(--dim);font-size:11px;transition:transform .15s}
+  #secFleet details[open] summary .caret{transform:rotate(90deg)}
+  #secFleet details[open] summary{margin-bottom:8px}
+  #fleetTable th[data-sort]{cursor:pointer;user-select:none}
+  #fleetTable th[data-sort]:hover{color:var(--text)}
+  #fleetTable th .dir{color:var(--cyan);margin-left:2px}
+  #fleetTable tr.best td{background:rgba(111,208,140,.08)}
+  #fleetTable tr.best td:first-child{box-shadow:inset 2px 0 0 var(--green)}
+  #fleetTable td .flag{display:block;margin-top:2px;font-weight:400;white-space:normal}
+  .famtag{display:inline-block;font-size:11px;padding:0 8px;border-radius:10px;color:var(--dim);
+    border:1px solid var(--line);white-space:nowrap;margin-left:6px}
 </style>
 </head>
 <body>
@@ -286,7 +302,7 @@
   <div id="planBox"></div>
   <p class="hint" style="margin:8px 0 0">m³ to mine = needed ÷ (units per m³ × refine&nbsp;%); drill hours
     assume 30,000&nbsp;m³ of chunk per hour. The best ore may not exist in your alliance's moons — hunt
-    these ore names in your alliance moon list, then paste the candidates in section 4. Click any number
+    these ore names in your alliance moon list, then paste the candidates in section 5. Click any number
     to copy its raw value.</p>
 </section>
 
@@ -308,8 +324,59 @@
     refine rate. Data: EVE University Wiki.</p>
 </section>
 
+<section id="secFleet">
+  <details id="fleetBox">
+    <summary><span class="caret">▸</span><h2>4 · Fleet mode <span class="subttl">· no shopping list — paste a
+      survey scan, see what to shoot for max value</span></h2></summary>
+    <label for="fleetScan" style="margin-top:10px">Paste the in-game survey scanner results — rows of
+      <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> (tab or multi-space separated; EU
+      <code>1.234.567</code> and US <code>1,234,567</code> numbers both fine; the distance column is
+      ignored; header lines are skipped)</label>
+    <textarea id="fleetScan" spellcheck="false" style="height:120px"
+      placeholder="Concentrated Veldspar&#9;64,213&#9;6,421 m3&#9;7,431 m&#10;Magma Mercoxit&#9;402&#9;16,080 m3&#9;44 km"></textarea>
+    <div class="rowline">
+      <button id="btnFleetSample" type="button">Load sample scan</button>
+      <button id="btnFleetClear" type="button">Clear</button>
+      <span id="fleetNote" class="hint"></span>
+      <span id="fleetPriceNote" class="hint"></span>
+      <span class="sep"></span>
+      <button id="btnFleetPrices" type="button" hidden
+        title="drop the cached compressed/extra Jita prices and fetch them again">refresh fleet prices</button>
+      <span class="hint">ISK/h</span>
+      <span class="seg">
+        <button id="fleetHrOff" type="button" aria-pressed="true" title="pure value-density ranking">off</button>
+        <button id="fleetHrOn" type="button" aria-pressed="false"
+          title="add ISK/h and time-to-clear from your ship's mining yield">on</button>
+      </span>
+    </div>
+    <div id="fleetUnknown" class="hint warn" style="margin-top:6px" hidden></div>
+    <div id="fleetDataNote" class="hint" style="margin-top:6px" hidden></div>
+    <div class="rowline" id="fleetYieldRow" hidden>
+      <span class="hint">ship yield</span>
+      <span class="seg">
+        <button id="fleetYRate" type="button" aria-pressed="true" title="enter the yield directly">m³/h</button>
+        <button id="fleetYCycle" type="button" aria-pressed="false"
+          title="enter m³ per mining cycle and the cycle time — the hourly rate is computed live">per cycle</button>
+      </span>
+      <label for="fleetRate" id="fleetRateLab" style="margin:0">m³ per hour</label>
+      <input id="fleetRate" type="number" min="1" step="any" placeholder="e.g. 45000">
+      <label for="fleetCycM3" id="fleetCycM3Lab" style="margin:0" hidden>m³ per cycle</label>
+      <input id="fleetCycM3" type="number" min="0.1" step="any" placeholder="e.g. 750" hidden>
+      <label for="fleetCycSec" id="fleetCycSecLab" style="margin:0" hidden>cycle seconds</label>
+      <input id="fleetCycSec" type="number" min="1" step="any" placeholder="e.g. 60" hidden>
+      <span id="fleetRateNote" class="hint"></span>
+    </div>
+    <div id="fleetTable" style="margin-top:4px"></div>
+    <p class="hint" style="margin:8px 0 0">Refined ISK/m³ prices each variant's exact reprocessing outputs
+      (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
+      compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
+      per m³ of raw rock — ore compresses 100:1 by units, ice 1:1. Ice is unit-harvested and only ranks
+      against other ice. Click any number to copy its raw value.</p>
+  </details>
+</section>
+
 <section>
-  <h2>4 · Your moons <span class="subttl">· the final check — which of them cover the shopping list</span></h2>
+  <h2>5 · Your moons <span class="subttl">· the final check — which of them cover the shopping list</span></h2>
   <label for="moons">Paste moons — in-game survey scan, Alliance&nbsp;Auth “Moon details” copy, or
     Alliance&nbsp;Auth “Extraction details” copy (format auto-detected per moon, several moons per paste)</label>
   <textarea id="moons" spellcheck="false"
@@ -471,6 +538,14 @@ const state = {
   openDeposits: new Set(),
   moonOpen: new Set(),       // expanded moon keys (not persisted)
   esiRunning: false, esiToken: 0,
+  // fleet mode (survey-scan ranking): ISK/h toggle + ship-yield inputs, sort state,
+  // and an on-demand Jita price cache keyed by type id (compressed ores, raw ores,
+  // refine outputs outside the section-2 material grid — e.g. ice products)
+  fleet: {
+    iskh: false, ymode: 'rate', rate: null, cycM3: null, cycSec: null,
+    sortKey: 'ref', sortDir: -1, valueCol: 'ref',
+    prices: {}, matNames: {}, fetchedAt: null,
+  },
 };
 
 /* ---------- refining model (skill mode) ---------- */
@@ -1207,7 +1282,7 @@ function renderArrays(){
   });
 }
 
-/* ---------- section 4 · your moons ---------- */
+/* ---------- section 5 · your moons ---------- */
 function emptyHint(text){ return el('span', 'hint', text); }
 
 function coverageText(r){
@@ -1321,6 +1396,457 @@ function renderMoons(){
   });
 }
 
+/* ---------- section 4 · fleet mode: survey-scan value ranking ---------- */
+// data/ores.json (built from the SDE next to industry.json) carries every asteroid-category
+// type: { n name, v m³/unit, p portionSize, g groupName, b baseFamilyName,
+//         m [[materialTid, qtyPerPortion]...], c compressedTid|null, cv compressedVol|null, ice 0|1 }
+let oreDB = null, oreDBErr = null, oreDBPending = false;
+function loadOreDB(){
+  if (oreDB || oreDBErr || oreDBPending) return;
+  oreDBPending = true;
+  fetch('data/ores.json')
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (!d || !d.ores || !d.names) throw new Error('unexpected shape');
+      oreDB = d;
+    })
+    .catch(e => { oreDBErr = e.message; })
+    .finally(() => { oreDBPending = false; renderFleet(); });
+}
+
+// refine outputs already priced in the section-2 grid, by SDE type id → material name.
+// Anything not in this map (ice products: Heavy Water, isotopes, …) is priced by tid
+// through the on-demand fleet fetch instead.
+const MAT_TID = {
+  34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen',
+  38: 'Nocxium', 39: 'Zydrine', 40: 'Megacyte', 11399: 'Morphite',
+  16633: 'Hydrocarbons', 16634: 'Atmospheric Gases', 16635: 'Evaporite Deposits', 16636: 'Silicates',
+  16637: 'Tungsten', 16638: 'Titanium', 16639: 'Scandium', 16640: 'Cobalt',
+  16641: 'Chromium', 16642: 'Vanadium', 16643: 'Cadmium', 16644: 'Platinum',
+  16646: 'Mercury', 16647: 'Caesium', 16648: 'Hafnium', 16649: 'Technetium',
+  16650: 'Dysprosium', 16651: 'Neodymium', 16652: 'Promethium', 16653: 'Thulium',
+};
+const ICE_SKILL_TID = 18025;   // Ice Processing — not one of the 11 ore-group skills auth.js tracks
+
+// per-variant refine yield: route the base family through the existing refineFor()
+// (same skills + facility row as the mining plan); ice uses Ice Processing from the
+// full trained-skill list; a family with no known skill group counts that skill at 0
+function fleetRefineFor(o){
+  if (!o.ice && MOON_ORES[o.b]) return refineFor({ kind: 'moon', tier: MOON_ORES[o.b].tier, name: o.b });
+  if (!o.ice && ORE_SKILL_GROUP[o.b]) return refineFor({ kind: 'ast', name: o.b });
+  if (!charSkills || !charSkills.groups || !Object.keys(charSkills.groups).length)
+    return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
+  const base = facilityBasePct();
+  const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills()) || null;
+  const gl = o.ice ? (all ? (all[ICE_SKILL_TID] || 0) : 0) : 0;
+  const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
+    * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
+  const grpTxt = o.ice
+    ? `Ice Processing ${gl}${all ? '' : ' (level unknown — refresh skills via the topbar)'}`
+    : `no known skill group for family "${o.b}" — counted at level 0`;
+  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grpTxt}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
+  return { pct, detail };
+}
+
+/* survey-scan parser: "<Ore Type> <qty> <volume m³> <distance>" rows, tab or multi-space
+   separated (a single-space fallback peels trailing numbers off the name); EU/US numbers
+   via parseNum; header lines and blanks skipped; distance ignored; unknown names surface
+   in the visible unrecognized note — never silently dropped. Rows aggregate per ore type. */
+const SCAN_HEADER_RX = /^(ore(\s*type)?|asteroid|type|name|moon materials?)$/i;
+function splitScanLine(line){
+  let cells = line.split('\t').map(c => c.trim()).filter(Boolean);
+  if (cells.length >= 2) return cells;
+  cells = line.split(/\s{2,}/).map(c => c.trim()).filter(Boolean);
+  if (cells.length >= 2) return cells;
+  const m = /^(.+?)\s+(\d[\d.,']*)(?:\s+(\d[\d.,']*)\s*(?:m3|m³)?)?(?:\s+\S.*)?$/i.exec(line);
+  if (m) return m[3] != null ? [m[1], m[2], m[3]] : [m[1], m[2]];
+  return [line];
+}
+function parseSurvey(text){
+  const rows = new Map(), unknown = new Map();
+  let numberless = 0, volFixed = 0;
+  for (const raw of String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').split('\n')){
+    const line = raw.trim();
+    if (!line) continue;
+    const low = line.toLowerCase();   // header row from the scanner window copy
+    if (low.includes('quantity') && (low.includes('volume') || low.includes('distance') || low.includes('ore'))) continue;
+    const cells = splitScanLine(line);
+    const name = cells[0].replace(/[:*]+$/, '').trim();
+    if (!name || SCAN_HEADER_RX.test(name)) continue;
+    const tid = oreDB.names[name.toLowerCase()];
+    const o = tid != null ? oreDB.ores[tid] : null;
+    if (!o){ unknown.set(name, (unknown.get(name) || 0) + 1); continue; }
+    let qty = cells.length > 1 ? parseNum(cells[1]) : NaN;
+    let vol = cells.length > 2 ? parseNum(cells[2]) : NaN;   // "44 km" distances parse as NaN and fall through
+    if (!(qty > 0) && !(vol > 0)){ numberless++; continue; }
+    if (qty > 0 && vol > 0 && o.v > 0 && Math.abs(vol - qty * o.v) > qty * o.v * 0.02){
+      vol = qty * o.v; volFixed++;    // third column wasn't this rock's volume (e.g. a bare distance)
+    }
+    if (!(vol > 0)) vol = qty * o.v;
+    if (!(qty > 0)) qty = o.v > 0 ? vol / o.v : 0;
+    const r = rows.get(tid) || { tid, o, rocks: 0, units: 0, m3: 0 };
+    r.rocks++; r.units += qty; r.m3 += vol;
+    rows.set(tid, r);
+  }
+  return { rows: [...rows.values()], unknown, numberless, volFixed };
+}
+
+/* on-demand Jita prices by type id (compressed ores, raw-ore fallbacks, extra refine
+   outputs) — same esiFetch/fetchJita machinery and error-limit handling as section 2 */
+const fleetFetchQ = new Set();
+let fleetFetching = false;
+function fleetTidPrice(tid){
+  const e = state.fleet.prices[tid];
+  if (!e) return undefined;                                   // not fetched yet
+  const v = state.priceBasis === 'buy' ? e.buy : e.sell;
+  return (typeof v === 'number' && Number.isFinite(v)) ? v : null;   // null: no book on this side
+}
+function fleetMatName(tid){
+  return MAT_TID[tid] || state.fleet.matNames[tid]
+    || (oreDB && oreDB.ores[tid] ? oreDB.ores[tid].n : 'type ' + tid);
+}
+function queueFleetPrices(tids){
+  for (const t of tids)
+    if (t != null && !state.fleet.prices[t]) fleetFetchQ.add(t);
+  if (fleetFetchQ.size) runFleetFetch();   // no-op while a run is already draining the queue
+}
+async function runFleetFetch(){
+  if (fleetFetching) return;
+  fleetFetching = true;
+  const note = $('fleetPriceNote');
+  try{
+    while (fleetFetchQ.size){
+      const tids = [...fleetFetchQ];
+      fleetFetchQ.clear();
+      const nameless = tids.filter(t => !MAT_TID[t] && !state.fleet.matNames[t] && !(oreDB && oreDB.ores[t]));
+      if (nameless.length){
+        try{
+          const r = await esiFetch(ESI + '/universe/names/?datasource=tranquility', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(nameless.map(Number)),
+          });
+          for (const e of await r.json())
+            if (e && e.id != null && e.name) state.fleet.matNames[e.id] = e.name;
+        }catch(_e){ /* names are display-only — prices still fetch by tid */ }
+      }
+      let done = 0, failed = 0;
+      const queue = tids.slice();
+      note.textContent = `fetching ${tids.length} Jita price${tids.length > 1 ? 's' : ''}…`;
+      const workers = Array.from({ length: 4 }, async () => {
+        for (;;){
+          const t = queue.shift();
+          if (t == null) return;
+          try{ state.fleet.prices[t] = await fetchJita(Number(t)); }
+          catch(_e){ state.fleet.prices[t] = { sell: null, buy: null, err: 1 }; failed++; }
+          done++;
+          note.textContent = `fetching Jita prices… ${done}/${tids.length}${failed ? ` (${failed} failed)` : ''}`;
+        }
+      });
+      await Promise.all(workers);
+      state.fleet.fetchedAt = Date.now();
+    }
+  }finally{
+    fleetFetching = false;
+    persist();
+    renderFleet();
+  }
+}
+
+/* the value model — the two formulas of fleet mode:
+   refined ISK/m³    = Σ(qtyPerPortion × materialPrice) × (refinePct/100) / (portionSize × unitVol)
+   compressed ISK/m³ = compressedUnitPrice / (ratio × unitVol), ratio 100 for ore, 1 for ice;
+   no compressed variant or no book on the basis side → raw ore price / unitVol, tagged 'raw' */
+function fleetCompute(rows){
+  const need = new Set();
+  const out = [];
+  for (const row of rows){
+    const o = row.o;
+    const r = fleetRefineFor(o);
+    let matVal = 0, pending = false;
+    const unpriced = [];
+    for (const [mtid, q] of (o.m || [])){
+      const nm = MAT_TID[mtid];
+      if (nm){ matVal += q * priceOf(nm); continue; }
+      const p = fleetTidPrice(mtid);
+      if (p === undefined){ pending = true; need.add(mtid); }
+      else if (p == null) unpriced.push(fleetMatName(mtid));
+      else matVal += q * p;
+    }
+    let ref = null, refState = 'ok';
+    if (!(o.m || []).length) refState = 'none';
+    else if (pending) refState = 'pending';
+    else if (matVal > 0){ ref = matVal * (r.pct / 100) / (o.p * o.v); if (unpriced.length) refState = 'partial'; }
+    else refState = 'unpriced';
+    const ratio = o.ice ? 1 : 100;
+    let comp = null, compTag = null, compState = 'ok';
+    if (o.c != null){
+      const cp = fleetTidPrice(o.c);
+      if (cp === undefined){ compState = 'pending'; need.add(o.c); }
+      else if (cp != null) comp = cp / (ratio * o.v);
+    }
+    if (comp == null && compState !== 'pending'){
+      const rp = fleetTidPrice(row.tid);
+      if (rp === undefined){ compState = 'pending'; need.add(row.tid); }
+      else if (rp != null){
+        comp = rp / o.v;
+        compTag = o.c == null ? 'no compressed variant — raw ore price'
+          : `compressed type has no Jita ${state.priceBasis} book — raw ore price`;
+      } else compState = 'unpriced';
+    }
+    const cvExpect = o.ice ? o.v / 10 : o.v / 100;   // the SDE's own pattern for the assumed ratios
+    const cvOdd = o.cv != null && cvExpect > 0 && Math.abs(o.cv - cvExpect) > cvExpect * 0.01;
+    out.push({ ...row, r, ref, refState, unpriced, comp, compTag, compState, cvOdd,
+      ice: !!o.ice, merc: /mercoxit/i.test(o.b || '') || /mercoxit/i.test(o.g || '') });
+  }
+  return { rows: out, need };
+}
+
+const fleetRate = () => {
+  const f = state.fleet;
+  if (f.ymode === 'cycle') return (f.cycM3 > 0 && f.cycSec > 0) ? f.cycM3 * 3600 / f.cycSec : null;
+  return f.rate > 0 ? f.rate : null;
+};
+const hFmt = h => !Number.isFinite(h) ? '—' : h < 1 ? Math.round(h * 60) + ' min' : fmt.format(Math.round(h * 10) / 10) + ' h';
+
+function renderFleetYield(){
+  const f = state.fleet;
+  $('fleetYieldRow').hidden = !f.iskh;
+  $('fleetHrOff').setAttribute('aria-pressed', String(!f.iskh));
+  $('fleetHrOn').setAttribute('aria-pressed', String(f.iskh));
+  if (!f.iskh) return;
+  const cyc = f.ymode === 'cycle';
+  $('fleetYRate').setAttribute('aria-pressed', String(!cyc));
+  $('fleetYCycle').setAttribute('aria-pressed', String(cyc));
+  $('fleetRateLab').hidden = cyc; $('fleetRate').hidden = cyc;
+  $('fleetCycM3Lab').hidden = !cyc; $('fleetCycM3').hidden = !cyc;
+  $('fleetCycSecLab').hidden = !cyc; $('fleetCycSec').hidden = !cyc;
+  for (const [id, v] of [['fleetRate', f.rate], ['fleetCycM3', f.cycM3], ['fleetCycSec', f.cycSec]])
+    if (document.activeElement !== $(id)) $(id).value = v != null ? String(v) : '';
+  const rate = fleetRate();
+  $('fleetRateNote').textContent = cyc
+    ? (rate ? '= ' + fmt.format(Math.round(rate)) + ' m³/h' : 'fill both to get the hourly rate')
+    : (rate ? '' : 'enter your ship’s mining yield');
+}
+
+function fleetFlag(text, warn, title){
+  const s = el('span', 'flag' + (warn ? ' warn' : ''), text);
+  if (title) s.title = title;
+  return s;
+}
+
+function renderFleet(){
+  if (!$('fleetBox').open) return;   // lazy: nothing computed while collapsed
+  renderFleetYield();
+  const box = $('fleetTable');
+  box.textContent = '';
+  $('fleetUnknown').hidden = true;
+  $('fleetDataNote').hidden = true;
+  $('btnFleetPrices').hidden = !Object.keys(state.fleet.prices).length || fleetFetching;
+  if (!fleetFetching)
+    $('fleetPriceNote').textContent = state.fleet.fetchedAt
+      ? 'compressed/extra prices fetched ' + new Date(state.fleet.fetchedAt).toLocaleTimeString()
+      : '';
+  const text = $('fleetScan').value;
+  if (!text.trim()){
+    $('fleetNote').textContent = '';
+    box.appendChild(el('div', 'hint', 'paste a survey scan or load the sample — every rock gets a value per m³, refined vs compressed'));
+    return;
+  }
+  if (!oreDB){
+    const dn = $('fleetDataNote');
+    dn.hidden = false;
+    if (oreDBErr){
+      dn.className = 'hint warn';
+      dn.textContent = 'ore data unavailable (' + oreDBErr + ') — data/ores.json is generated at deploy '
+        + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally to use fleet mode. ';
+      const retry = el('button', null, 'retry');
+      retry.type = 'button';
+      retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderFleet(); });
+      dn.appendChild(retry);
+    } else {
+      dn.className = 'hint';
+      dn.textContent = 'loading ore data…';
+      loadOreDB();
+    }
+    return;
+  }
+  const parsed = parseSurvey(text);
+  if (parsed.unknown.size){
+    const list = [...parsed.unknown].map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(', ');
+    $('fleetUnknown').hidden = false;
+    $('fleetUnknown').textContent = 'unrecognized — not an asteroid/moon/ice type in the SDE (rows kept out of the ranking): ' + list;
+  }
+  const { rows, need } = fleetCompute(parsed.rows);
+  if (need.size) queueFleetPrices([...need]);
+  const totRocks = rows.reduce((s, r) => s + r.rocks, 0);
+  const totM3 = rows.reduce((s, r) => s + r.m3, 0);
+  $('fleetNote').textContent = rows.length
+    ? `${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`
+      + (parsed.numberless ? ` · ${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped` : '')
+      + (parsed.volFixed ? ` · ${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)` : '')
+    : '';
+  if (!rows.length){
+    box.appendChild(el('div', 'hint', 'no recognized ore rows in the paste'));
+    return;
+  }
+  if (!state.fetchedAt && !fleetFetching)
+    $('fleetPriceNote').textContent = 'refine-output prices are section-2 placeholders — hit “Fetch Jita prices” there for live refined values';
+
+  // % of best per the current value column; ice only ever competes with ice
+  const vc = state.fleet.valueCol;
+  const val = r => vc === 'comp' ? r.comp : r.ref;
+  let bestOre = null, bestIce = null;
+  for (const r of rows){
+    const v = val(r);
+    if (v == null) continue;
+    if (r.ice){ if (!bestIce || v > val(bestIce)) bestIce = r; }
+    else if (!bestOre || v > val(bestOre)) bestOre = r;
+  }
+  for (const r of rows){
+    const v = val(r), b = r.ice ? bestIce : bestOre;
+    r.pct = (v != null && b && val(b) > 0) ? v / val(b) * 100 : null;
+  }
+
+  const rate = fleetRate();
+  const sv = (r, k) => {
+    switch (k){
+      case 'name': return r.o.n;
+      case 'rocks': return r.rocks;
+      case 'm3': case 'ttc': return r.m3;
+      case 'ref': case 'refh': return r.ref == null ? -Infinity : r.ref;
+      case 'comp': case 'comph': return r.comp == null ? -Infinity : r.comp;
+      case 'pct': return r.pct == null ? -Infinity : r.pct;
+      default: return 0;
+    }
+  };
+  const k = state.fleet.sortKey, dir = state.fleet.sortDir;
+  rows.sort((a, b) => {
+    const x = sv(a, k), y = sv(b, k);
+    const c = (typeof x === 'string') ? x.localeCompare(y) : (x - y);
+    return c ? c * dir : a.o.n.localeCompare(b.o.n);
+  });
+
+  const on = state.fleet.iskh;
+  const cols = [
+    { k: 'name', h: 'ore' },
+    { k: 'rocks', h: 'rocks' },
+    { k: 'm3', h: 'total m³' },
+    { k: 'ref', h: 'refined ISK/m³' },
+    ...(on ? [{ k: 'refh', h: 'refined ISK/h' }] : []),
+    { k: 'comp', h: 'compressed ISK/m³' },
+    ...(on ? [{ k: 'comph', h: 'compressed ISK/h' }] : []),
+    { k: 'pct', h: '% of best (' + (vc === 'comp' ? 'compressed' : 'refined') + ')' },
+    ...(on ? [{ k: 'ttc', h: 'clear time' }] : []),
+  ];
+  const tbl = el('table', 'plan');
+  const thead = el('thead'), trh = el('tr');
+  for (const c of cols){
+    const th = el('th', null, c.h);
+    th.dataset.sort = c.k;
+    th.title = 'click to sort';
+    if (c.k === k) th.appendChild(el('span', 'dir', dir < 0 ? '▼' : '▲'));
+    trh.appendChild(th);
+  }
+  thead.appendChild(trh);
+  tbl.appendChild(thead);
+  const tb = el('tbody');
+
+  const numTd = (v, txt, title) => {
+    const td = el('td', 'num', txt);
+    if (v != null){ td.dataset.copy = String(Math.round(v * 100) / 100); }
+    if (title) td.title = title;
+    return td;
+  };
+  const iskCell = (r, side, perHour) => {   // side: 'ref' | 'comp'
+    const v = side === 'ref' ? r.ref : r.comp;
+    const st = side === 'ref' ? r.refState : r.compState;
+    if (st === 'pending') return el('td', 'num hint', '…');
+    if (v == null){
+      const td = el('td', 'num');
+      td.appendChild(el('span', 'hint', '—'));
+      td.appendChild(fleetFlag(st === 'none' ? 'no refine outputs' : 'unpriced', false,
+        side === 'comp' ? 'neither the compressed type nor the raw ore has a Jita ' + state.priceBasis + ' book'
+          : 'none of this ore’s refine outputs could be priced'));
+      return td;
+    }
+    if (perHour){
+      if (!rate) return numTd(null, '—', 'enter your ship’s yield in the row above');
+      return numTd(v * rate, fmtBig(v * rate), fmt.format(Math.round(v * rate)) + ' ISK/h at ' + fmt.format(Math.round(rate)) + ' m³/h');
+    }
+    const td = numTd(v, fmt.format(Math.round(v * 100) / 100),
+      side === 'ref'
+        ? 'refine outputs × ' + (Math.round(r.r.pct * 10) / 10) + '% ÷ (portion × m³/unit) · ' + r.r.detail
+        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (' + (r.ice ? 1 : 100) + ' × unit m³)')));
+    if (side === 'ref' && r.refState === 'partial')
+      td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
+        'these refine outputs have no Jita ' + state.priceBasis + ' book — the value shown excludes them'));
+    if (side === 'comp' && r.compTag) td.appendChild(fleetFlag('raw', true, r.compTag));
+    if (side === 'comp' && r.cvOdd)
+      td.appendChild(fleetFlag('ratio?', true,
+        'the compressed type’s volume does not match the usual pattern — verify the ' + (r.ice ? '1:1' : '100:1') + ' compression ratio in game'));
+    return td;
+  };
+
+  for (const r of rows){
+    const tr = el('tr');
+    if ((bestOre && r === bestOre) || (bestIce && r === bestIce)) tr.className = 'best';
+    const tdn = el('td');
+    tdn.appendChild(el('span', 'orename', r.o.n));
+    if (r.o.b && r.o.b !== r.o.n) tdn.appendChild(el('span', 'famtag', r.o.b));
+    if (r.merc) tdn.appendChild(fleetFlag('deep-core — needs Mercoxit crystals, separate yield', true,
+      'Mercoxit takes deep-core mining crystals and mines at its own (lower) yield — ISK/h and clear time from your normal yield do not apply'));
+    if (r.ice) tdn.appendChild(fleetFlag('ice — unit-based harvesting, compare only against other ice', true,
+      'ice harvesters cycle per unit, not per m³ — the %-of-best column ranks ice against other ice only'));
+    tr.appendChild(tdn);
+    tr.appendChild(numTd(r.rocks, String(r.rocks)));
+    tr.appendChild(numTd(r.m3, fmt.format(Math.round(r.m3)) + ' m³',
+      fmt.format(Math.round(r.units)) + ' units of ' + r.o.n));
+    tr.appendChild(iskCell(r, 'ref', false));
+    if (on) tr.appendChild(iskCell(r, 'ref', true));
+    tr.appendChild(iskCell(r, 'comp', false));
+    if (on) tr.appendChild(iskCell(r, 'comp', true));
+    tr.appendChild(r.pct == null ? el('td', 'num hint', '—')
+      : numTd(r.pct, fmt.format(Math.round(r.pct * 10) / 10) + '%'));
+    if (on) tr.appendChild(rate ? numTd(r.m3 / rate, hFmt(r.m3 / rate),
+      fmt.format(Math.round(r.m3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
+    tb.appendChild(tr);
+  }
+
+  // field totals: what the whole scanned field is worth on each basis
+  const refIsk = rows.reduce((s, r) => s + (r.ref != null ? r.ref * r.m3 : 0), 0);
+  const compIsk = rows.reduce((s, r) => s + (r.comp != null ? r.comp * r.m3 : 0), 0);
+  const totH = rate ? totM3 / rate : null;
+  const trt = el('tr', 'total');
+  trt.appendChild(el('td', null, 'field value'));
+  trt.appendChild(numTd(totRocks, String(totRocks)));
+  trt.appendChild(numTd(totM3, fmt.format(Math.round(totM3)) + ' m³'));
+  trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)'));
+  if (on) trt.appendChild(totH ? numTd(refIsk / totH, fmtBig(refIsk / totH), 'field average, refined') : numTd(null, '—'));
+  trt.appendChild(numTd(compIsk, fmtBig(compIsk) + ' ISK', 'the whole field, compressed (priced rows only)'));
+  if (on) trt.appendChild(totH ? numTd(compIsk / totH, fmtBig(compIsk / totH), 'field average, compressed') : numTd(null, '—'));
+  trt.appendChild(el('td'));
+  if (on) trt.appendChild(totH ? numTd(totH, hFmt(totH), 'whole field ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
+  tb.appendChild(trt);
+  tbl.appendChild(tb);
+  box.appendChild(tbl);
+}
+
+/* realistic sample: repeated + higher-quality asteroid variants, a moon-chunk rock,
+   Mercoxit and an ice line — exactly the shape the in-game window copies out */
+const SAMPLE_SCAN = [
+  'Ore Type\tQuantity\tVolume\tDistance',
+  'Concentrated Veldspar\t64,213\t6,421 m3\t7,431 m',
+  'Dense Veldspar\t41,500\t4,150 m3\t12 km',
+  'Concentrated Veldspar\t22,108\t2,211 m3\t9,120 m',
+  'Fiery Kernite\t8,014\t9,617 m3\t15 km',
+  'Pristine Jaspet\t3,205\t6,410 m3\t18 km',
+  'Triclinic Bistot\t1,412\t22,592 m3\t31 km',
+  'Magma Mercoxit\t402\t16,080 m3\t44 km',
+  'Brimful Zeolites\t61,240\t612,400 m3\t3,105 m',
+  'Clear Icicle\t1,204\t1,204,000 m3\t21 km',
+].join('\n');
+
 /* ---------- render all ---------- */
 function renderControls(){
   $('basisIsk').setAttribute('aria-pressed', String(state.basis === 'isk'));
@@ -1338,6 +1864,7 @@ function renderAll(){
   renderRanks();
   renderPlan();
   renderArrays();
+  renderFleet();
   renderMoons();
 }
 
@@ -1360,6 +1887,24 @@ $('planBox').addEventListener('click', e => {
   if (!t) return;
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed) return;      // user is selecting text, don't hijack
+  copyRaw(t.dataset.copy, t);
+});
+$('fleetTable').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]');
+  if (th){
+    const key = th.dataset.sort;
+    if (state.fleet.sortKey === key) state.fleet.sortDir = -state.fleet.sortDir;
+    else { state.fleet.sortKey = key; state.fleet.sortDir = key === 'name' ? 1 : -1; }
+    // the %-of-best baseline follows the value column being sorted on
+    if (key === 'ref' || key === 'refh') state.fleet.valueCol = 'ref';
+    else if (key === 'comp' || key === 'comph') state.fleet.valueCol = 'comp';
+    renderFleet(); persist();
+    return;
+  }
+  const t = e.target.closest('[data-copy]');
+  if (!t) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed) return;
   copyRaw(t.dataset.copy, t);
 });
 
@@ -1492,6 +2037,14 @@ function persist(){
       arrayView: state.arrayView,
       openDeposits: [...state.openDeposits],
       priceOpen: $('priceBox').open,
+      fleetText: $('fleetScan').value,
+      fleet: {
+        open: $('fleetBox').open,
+        iskh: state.fleet.iskh, ymode: state.fleet.ymode,
+        rate: state.fleet.rate, cycM3: state.fleet.cycM3, cycSec: state.fleet.cycSec,
+        sortKey: state.fleet.sortKey, sortDir: state.fleet.sortDir, valueCol: state.fleet.valueCol,
+        prices: state.fleet.prices, matNames: state.fleet.matNames, fetchedAt: state.fleet.fetchedAt,
+      },
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
@@ -1541,13 +2094,37 @@ function restore(){
     EveStructures.info(state.fac.structInfo.id).then(info => {
       state.fac.structInfo = info;
       if (info.security != null) state.fac.sec = secBandOf(info.security);
-      renderFacControls(); renderSkillsPanel(); renderPlan();
+      renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet();
     }).catch(() => { /* keep the persisted snapshot */ });
   if (typeof s.moonText === 'string') $('moons').value = s.moonText;
   state.showAllRanks = !!s.showAllRanks;
   if (s.arrayView === 'site' || s.arrayView === 'm3') state.arrayView = s.arrayView;
   if (Array.isArray(s.openDeposits)) state.openDeposits = new Set(s.openDeposits.filter(n => ANOMALIES[n]));
   $('priceBox').open = !!s.priceOpen;
+  if (typeof s.fleetText === 'string') $('fleetScan').value = s.fleetText;
+  if (s.fleet && typeof s.fleet === 'object'){
+    const f = s.fleet;
+    state.fleet.iskh = !!f.iskh;
+    if (f.ymode === 'rate' || f.ymode === 'cycle') state.fleet.ymode = f.ymode;
+    state.fleet.rate = numOrNull(f.rate);
+    state.fleet.cycM3 = numOrNull(f.cycM3);
+    state.fleet.cycSec = numOrNull(f.cycSec);
+    if (['name', 'rocks', 'm3', 'ref', 'refh', 'comp', 'comph', 'pct', 'ttc'].includes(f.sortKey))
+      state.fleet.sortKey = f.sortKey;
+    state.fleet.sortDir = f.sortDir === 1 ? 1 : -1;
+    if (f.valueCol === 'ref' || f.valueCol === 'comp') state.fleet.valueCol = f.valueCol;
+    if (f.prices && typeof f.prices === 'object')
+      for (const [t, p] of Object.entries(f.prices)){
+        if (!/^\d+$/.test(t) || !p || typeof p !== 'object') continue;
+        state.fleet.prices[t] = { sell: numOrNull(p.sell), buy: numOrNull(p.buy) };
+        if (p.err) state.fleet.prices[t].err = 1;
+      }
+    if (f.matNames && typeof f.matNames === 'object')
+      for (const [t, n] of Object.entries(f.matNames))
+        if (/^\d+$/.test(t) && typeof n === 'string') state.fleet.matNames[t] = n;
+    if (typeof f.fetchedAt === 'number') state.fleet.fetchedAt = f.fetchedAt;
+    $('fleetBox').open = !!f.open;   // the toggle event lazily loads ores.json when open
+  }
   if (state.fetchedAt)
     $('esiStatus').textContent = 'using Jita prices fetched ' + new Date(state.fetchedAt).toLocaleString();
 }
@@ -1567,14 +2144,14 @@ $('basisUnits').addEventListener('click', () => { state.basis = 'units'; renderA
 $('refine').addEventListener('input', () => {
   const v = $('refine').valueAsNumber;
   if (Number.isFinite(v)) state.refine = Math.min(95, Math.max(30, v));
-  renderPlan(); persist();
+  renderPlan(); renderFleet(); persist();
 });
 $('refine').addEventListener('change', () => { $('refine').value = String(state.refine); });
 $('facStruct').addEventListener('change', () => {
   const v = $('facStruct').value;
   if (v === 'npc') state.fac.struct = 'npc';
   else if (state.fac.structInfo && v === 's:' + state.fac.structInfo.id) state.fac.struct = v;
-  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
+  renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('facPick').addEventListener('click', async () => {
   const s = await EveStructures.pick({ title: 'Refining structure', manage: true });
@@ -1583,16 +2160,16 @@ $('facPick').addEventListener('click', async () => {
     state.fac.structInfo = s;
     if (s.security != null) state.fac.sec = secBandOf(s.security);
   }
-  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
+  renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('facRig').addEventListener('change', () => {
   if (RIG_BONUS[$('facRig').value] != null) state.fac.rig = $('facRig').value;
-  renderFacControls(); renderSkillsPanel(); renderPlan(); persist();
+  renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('facImp').addEventListener('change', () => {
   const v = Number($('facImp').value);
   if ([0, 1, 2, 4].includes(v)) state.fac.imp = v;
-  renderSkillsPanel(); renderPlan(); persist();
+  renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('priceBasis').addEventListener('change', () => {
   state.priceBasis = $('priceBasis').value === 'buy' ? 'buy' : 'sell';
@@ -1614,6 +2191,33 @@ $('btnClearMoons').addEventListener('click', () => {
   renderMoons(); persist();
 });
 $('priceBox').addEventListener('toggle', persist);
+
+/* fleet mode wiring — ores.json loads lazily on the section's first real use */
+$('fleetBox').addEventListener('toggle', () => {
+  if ($('fleetBox').open){ loadOreDB(); renderFleet(); }
+  persist();
+});
+$('fleetScan').addEventListener('input', () => { loadOreDB(); renderFleet(); persist(); });
+$('btnFleetSample').addEventListener('click', () => {
+  $('fleetScan').value = SAMPLE_SCAN;
+  loadOreDB(); renderFleet(); persist();
+});
+$('btnFleetClear').addEventListener('click', () => { $('fleetScan').value = ''; renderFleet(); persist(); });
+$('btnFleetPrices').addEventListener('click', () => {
+  state.fleet.prices = {};
+  state.fleet.fetchedAt = null;
+  renderFleet(); persist();          // re-render queues every needed tid again
+});
+$('fleetHrOff').addEventListener('click', () => { state.fleet.iskh = false; renderFleet(); persist(); });
+$('fleetHrOn').addEventListener('click', () => { state.fleet.iskh = true; renderFleet(); persist(); });
+$('fleetYRate').addEventListener('click', () => { state.fleet.ymode = 'rate'; renderFleet(); persist(); });
+$('fleetYCycle').addEventListener('click', () => { state.fleet.ymode = 'cycle'; renderFleet(); persist(); });
+for (const [id, key] of [['fleetRate', 'rate'], ['fleetCycM3', 'cycM3'], ['fleetCycSec', 'cycSec']])
+  $(id).addEventListener('input', () => {
+    const v = $(id).valueAsNumber;
+    state.fleet[key] = (Number.isFinite(v) && v > 0) ? v : null;
+    renderFleet(); persist();
+  });
 
 restore();
 renderFacControls();
@@ -1673,7 +2277,7 @@ renderAll();
       renderSkillsPanel();
       $('refine').disabled = false;
       $('refine').title = '';
-      renderPlan();
+      renderPlan(); renderFleet();
       return;
     }
     // the skills scope is what makes every per-ore yield real — without it the whole
@@ -1689,7 +2293,7 @@ renderAll();
       renderSkillsPanel();
       $('refine').disabled = false;
       $('refine').title = 'skills unavailable — set the refine rate by hand';
-      renderPlan();
+      renderPlan(); renderFleet();
       return;
     }
     try{
@@ -1705,7 +2309,7 @@ renderAll();
       $('refine').disabled = true;
       $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
       note.textContent = ` ⚡ per-ore refine from ${EveAuth.character().name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
-      renderPlan();
+      renderPlan(); renderFleet();
     }catch(e){
       console.error('skill auto-fill failed:', e);
     }
