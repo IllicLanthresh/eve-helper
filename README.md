@@ -217,10 +217,11 @@ and shipping both ways priced in.
 
 Blueprint recipes, type volumes, market groups and skills come from CCP's **Static Data
 Export**. CI downloads the SDE at deploy time and runs
-`tools/build-industry-data.mjs`, which condenses the ~500 MB YAML into one
-`data/industry.json` blob (~2 MB: every man/rea/inv/cop/me/te activity with materials,
-products, probabilities and skills). The file is generated, not committed — for a local
-checkout, build it once from an extracted SDE:
+`tools/build-industry-data.mjs`, which condenses the ~500 MB YAML into
+`data/industry.json` (~2 MB: every man/rea/inv/cop/me/te activity with materials,
+products, probabilities and skills) plus `data/ores.json` (~80 KB: every ore/moon
+ore/ice variant with exact reprocessing outputs, for the Mine tool). The files are
+generated, not committed — for a local checkout, build them once from an extracted SDE:
 `node tools/build-industry-data.mjs --sde <dir> --out data/industry.json`. The page's
 status line shows the SDE version and blueprint count it loaded.
 

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // build-industry-data.mjs
-// Converts CCP's EVE Static Data Export (SDE, classic YAML layout) into one
-// compact JSON blob (data/industry.json) consumed by the industry tools.
+// Converts CCP's EVE Static Data Export (SDE, classic YAML layout) into the
+// compact JSON blobs consumed by the tools: data/industry.json (industry
+// calculator) and data/ores.json (Mine tool ore/ice reference).
 //
 // Usage:
 //   node --max-old-space-size=4096 tools/build-industry-data.mjs \
-//     --sde /path/to/extracted-sde --out data/industry.json
+//     --sde /path/to/extracted-sde --out data/industry.json \
+//     [--ores-out data/ores.json]
 //
 // The --sde directory must contain the classic layout files:
-//   fsd/blueprints.yaml, fsd/types.yaml, fsd/groups.yaml, fsd/marketGroups.yaml
+//   fsd/blueprints.yaml, fsd/types.yaml, fsd/groups.yaml, fsd/marketGroups.yaml,
+//   fsd/typeDogma.yaml, fsd/typeMaterials.yaml, fsd/categories.yaml
 // (types.yaml is ~150MB; it is stream-parsed entry-by-entry so the default
 //  node heap is normally enough — the flag above is just headroom.)
 //
@@ -43,6 +46,30 @@
 //   } },                                                  //   listed but flagged, treat as inert
 //   "structures": { "<tid>": [name, groupId, "M"|"L"|"XL", rigSlots] }
 // }
+//
+// data/ores.json schema (fixed; the Mine tool is written against it):
+// {
+//   "v": "<sde date>",                                // same version stamp as industry.json
+//   "ores": { "<tid>": {
+//       "n": name, "v": volumePerUnit, "p": portionSize, "g": groupName,
+//       "b": baseFamilyName,                          // "Dense Veldspar" -> "Veldspar"
+//       "m": [[materialTid, qtyPerPortion], ...],     // reprocessing outputs per portionSize
+//                                                     //   units, straight from typeMaterials
+//       "c": compressedTid|null,                      // the "Compressed <name>" type
+//       "cv": compressedUnitVolume|null,
+//       "ice": 0|1
+//   } },
+//   "names": { "<lowercased type name>": tid }
+// }
+// `ores` covers every PUBLISHED type in the Asteroid category: standard ores,
+// moon ores and ice, every quality variant, plus the compressed forms
+// themselves (they sit in the same SDE groups). The base family "b" is the
+// type in the same market group whose name equals the market-group name
+// (mg "Veldspar" -> "Veldspar"); where no such type exists (ice and moon-ore
+// market groups are pluralized: "Ice Ores", "Ubiquitous Moon Ores") the type
+// is logged and "b" falls back to the longest base-family name that is a
+// word-suffix of the variant name ("Brimful Zeolites" -> "Zeolites"), a base
+// family being any type name that does not itself extend another type's name.
 // `types` contains ONLY tids referenced by blueprint activities (materials,
 // products, the blueprint itself) plus every skill tid; `groups`/`marketGroups`
 // contain only the entries reachable from those types (market group parent
@@ -125,12 +152,13 @@ function arg(name, dflt) {
 }
 const sdeDir = arg('--sde');
 const outFile = arg('--out', 'data/industry.json');
+const oresOutFile = arg('--ores-out', path.join(path.dirname(outFile), 'ores.json'));
 if (!sdeDir) {
-  console.error('Usage: node tools/build-industry-data.mjs --sde <extracted-sde-dir> [--out data/industry.json]');
+  console.error('Usage: node tools/build-industry-data.mjs --sde <extracted-sde-dir> [--out data/industry.json] [--ores-out data/ores.json]');
   process.exit(2);
 }
 const fsd = (f) => path.join(sdeDir, 'fsd', f);
-for (const f of ['blueprints.yaml', 'types.yaml', 'groups.yaml', 'marketGroups.yaml', 'typeDogma.yaml']) {
+for (const f of ['blueprints.yaml', 'types.yaml', 'groups.yaml', 'marketGroups.yaml', 'typeDogma.yaml', 'typeMaterials.yaml', 'categories.yaml']) {
   if (!fs.existsSync(fsd(f))) {
     console.error(`Missing required SDE file: ${fsd(f)}`);
     process.exit(2);
@@ -226,6 +254,26 @@ log(`rig groups: ${rigGroupIds.size} industry (engineering/reactor), ${otherRigG
 // Industry-capable Upwell structure groups: Engineering Complex, Refinery, Citadel.
 const STRUCT_GROUP_IDS = new Set([1404, 1406, 1657]);
 
+// Asteroid category (ores/moon ores/ice), resolved by NAME from categories.yaml
+// rather than hardcoding the id, so a renumbering SDE fails loudly here.
+const rawCategories = yaml.load(fs.readFileSync(fsd('categories.yaml'), 'utf8'));
+let asteroidCatId = null;
+for (const [cidStr, c] of Object.entries(rawCategories)) {
+  if (c.name && c.name.en === 'Asteroid') { asteroidCatId = Number(cidStr); break; }
+}
+if (asteroidCatId === null) {
+  console.error('FATAL: no "Asteroid" category in categories.yaml — ore extraction assumptions broke');
+  process.exit(1);
+}
+const asteroidGroupIds = new Set();   // gid -> in Asteroid category
+const asteroidGroupName = {};         // gid -> English group name
+for (const [gidStr, g] of Object.entries(rawGroups)) {
+  if ((g.categoryID ?? 0) !== asteroidCatId) continue;
+  asteroidGroupIds.add(Number(gidStr));
+  asteroidGroupName[gidStr] = (g.name && g.name.en) || `group ${gidStr}`;
+}
+log(`asteroid category ${asteroidCatId}: ${asteroidGroupIds.size} groups (ores/moon ores/ice)`);
+
 // ---------------------------------------------------------------------------
 // 2. types.yaml (~150MB) — stream-parse one top-level entry at a time.
 //    Top-level keys sit at column 0 (`123:`); every entry body is indented,
@@ -237,6 +285,8 @@ const typeGroupIds = new Set();
 const typeMarketGroupIds = new Set();
 const rigTypes = {};    // tid -> {name, gid}   (published Standup engineering/reactor rigs)
 const structTypes = {}; // tid -> {name, gid}   (published Upwell industry structures)
+const oreTypes = {};    // tid -> {name, gid, mgid, vol, portion}  (published Asteroid-category types)
+let unpublishedOres = 0;
 let typeCount = 0;
 
 await new Promise((resolve, reject) => {
@@ -250,15 +300,16 @@ await new Promise((resolve, reject) => {
   const flush = () => {
     if (curTid === null) return;
     typeCount++;
-    // cheap pre-check: rig/structure entries are kept even when no blueprint
-    // references them (Thukker rigs have no public blueprint, for example)
+    // cheap pre-check: rig/structure/asteroid entries are kept even when no
+    // blueprint references them (Thukker rigs have no public blueprint; most
+    // ores are never a blueprint material)
     let extraGid = 0;
     if (!referencedTids.has(curTid)) {
       for (const ln of curLines) {
         const g = /^\s{2}groupID: (\d+)\s*$/.exec(ln);
         if (g) { extraGid = Number(g[1]); break; }
       }
-      if (!rigGroupIds.has(extraGid) && !STRUCT_GROUP_IDS.has(extraGid)) {
+      if (!rigGroupIds.has(extraGid) && !STRUCT_GROUP_IDS.has(extraGid) && !asteroidGroupIds.has(extraGid)) {
         curTid = null; curLines = [];
         return;
       }
@@ -274,6 +325,16 @@ await new Promise((resolve, reject) => {
     if (t.published) {
       if (rigGroupIds.has(gid) && /^Standup /.test(name)) rigTypes[curTid] = { name, gid };
       if (STRUCT_GROUP_IDS.has(gid)) structTypes[curTid] = { name, gid };
+      if (asteroidGroupIds.has(gid)) {
+        oreTypes[curTid] = {
+          name, gid,
+          mgid: t.marketGroupID ?? 0,
+          vol: t.volume ?? 0,
+          portion: t.portionSize ?? 1,
+        };
+      }
+    } else if (asteroidGroupIds.has(gid)) {
+      unpublishedOres++; // decorative/test asteroids, deadspace props, …
     }
     if (referencedTids.has(curTid)) {
       typesOut[curTid] = [
@@ -659,6 +720,110 @@ for (const [tid, wantSz] of [[35825, 'M'], [35835, 'M'], [35826, 'L'], [35836, '
 }
 
 // ---------------------------------------------------------------------------
+// 4d. data/ores.json — every published Asteroid-category type (standard ores,
+//     moon ores, ice, every quality variant, plus the compressed forms, which
+//     live in the same SDE groups) with its exact per-variant reprocessing
+//     outputs from typeMaterials.yaml. Quantities there are already per
+//     portionSize units of the ore, no approximation involved.
+// ---------------------------------------------------------------------------
+log('parsing typeMaterials.yaml ...');
+const rawTm = yaml.load(fs.readFileSync(fsd('typeMaterials.yaml'), 'utf8'));
+
+const oreNames = {}; // lowercased English name -> tid
+for (const [tidStr, o] of Object.entries(oreTypes)) {
+  const key = o.name.toLowerCase();
+  if (oreNames[key] !== undefined) {
+    console.error(`ORE WARNING: duplicate published type name "${o.name}" (tids ${oreNames[key]}, ${tidStr}) — keeping the first`);
+    continue;
+  }
+  oreNames[key] = Number(tidStr);
+}
+
+// Base families. Primary rule: the type in the same market group whose name
+// equals the market-group name (mg "Veldspar" contains the type "Veldspar")
+// names the family for every member of that market group. Ice and moon-ore
+// market groups are pluralized ("Ice Ores", "Ubiquitous Moon Ores") so the
+// rule fails there; those types are logged below and fall back to the longest
+// base-family name that is a word-suffix of the variant name ("Compressed
+// Thick Blue Ice" -> "Blue Ice"), a base family being any type name that does
+// not itself extend another type's name. Types matching neither (one-off
+// mission/event ores: Banidine, Azure Ice, the Mutanites, …) are their own family.
+const isSuffixName = (name, base) => name === base || name.endsWith(' ' + base);
+const allOreNames = Object.values(oreTypes).map((o) => o.name);
+const familyNames = allOreNames.filter(
+  (n) => !allOreNames.some((other) => other !== n && isSuffixName(n, other)));
+const mgBaseName = new Map(); // mgid -> family name via the primary rule
+for (const o of Object.values(oreTypes)) {
+  if (!o.mgid || mgBaseName.has(o.mgid)) continue;
+  const mgEntry = rawMg[o.mgid];
+  const mgName = (mgEntry && mgEntry.nameID && mgEntry.nameID.en) || '';
+  if (oreNames[mgName.toLowerCase()] !== undefined &&
+      oreTypes[oreNames[mgName.toLowerCase()]].mgid === o.mgid) {
+    mgBaseName.set(o.mgid, mgName);
+  }
+}
+const familyOf = (o) => {
+  if (mgBaseName.has(o.mgid)) return { b: mgBaseName.get(o.mgid), fell: false };
+  let best = null;
+  for (const f of familyNames) {
+    if (isSuffixName(o.name, f) && (!best || f.length > best.length)) best = f;
+  }
+  return { b: best || o.name, fell: true };
+};
+
+const oresOut = {};
+const missingCompressed = [];
+const fellBack = new Map(); // market-group label -> ["variant -> family", ...]
+for (const [tidStr, o] of Object.entries(oreTypes)) {
+  const { b, fell } = familyOf(o);
+  if (fell) {
+    const mgEntry = o.mgid && rawMg[o.mgid];
+    const label = o.mgid
+      ? `mg ${o.mgid} "${(mgEntry && mgEntry.nameID && mgEntry.nameID.en) || '?'}"`
+      : 'no market group';
+    if (!fellBack.has(label)) fellBack.set(label, []);
+    fellBack.get(label).push(o.name === b ? `${o.name} (own family)` : `${o.name} -> ${b}`);
+  }
+  const cTid = oreNames['compressed ' + o.name.toLowerCase()];
+  if (cTid === undefined && !/^(batch )?compressed /i.test(o.name)) missingCompressed.push(o.name);
+  oresOut[tidStr] = {
+    n: o.name,
+    v: o.vol,
+    p: o.portion,
+    g: asteroidGroupName[o.gid],
+    b,
+    m: ((rawTm[tidStr] && rawTm[tidStr].materials) || []).map((e) => [e.materialTypeID, e.quantity]),
+    c: cTid !== undefined ? cTid : null,
+    cv: cTid !== undefined ? oreTypes[cTid].vol : null,
+    ice: /\bIce\b/.test(asteroidGroupName[o.gid]) ? 1 : 0,
+  };
+}
+for (const [label, list] of fellBack) {
+  log(`ore base-family rule (type named like its market group) failed for ${label}: ${list.join(', ')}`);
+}
+if (missingCompressed.length) {
+  log(`ORE WARNING: ${missingCompressed.length} non-compressed types with no "Compressed <name>" in this SDE (c=null): ${missingCompressed.join(', ')}`);
+}
+
+{ // sanity: known in-game values that must hold in any healthy SDE
+  const probe = (n) => oresOut[oreNames[n]];
+  const veld = probe('veldspar'), dense = probe('dense veldspar');
+  const zeo = probe('zeolites'), icicle = probe('clear icicle');
+  const tritOf = (o) => { const m = (o && o.m || []).find(([tid]) => tid === 34); return m ? m[1] : 0; };
+  if (!veld || veld.p !== 100 || tritOf(veld) === 0) {
+    console.error('FATAL: Veldspar sanity failed (expected portionSize 100 and a Tritanium yield) — ore extraction assumptions broke');
+    process.exit(1);
+  }
+  if (dense && tritOf(dense) <= tritOf(veld)) {
+    console.error('ORE SANITY WARNING: Dense Veldspar should out-yield plain Veldspar per portion');
+  }
+  log(`ore sanity: Veldspar p=${veld.p} v=${veld.v} trit/portion=${tritOf(veld)} c=${veld.c}; ` +
+      `Dense Veldspar trit/portion=${dense ? tritOf(dense) : '??'}; ` +
+      `Zeolites b="${zeo ? zeo.b : '??'}" g="${zeo ? zeo.g : '??'}"; ` +
+      `Clear Icicle ice=${icicle ? icicle.ice : '??'} v=${icicle ? icicle.v : '??'}`);
+}
+
+// ---------------------------------------------------------------------------
 // 5. version + emit
 // ---------------------------------------------------------------------------
 const version =
@@ -684,3 +849,9 @@ log(`wrote ${outFile}: v=${version}, ${(bytes / 1024 / 1024).toFixed(2)} MB raw;
     `marketGroups=${Object.keys(marketGroups).length}, skills=${Object.keys(skills).length}, ` +
     `blueprints=${Object.keys(blueprints).length}, rigs=${Object.keys(rigsOut).length}, ` +
     `structures=${Object.keys(structuresOut).length}`);
+
+fs.mkdirSync(path.dirname(oresOutFile), { recursive: true });
+fs.writeFileSync(oresOutFile, JSON.stringify({ v: version, ores: oresOut, names: oreNames }));
+const oreBytes = fs.statSync(oresOutFile).size;
+log(`wrote ${oresOutFile}: v=${version}, ${(oreBytes / 1024).toFixed(1)} KB raw; ` +
+    `ores=${Object.keys(oresOut).length} (${unpublishedOres} unpublished asteroid types skipped)`);
