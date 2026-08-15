@@ -35,6 +35,7 @@
     padding:6px 12px 10px;margin:0;min-width:210px}
   fieldset.grp legend{color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:0 6px}
   fieldset.grp .grow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  fieldset.grp .grow[hidden]{display:none}   /* the flex above would defeat the hidden attribute */
   fieldset.grp label{color:var(--text);font-size:13px}
   button{background:#1b2434;color:var(--text);border:1px solid #2e3b52;border-radius:7px;
     padding:7px 14px;font-size:13px;cursor:pointer}
@@ -125,9 +126,21 @@
         <label for="brokerFee" style="margin:0">broker % <span class="hint">(orders only)</span></label>
         <input id="brokerFee" type="number" step="0.01" min="0" max="20" value="2.1">
       </div>
+      <div class="grow" id="obsBrokerWrap" hidden>
+        <label for="obsBrokerFee" style="margin:0" title="the exact broker % your own client shows at this market — it wins over the computed rate and is remembered per market">game says %</label>
+        <input id="obsBrokerFee" type="number" step="0.01" min="0" max="20" placeholder="—" style="width:76px"
+          title="type the broker fee your in-game market window shows here; CCP retunes the rates and the public formulas lag, so your observation wins">
+        <a href="#" id="obsBrokerClear" class="hint" hidden title="forget the observed broker rate for this market and go back to the computed one">clear</a>
+      </div>
       <div class="grow">
         <label for="salesTax" style="margin:0">sales tax % <span class="hint">(all sales)</span></label>
         <input id="salesTax" type="number" step="0.01" min="0" max="20" value="7.5">
+      </div>
+      <div class="grow" id="obsTaxWrap" hidden>
+        <label for="obsSalesTax" style="margin:0" title="the exact sales tax % your own client shows at this market — it wins over the computed rate and is remembered per market">game says %</label>
+        <input id="obsSalesTax" type="number" step="0.01" min="0" max="20" placeholder="—" style="width:76px"
+          title="type the sales tax your in-game sell window shows here; the computed base is unverified, so your observation wins">
+        <a href="#" id="obsTaxClear" class="hint" hidden title="forget the observed sales tax for this market and go back to the computed one">clear</a>
       </div>
     </fieldset>
     <fieldset class="grp">
@@ -564,6 +577,43 @@ const HUBS = {
 const UNSELLABLE = [/^expired\s/i, /ice storm filament/i];
 const LS_KEY = 'eveSellHelper.v2';
 
+/* ---------- fee model (one place to correct when CCP retunes the rates) ----------
+   NPC-station broker fee, VERIFIED against the live client at Jita 4-4 with Broker
+   Relations 5 and ~zero standings → 1.5%:
+     broker% = max(0, BROKER_BASE_PCT − BROKER_SKILL_PP_PER_LEVEL×BrokerRelations
+                      − BROKER_FACTION_PP×faction − BROKER_CORP_PP×corp)
+   The standings are the UNMODIFIED ones straight from ESI: CCP's documentation is
+   explicit that market fees use unmodified standings, so Connections and Diplomacy do
+   NOT apply here (they still shape the mission/agent side, which is why the effective-
+   standing helper stays for other uses).
+   On top of the percentage the game charges a flat minimum of 100 ISK per ORDER (not
+   per unit), so a cheap stack pays an effective rate well above the nominal one — a
+   100 ISK floor on a 4,500 ISK order is 2.2%.
+   Sales tax:
+     tax% = SALES_TAX_BASE_PCT × (1 − ACCOUNTING_REL_PER_LEVEL×Accounting)
+   The 7.5 base is UNVERIFIED against the live client and pending a measurement off the
+   sell window (which may indicate a lower base) — a one-line change when that lands.
+   Either fee can be overridden per market by a rate read off the player's own client. */
+const BROKER_BASE_PCT = 3;
+const BROKER_SKILL_PP_PER_LEVEL = 0.3;
+const BROKER_FACTION_PP = 0.03;
+const BROKER_CORP_PP = 0.02;
+const MIN_BROKER_FEE_ISK = 100;        // flat floor, charged per order
+const SALES_TAX_BASE_PCT = 7.5;        // UNVERIFIED — see above
+const ACCOUNTING_REL_PER_LEVEL = 0.11;
+
+const brokerPctFor = (sk, faction, corp) => Math.max(0,
+  BROKER_BASE_PCT
+  - BROKER_SKILL_PP_PER_LEVEL * (sk.brokerRelations || 0)
+  - BROKER_FACTION_PP * (faction || 0)
+  - BROKER_CORP_PP * (corp || 0));
+const salesTaxPctFor = sk =>
+  SALES_TAX_BASE_PCT * (1 - ACCOUNTING_REL_PER_LEVEL * (sk.accounting || 0));
+
+// broker charged on ONE market order of the given ISK value
+const brokerOn = (value, brokerFrac) =>
+  value > 0 ? Math.max(MIN_BROKER_FEE_ISK, brokerFrac * value) : 0;
+
 const state = {
   rows: [],            // priced items
   unpriced: [],        // {name, qty, reason}
@@ -673,6 +723,27 @@ function walkBook(levels, qty, floor){
   return { proceeds, filled, marginal };
 }
 
+/* Plan B (ORDER / SPLIT): sell into the buy orders that beat listing, list the rest as
+   ONE market order at L. Walked level by level, keeping the best net, instead of using
+   a fixed per-unit threshold: the 100 ISK per-order floor makes a small listed remainder
+   disproportionately expensive, so the cut-off is no longer a pure per-unit comparison.
+   With no floor binding this picks exactly the same level as the old threshold rule
+   (prices descend, so net rises while a level's price beats L×(1−tax−broker)/(1−tax)). */
+function planOrder(levels, qty, L, tax, brokerFrac){
+  const listNet = rem => rem > 0 ? rem * L * (1 - tax) - brokerOn(rem * L, brokerFrac) : 0;
+  let best = { proceeds: 0, filled: 0, marginal: null, net: listNet(qty) };
+  let proceeds = 0, filled = 0, remaining = qty;
+  for (const lv of levels){
+    if (remaining <= 0) break;
+    const take = Math.min(lv.v, remaining);
+    if (take < (lv.minv || 1)) continue;   // can't meet this order's minimum with what's left
+    proceeds += take * lv.p; filled += take; remaining -= take;
+    const net = proceeds * (1 - tax) + listNet(remaining);
+    if (net > best.net) best = { proceeds, filled, marginal: lv.p, net };
+  }
+  return best;
+}
+
 function quantile(sorted, q){
   if (!sorted.length) return null;
   const pos = (sorted.length - 1) * q;
@@ -773,13 +844,11 @@ function rebuild(keepChecks = true){
     // plan A: pure instant — dump the whole stack into the book right now
     const inst = walkBook(levels, i.qty, null);
     const netInstant = inst.proceeds * (1 - tax);   // units the book can't absorb are valued at 0
-    // plan B: split computed from the instant side — sell into any buy whose net beats
-    // listing at L, i.e. down to L×(1−tax−broker)/(1−tax); list the remainder at L
+    // plan B: split — sell into the buy orders that beat listing, list the remainder at L
     let netOrder = null, ordFill = null;
     if (L != null && L > 0){
-      const thr = L * (1 - tax - broker) / (1 - tax);
-      ordFill = walkBook(levels, i.qty, thr);
-      netOrder = ordFill.proceeds * (1 - tax) + (i.qty - ordFill.filled) * L * (1 - tax - broker);
+      ordFill = planOrder(levels, i.qty, L, tax, broker);
+      netOrder = ordFill.net;
     }
 
     let strategy;
@@ -799,15 +868,26 @@ function rebuild(keepChecks = true){
     const p90 = histStatOf(e.hist, histDays, 'p90');
     if (p90 != null && totalNet > 0){
       const Lw = round4sig(p90);
-      const wf = walkBook(levels, i.qty, Lw * (1 - tax - broker) / (1 - tax));
-      const netWait = wf.proceeds * (1 - tax) + (i.qty - wf.filled) * Lw * (1 - tax - broker);
-      waitPct = (netWait - totalNet) / totalNet * 100;
+      waitPct = (planOrder(levels, i.qty, Lw, tax, broker).net - totalNet) / totalNet * 100;
     }
     const waitFlag = waitPct != null && waitPct >= waitMin;
     if (waitFlag) flags.push({t: `⏳ wait? +${Math.round(waitPct)}%`, cls: 'wait'});
     // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
     const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
     const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
+
+    // the flat 100 ISK per-order broker floor: on a cheap listed remainder the effective
+    // rate runs well above the nominal one, which is usually why such a row looks odd
+    let brokerEffPct = null;
+    if (strategy !== 'imm' && ordFill){
+      const listedValue = (i.qty - ordFill.filled) * L;
+      if (listedValue > 0){
+        const charge = brokerOn(listedValue, broker);
+        brokerEffPct = charge / listedValue * 100;
+        if (charge > broker * listedValue)
+          flags.push({t:`min fee ${MIN_BROKER_FEE_ISK} ISK → ${brokerEffPct.toFixed(1)}%`, cls:'warn'});
+      }
+    }
 
     if (bestBuy != null && bestSell != null && bestBuy > bestSell) flags.push({t:'suspect price', cls:'warn'});
     if (hist != null && bestSell != null){
@@ -823,7 +903,7 @@ function rebuild(keepChecks = true){
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit,
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
-      waitPct, waitFlag,
+      waitPct, waitFlag, brokerEffPct,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       flags, unsellable,
@@ -1162,6 +1242,24 @@ let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don'
 let marketWasStructure = false;
 let lastMarket = 'jita';    // real market behind the select ('+ add structure…' is an action)
 
+// Observed fee rates, per market: whatever the player's own client shows there.
+// CCP retunes these rates and the public formulas lag behind, so a number the player
+// read off their own market window always beats the computed one. Keyed by the market
+// select value — an NPC hub id ('jita') or 's:<structureId>'. Player structures set the
+// broker input directly (structBroker), so the broker override only shows at NPC hubs;
+// the sales tax is character-driven and applies everywhere, so its override always shows.
+let obsBroker = {}, obsTax = {};
+let computedBroker = null, computedTax = null;  // last derived values, for "clear"
+let refreshFees = () => {};                     // the fee auto-fill IIFE publishes its apply() here
+
+const marketKey = () => $('market').value;
+const obsRate = (store, k) => {
+  const v = parseFloat(store[k]);
+  return Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
+};
+const obsBrokerFor = k => obsRate(obsBroker, k);
+const obsTaxFor    = k => obsRate(obsTax, k);
+
 const savedStructures = () => window.EveStructures ? EveStructures.saved() : [];
 
 function renderMarketOptions(){
@@ -1201,6 +1299,22 @@ function syncBrokerForMarket(){
     $('brokerFee').value = hubBrokerFee;
   }
   marketWasStructure = !!h.structure;
+  syncObserved();
+}
+
+// the "game says…" overrides: fill the boxes for the market now selected and push any
+// observed value straight into the live fee inputs (an observation always wins)
+function syncObserved(){
+  const h = hub(), k = marketKey();
+  const b = obsBrokerFor(k), t = obsTaxFor(k);
+  $('obsBrokerWrap').hidden = !!h.structure;          // structures: brokerFee IS the owner-set rate
+  $('obsBrokerFee').value = h.structure || b == null ? '' : String(obsBroker[k]);
+  $('obsBrokerClear').hidden = h.structure || b == null;
+  $('obsTaxWrap').hidden = false;
+  $('obsSalesTax').value = t == null ? '' : String(obsTax[k]);
+  $('obsTaxClear').hidden = t == null;
+  if (!h.structure && b != null) $('brokerFee').value = b.toFixed(2);
+  if (t != null) $('salesTax').value = t.toFixed(2);
 }
 
 const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
@@ -1401,7 +1515,7 @@ function persist(){
       // (the saved structure list itself lives in EveStructures' shared storage)
       brokerFee: hubBrokerFee != null ? hubBrokerFee : $('brokerFee').value,
       salesTax: $('salesTax').value,
-      structBroker,
+      structBroker, obsBroker, obsTax,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
@@ -1422,6 +1536,8 @@ function restore(){
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
   structBroker = (saved.structBroker && typeof saved.structBroker === 'object') ? saved.structBroker : {};
+  obsBroker = (saved.obsBroker && typeof saved.obsBroker === 'object') ? saved.obsBroker : {};
+  obsTax    = (saved.obsTax    && typeof saved.obsTax    === 'object') ? saved.obsTax    : {};
   renderMarketOptions();
   if (saved.market && saved.market !== '__add'
       && [...$('market').options].some(o => o.value === saved.market))
@@ -1430,6 +1546,7 @@ function restore(){
   marketWasStructure = !!hub().structure;
   if (marketWasStructure && structBroker[hub().structure] != null)
     $('brokerFee').value = structBroker[hub().structure];
+  syncObserved();   // an observed rate for this market wins over the restored value
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
@@ -1449,6 +1566,25 @@ $('brokerFee').addEventListener('change', () => {
   const h = hub();
   if (h.structure) structBroker[h.structure] = $('brokerFee').value;
 });
+// "game says…" overrides: typed once per market, remembered there, and always winning
+// over the computed rate; clearing one hands the fee back to the computed value
+function bindObserved(obsId, clearId, feeId, storeOf, computedOf){
+  $(obsId).addEventListener('change', () => {
+    const store = storeOf(), k = marketKey(), v = parseFloat($(obsId).value);
+    if (Number.isFinite(v) && v >= 0 && v <= 100) store[k] = v; else delete store[k];
+    syncObserved(); refreshFees(); rebuild();
+  });
+  $(clearId).addEventListener('click', e => {
+    e.preventDefault();
+    delete storeOf()[marketKey()];
+    const c = computedOf();
+    if (c != null) $(feeId).value = c.toFixed(2);
+    syncObserved(); refreshFees(); rebuild();
+  });
+}
+bindObserved('obsBrokerFee', 'obsBrokerClear', 'brokerFee', () => obsBroker, () => computedBroker);
+bindObserved('obsSalesTax',  'obsTaxClear',    'salesTax',  () => obsTax,    () => computedTax);
+
 $('manageStructs').addEventListener('click', e => { e.preventDefault(); pickStructureMarket(); });
 
 $('inv').addEventListener('input', () => rebuild());
@@ -1550,12 +1686,12 @@ $('tblBody').addEventListener('click', e => {
   cellCopy(text, td);
 });
 
-if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
+if (!restore()){ syncObserved(); rebuild(false); }   // renders the empty state and syncs controls on first run
 
-// fees from the ACTIVE character: sales tax 7.5% ×(1 − 11%×Accounting); NPC-station
-// broker 3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp effective standing
-// toward the hub station's owner (Connections lifts positive standings, Diplomacy
-// repairs negative ones) — auto-applied, still editable
+// fees from the ACTIVE character, computed with the constants at the top of this script
+// from Accounting, Broker Relations and the UNMODIFIED standings toward the hub
+// station's owner corp/faction — auto-applied, still editable, and always yielding to
+// a "game says…" rate the player read off their own client for this market
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
@@ -1625,11 +1761,6 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
     charSel.value = String(EveAuth.active());
   }
 
-  // effective standing: Connections boosts positive standings, Diplomacy repairs negative ones
-  const eff = (base, sk) => base
-    ? base + (10 - base) * 0.04 * (base > 0 ? (sk.connections || 0) : (sk.diplomacy || 0))
-    : 0;
-
   let seq = 0;   // a char/hub switch mid-fetch supersedes the older run
   async function apply(){
     const my = ++seq;
@@ -1637,14 +1768,22 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
     try{
       let sk = EveAuth.skills();
       if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-      const hNow = hub();
+      const hNow = hub(), key = marketKey();
+      const obsT = obsTaxFor(key), obsB = obsBrokerFor(key);
+      // "computed" is what the model says; an observed rate for this market wins, and
+      // the note says which of the two numbers is actually in the box
+      computedTax = salesTaxPctFor(sk);
+      const taxBit = obsT != null
+        ? `tax ${obsT.toFixed(2)}% — your observed rate for ${hNow.label} (overrides the computed ${computedTax.toFixed(2)}%)`
+        : `tax ${computedTax.toFixed(2)}% (Accounting ${sk.accounting}, base unverified against the client)`;
+      $('salesTax').value = (obsT != null ? obsT : computedTax).toFixed(2);
       if (hNow.structure){
         // player structure: the broker fee is owner-set (no ESI endpoint, skills and
         // standings don't apply) — only the sales tax comes from the character
         if (my !== seq) return;
-        const tax = 7.5 * (1 - 0.11 * sk.accounting);
-        $('salesTax').value = tax.toFixed(2);
-        note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (remembered per structure)`;
+        computedBroker = null;
+        note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (remembered per structure). Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
+        syncObserved();
         rebuild();
         return;
       }
@@ -1658,24 +1797,28 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
       catch(e){ console.warn('station owner lookup failed, standings ignored:', e); }
       if (my !== seq) return;
       const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
-      const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
-      const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
-      const tax = 7.5 * (1 - 0.11 * sk.accounting);
-      const broker = Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff);
-      $('salesTax').value = tax.toFixed(2);
-      $('brokerFee').value = broker.toFixed(2);
+      // UNMODIFIED standings: market fees ignore Connections/Diplomacy
+      const corpSt = (own && usable && usable[own.corp]) || 0;
+      const factionSt = (own && own.faction && usable && usable[own.faction]) || 0;
+      computedBroker = brokerPctFor(sk, factionSt, corpSt);
+      $('brokerFee').value = (obsB != null ? obsB : computedBroker).toFixed(2);
       const r2 = x => Math.round(x * 100) / 100;
       const standingsBit = st && st.unavailable
         ? 'standings scope no longer exists on EVE SSO — edit the broker fee by hand if you have standings'
         : st && st.needsRelogin
           ? 'standings n/a — log in again to grant standings access'
-          : `${(own && own.corpName) || 'corp'} ${r2(corpEff)} eff / ${(own && own.factionName) || 'faction'} ${r2(factionEff)} eff`;
-      note.textContent = `⚡ ${EveAuth.character().name}: tax ${tax.toFixed(2)} (Accounting ${sk.accounting}) · broker ${broker.toFixed(2)} (Broker ${sk.brokerRelations}, ${standingsBit}) — NPC-station broker; structures differ, edit freely`;
+          : `${(own && own.corpName) || 'corp'} ${r2(corpSt)} / ${(own && own.factionName) || 'faction'} ${r2(factionSt)} unmodified`;
+      const brokerBit = obsB != null
+        ? `broker ${obsB.toFixed(2)}% — your observed rate for ${hNow.label} (overrides the computed ${computedBroker.toFixed(2)}%)`
+        : `broker ${computedBroker.toFixed(2)}% (Broker ${sk.brokerRelations}, ${standingsBit})`;
+      note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · ${brokerBit} — every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee, so cheap stacks pay more than the nominal rate`;
+      syncObserved();
       rebuild();
     }catch(e){
       console.error('skill auto-fill failed:', e);
     }
   }
+  refreshFees = apply;
 
   EveAuth.onChange(() => { renderCharSel(); apply(); });
   $('market').addEventListener('change', () => apply());

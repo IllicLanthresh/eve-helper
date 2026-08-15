@@ -43,6 +43,8 @@
                  // buyerBrokerPct (default 0) is ADDED on top of buy-side quotes when
                  // inputSide='buy' — the buyer pays their own broker fee to place orders.
                  // sellerBrokerPct/sellerTaxPct fall back to brokerPct/taxPct.
+                 // Both broker charges carry the game's flat MIN_BROKER_FEE_ISK minimum
+                 // per ORDER, which binds on cheap materials and tiny batches.
                  shipping: { base, perM3, collateralPct, roundUpToMillion, applyInbound, applyOutbound },
                  assumptions: { ownedBpoMe, ownedBpoTe, sccPct, decryptor:'auto'|name|null },
                  planning: { capital,          // ISK for working inputs; null = unlimited
@@ -161,6 +163,15 @@
   }
 
   function roundUpToMillion(x) { return Math.ceil(x / 1e6) * 1e6; }
+
+  /* The game charges a flat minimum broker fee per ORDER (not per unit) on top of the
+     percentage, so a cheap order pays an effective rate far above the nominal one.
+     Negligible on a big batch, but it is what makes small components look wrong. */
+  var MIN_BROKER_FEE_ISK = 100;
+  function brokerOnOrder(value, pct) {
+    if (!(value > 0)) return 0;
+    return Math.max(MIN_BROKER_FEE_ISK, value * (pct || 0) / 100);
+  }
 
   function create(cfg) {
     var data = cfg.data, prices = cfg.prices, adjusted = cfg.adjusted, indices = cfg.indices;
@@ -319,6 +330,7 @@
       var p = market.inputSide === 'buy' ? q.buy : q.sell;
       if (p == null || !(p > 0)) return null;
       // placing buy orders costs the buyer their own broker fee on top of the quote
+      // (unit price: the flat per-order floor needs a quantity, so it lands in buyQuote)
       return market.inputSide === 'buy' ? p * (1 + buyerBrokerPct / 100) : p;
     }
 
@@ -361,7 +373,8 @@
       if (market.inputSide === 'buy') {
         var pb = q.buy;
         if (pb == null || !(pb > 0)) return null;
-        return { cost: pb * qty * (1 + buyerBrokerPct / 100) };
+        // one buy order for this material: the percentage, never below the flat floor
+        return { cost: pb * qty + brokerOnOrder(pb * qty, buyerBrokerPct) };
       }
       var lv = q.sellLevels;
       if (lv && lv.length) {
@@ -738,8 +751,9 @@
         if (market.outputSide === 'instant') {
           revenueUnit = grossTotal * (1 - sellerTaxPct / 100) / produced;
         } else {
-          brokerFee = grossTotal * sellerBrokerPct / 100;
-          revenueUnit = grossTotal * (1 - sellerBrokerPct / 100 - sellerTaxPct / 100) / produced;
+          // one sell order for the batch: the percentage, never below the flat floor
+          brokerFee = brokerOnOrder(grossTotal, sellerBrokerPct);
+          revenueUnit = (grossTotal * (1 - sellerTaxPct / 100) - brokerFee) / produced;
         }
       }
       var haulIn = shipping && shipping.applyInbound && acc.boughtM3 > 0

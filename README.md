@@ -34,11 +34,27 @@ whose skills and standings both tools use; **log out** removes the active one. H
 one alt trades and another one mines.
 
 **Broker fee with standings** (Sell tool): at an NPC station the broker fee is
-`3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp` effective standing toward the
-hub station's owner corporation and its faction (station owners come from public ESI and
-are cached). Effective standing = `base + (10 − base) × 4% × skill`, where the skill is
-**Connections** for positive base standings and **Diplomacy** for negative ones. The note
-under the fee inputs shows exactly which character and standings produced the numbers.
+`3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp` standing toward the hub
+station's owner corporation and its faction (station owners come from public ESI and are
+cached). Those are the **unmodified** standings straight from ESI — market fees ignore
+**Connections** and **Diplomacy**, which only lift the agent/mission side. The formula is
+verified against the live client at Jita 4-4: Broker Relations 5 with ~zero standings
+gives 1.5%. On top of the percentage every order pays a flat **minimum broker fee of
+100 ISK per order**, so a cheap stack pays an effective rate well above the nominal one
+(100 ISK on a 4,500 ISK order is 2.2%); rows where that floor binds are flagged, and the
+plan chooser prices it in, since it can flip a small stack from ORDER to INSTANT. Sales
+tax is `7.5% × (1 − 11%×Accounting)` — that 7.5 base is **not yet verified** against the
+live client.
+
+**"game says…" overrides**: next to each fee input you can type the exact broker % and
+sales tax % your own client shows for the market you have selected. Observed rates are
+remembered **per market** (each NPC hub and each saved structure separately), always win
+over the computed value, and each has a *clear* link that hands the fee back to the
+computed one. CCP retunes these rates and the public formulas lag behind, so what your
+client says is the last word. The note under the fee inputs shows which character and
+standings produced the computed numbers, and which of them an observation replaced.
+Player structures keep their existing behaviour — their broker fee is owner-set, entered
+directly and remembered per structure.
 
 The deployed site at `illiclanthresh.github.io` ships with its own registered app, so login
 just works there. Running a fork on another domain needs a one-time app registration
@@ -89,10 +105,14 @@ broker fee stays hand-editable.
    - **INSTANT** — dumping the stack into the buy book right now nets the most. Depth-aware:
      the walk respects each order's remaining volume and `min_volume` (margin-scam bait is
      ignored), so one 1-unit buy order at a silly price no longer values your whole stack.
-   - **ORDER** — listing at `L` nets more: `L × (1 − tax − broker)` per unit.
+   - **ORDER** — listing at `L` nets more: `qty × L × (1 − tax)` less the broker fee on
+     that one order, `max(100 ISK, broker% × qty × L)`.
    - **SPLIT** — the best of both: when you import at `L`, the game automatically fills any
      buy orders priced ≥ `L` first (at *their* price, no broker fee) and lists the rest at
      `L`. SPLIT means that instant part is non-empty — no manual stack splitting needed.
+   The split point is chosen by comparing the actual net of every cut of the buy book, so
+   the 100 ISK per-order minimum is priced in: on a cheap stack it can tip the plan to
+   INSTANT, and rows where it binds carry a `min fee 100 ISK → x.x%` flag.
 6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
    plan type. Filters are a viewing aid only — ticked rows hidden by a filter stay in the
    import list (the toolbar says so). Selection buttons (top N / all / none) act on the
@@ -131,7 +151,8 @@ With a structure selected, a price run fetches:
 The **owner-set broker fee is not in ESI** (there is no endpoint for it): read it once
 from the in-game sell window and type it into the broker % field — it is remembered per
 structure and switching back to an NPC hub restores the skills/standings-derived rate.
-Sales tax (Accounting) applies everywhere and keeps auto-filling.
+Sales tax (Accounting) applies everywhere and keeps auto-filling — and, like at an NPC
+hub, can be pinned to what your client actually shows via its *game says…* box.
 
 ## Flags
 
@@ -151,7 +172,8 @@ Items with no orders and no history at the hub are listed separately and never p
   orders whose `min_volume` can't be met — units the book can't absorb are valued at zero
   (and flagged).
 - The ORDER/SPLIT plan models the real import mechanics: fills above `L` execute at the
-  resting buy order's price and pay only sales tax; the listed remainder pays broker + tax.
+  resting buy order's price and pay only sales tax; the listed remainder pays broker + tax,
+  the broker never less than the flat 100 ISK per-order minimum.
   Order fills are not guaranteed, and relist fees from later repricing are not modelled.
 - Price history is per **region** (ESI has no station-level history), using each day's
   average price.
@@ -317,7 +339,9 @@ and TSV export of the tree or the whole table.
   stages bound throughput; sub-node fees/times still scale with batch quantity. Reaction
   formulas are assumed available for every parallel job.
 - Buy-order inputs pay the buyer's broker on the scalar top quote — no depth walk on the
-  buy side of inputs; invention consumables also stay at the scalar top quote.
+  buy side of inputs; invention consumables also stay at the scalar top quote. Each
+  material buy order and the batch's own sell order pay at least the game's flat 100 ISK
+  per-order broker minimum, which only bites on cheap materials and tiny batches.
 - Shipping hauls split cargo and collateral evenly across contracts.
 - Invention consumables are amortized into cost but not added to the inbound haul.
 - Demand/history is regional (The Forge), both order sides combined.

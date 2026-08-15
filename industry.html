@@ -1773,10 +1773,32 @@ async function stationOwner(stationId){
   try{ localStorage.setItem(OWNERS_KEY, JSON.stringify(cache)); }catch(_e){}
   return own;
 }
-const eff = (base, sk) => base
-  ? base + (10 - base) * 0.04 * (base > 0 ? (sk.connections || 0) : (sk.diplomacy || 0))
-  : 0;
 let feeSeq = 0;
+
+/* ---------- fee model — kept in step with the Sell tool (index.html) ----------
+   NPC-station broker fee, VERIFIED against the live client at Jita 4-4 with Broker
+   Relations 5 and ~zero standings → 1.5%. The standings are the UNMODIFIED ones from
+   ESI: CCP's documentation is explicit that market fees use unmodified standings, so
+   Connections and Diplomacy do NOT apply to them.
+   Every order additionally pays a flat MIN_BROKER_FEE_ISK minimum (see industry-engine.js,
+   which charges it per batch order).
+   The sales tax base is UNVERIFIED against the live client and pending a measurement off
+   the sell window — a one-line change here when that number lands. */
+const BROKER_BASE_PCT = 3;
+const BROKER_SKILL_PP_PER_LEVEL = 0.3;
+const BROKER_FACTION_PP = 0.03;
+const BROKER_CORP_PP = 0.02;
+const SALES_TAX_BASE_PCT = 7.5;        // UNVERIFIED — see above
+const ACCOUNTING_REL_PER_LEVEL = 0.11;
+
+const brokerPctFor = (sk, faction, corp) => Math.max(0,
+  BROKER_BASE_PCT
+  - BROKER_SKILL_PP_PER_LEVEL * (sk.brokerRelations || 0)
+  - BROKER_FACTION_PP * (faction || 0)
+  - BROKER_CORP_PP * (corp || 0));
+const salesTaxPctFor = sk =>
+  SALES_TAX_BASE_PCT * (1 - ACCOUNTING_REL_PER_LEVEL * (sk.accounting || 0));
+
 /* Per-role fees: the BUYER's skills/standings set the buy-order broker %, the SELLER's
    set sales tax + the sell-order broker %. Same Jita 4-4 formulas as the Sell tool. */
 async function roleFees(charId, own){
@@ -1787,12 +1809,13 @@ async function roleFees(charId, own){
   let st = EveAuth.standings(charId);
   if (!st){ try{ st = await EveAuth.fetchStandings(charId); }catch(_e){ st = null; } }
   const usable = st && !st.needsRelogin && !st.unavailable ? st : null;
-  const corpEff = eff((own && usable && usable[own.corp]) || 0, sk);
-  const factionEff = eff((own && own.faction && usable && usable[own.faction]) || 0, sk);
+  // UNMODIFIED standings: market fees ignore Connections/Diplomacy
+  const corpSt = (own && usable && usable[own.corp]) || 0;
+  const factionSt = (own && own.faction && usable && usable[own.faction]) || 0;
   return {
     sk,
-    tax: Math.round(7.5 * (1 - 0.11 * sk.accounting) * 100) / 100,
-    broker: Math.round(Math.max(0, 3 - 0.3 * sk.brokerRelations - 0.03 * factionEff - 0.02 * corpEff) * 100) / 100,
+    tax: Math.round(salesTaxPctFor(sk) * 100) / 100,
+    broker: Math.round(brokerPctFor(sk, factionSt, corpSt) * 100) / 100,
   };
 }
 async function autoFees(){
