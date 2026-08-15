@@ -41,10 +41,10 @@ anywhere but here.
 ## Fixtures
 
 `data/industry.json` is generated from the EVE SDE at deploy time and is gitignored, so
-it is usually absent. `industry-ui.test.js` writes its own small fixture to a temp
-directory and serves the repo from there, so it never needs the real file and never
-writes into `data/`. The engine suite builds its data inline — it needs no fixture at
-all.
+it is usually absent. `industry-ui.test.js` intercepts the page's fetch of it with
+`page.route` and serves a small hand-written fixture, so it never needs the real file
+and never writes into `data/`. The engine suite builds its data inline — it needs no
+fixture at all.
 
 ## Adding checks
 
