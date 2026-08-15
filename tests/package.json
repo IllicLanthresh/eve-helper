@@ -1,0 +1,16 @@
+{
+  "name": "eve-helper-tests",
+  "private": true,
+  "description": "Playwright + pure-Node test suites for the EVE Helper tools (must live in the repo)",
+  "scripts": {
+    "test": "node run-all.js",
+    "test:fees": "node fees.test.js",
+    "test:sell": "node sell.test.js",
+    "test:auth": "node auth.test.js",
+    "test:industry": "node industry.test.js",
+    "test:industry-ui": "node industry-ui.test.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}
