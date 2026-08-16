@@ -57,9 +57,14 @@
 //                                                     //   units, straight from typeMaterials
 //       "c": compressedTid|null,                      // the "Compressed <name>" type
 //       "cv": compressedUnitVolume|null,
-//       "ice": 0|1
+//       "ice": 0|1,
+//       "s": reprocSkillTid|null                      // the skill required to reprocess this
+//                                                     //   type (dogma reprocessingSkillType);
+//                                                     //   null = the SDE carries none
 //   } },
-//   "names": { "<lowercased type name>": tid }
+//   "names": { "<lowercased type name>": tid },
+//   "types": { "<tid>": name }                        // names for every material tid in any
+//                                                     //   "m" list and every "s" skill tid
 // }
 // `ores` covers every PUBLISHED type in the Asteroid category: standard ores,
 // moon ores and ice, every quality variant, plus the compressed forms
@@ -458,11 +463,19 @@ for (const mgid of typeMarketGroupIds) addMgChain(mgid);
 //       1547 rigSize (2=M, 3=L, 4=XL) — on rigs AND on structures
 //       1137 rigSlots                  — rig slot count on structures (3 for all)
 //       1298-1301 canFitShipGroup01-04 — structure GROUP ids accepting the rig
+//     The same stream also picks up, for every published Asteroid-category type:
+//       790  reprocessingSkillType     — "The skill required to reprocess this ore
+//            type" (its own words in fsd/dogmaAttributes.yaml); the value is the
+//            skill's typeID. Discovered empirically like the rig attributes and
+//            verified by name below.
 // ---------------------------------------------------------------------------
 log('stream-parsing typeDogma.yaml ...');
+const REPROC_SKILL_ATTR = 790;
 const DOGMA_WANT = new Set([1137, 1298, 1299, 1300, 1301, 1547, 2355, 2356, 2357, 2593, 2594, 2595, 2653, 2713, 2714]);
 const dogmaTids = new Set([...Object.keys(rigTypes), ...Object.keys(structTypes)].map(Number));
-const dogmaOf = {}; // tid -> {attrId: value}
+const oreTidSet = new Set(Object.keys(oreTypes).map(Number));
+const dogmaOf = {};   // tid -> {attrId: value}   (rigs/structures)
+const oreSkill = {};  // tid -> reprocessing skill typeID (asteroid-category types)
 
 await new Promise((resolve, reject) => {
   const rl = readline.createInterface({
@@ -483,6 +496,9 @@ await new Promise((resolve, reject) => {
         if (DOGMA_WANT.has(a)) attrs[a] = Number(m[2]);
       }
       dogmaOf[curTid] = attrs;
+    } else if (oreTidSet.has(curTid)) {
+      const m = new RegExp(`attributeID: ${REPROC_SKILL_ATTR}\\n\\s+value: (-?[\\d.]+)`).exec(curLines.join('\n'));
+      if (m) oreSkill[curTid] = Number(m[1]);
     }
     curTid = null;
     curLines = [];
@@ -492,19 +508,21 @@ await new Promise((resolve, reject) => {
     if (m) {
       flushD();
       curTid = Number(m[1]);
-    } else if (curTid !== null && dogmaTids.has(curTid)) {
+    } else if (curTid !== null && (dogmaTids.has(curTid) || oreTidSet.has(curTid))) {
       curLines.push(line);
     }
   });
   rl.on('close', () => { flushD(); resolve(); });
   rl.on('error', reject);
 });
-log(`typeDogma.yaml: dogma kept for ${Object.keys(dogmaOf).length}/${dogmaTids.size} rig/structure types`);
+log(`typeDogma.yaml: dogma kept for ${Object.keys(dogmaOf).length}/${dogmaTids.size} rig/structure types; ` +
+    `reprocessing skill on ${Object.keys(oreSkill).length}/${oreTidSet.size} asteroid types`);
 
 // hard-verify the attribute ids against dogmaAttributes.yaml when it is there
 // (guards against CCP renumbering dogma attributes in a future SDE)
 if (fs.existsSync(fsd('dogmaAttributes.yaml'))) {
   const EXPECT = {
+    790: 'reprocessingSkillType',
     1137: 'rigSlots', 1298: 'canFitShipGroup01', 1547: 'rigSize',
     2355: 'hiSecModifier', 2356: 'lowSecModifier', 2357: 'nullSecModifier',
     2593: 'attributeEngRigTimeBonus', 2594: 'attributeEngRigMatBonus',
@@ -516,11 +534,11 @@ if (fs.existsSync(fsd('dogmaAttributes.yaml'))) {
     const m = new RegExp(`^${aid}:\\n(?:  .*\\n)*?  name: (.+)$`, 'm').exec(txt);
     const got = m ? m[1].trim() : '(missing)';
     if (got !== want) {
-      console.error(`FATAL: dogma attribute ${aid} is "${got}", expected "${want}" — rig extraction assumptions broke`);
+      console.error(`FATAL: dogma attribute ${aid} is "${got}", expected "${want}" — dogma extraction assumptions broke`);
       process.exit(1);
     }
   }
-  log('dogmaAttributes.yaml: all rig attribute ids verified by name');
+  log('dogmaAttributes.yaml: all rig/ore attribute ids verified by name');
 } else {
   log('WARNING: fsd/dogmaAttributes.yaml not present — skipping attribute-id name verification');
 }
@@ -796,6 +814,7 @@ for (const [tidStr, o] of Object.entries(oreTypes)) {
     c: cTid !== undefined ? cTid : null,
     cv: cTid !== undefined ? oreTypes[cTid].vol : null,
     ice: /\bIce\b/.test(asteroidGroupName[o.gid]) ? 1 : 0,
+    s: oreSkill[tidStr] ?? null,
   };
 }
 for (const [label, list] of fellBack) {
@@ -803,6 +822,74 @@ for (const [label, list] of fellBack) {
 }
 if (missingCompressed.length) {
   log(`ORE WARNING: ${missingCompressed.length} non-compressed types with no "Compressed <name>" in this SDE (c=null): ${missingCompressed.join(', ')}`);
+}
+{
+  const withSkill = Object.values(oresOut).filter((o) => o.s != null).length;
+  const without = Object.values(oresOut).filter((o) => o.s == null).map((o) => o.n);
+  log(`ore reprocessing skills: ${withSkill}/${Object.keys(oresOut).length} types carry one`);
+  if (without.length) {
+    console.error(`ORE WARNING: ${without.length} asteroid types with NO reprocessingSkillType dogma (s=null): ${without.join(', ')}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4e. ores.json "types" name map — every material tid appearing in any "m"
+//     list plus every reprocessing-skill tid from "s". Most names are already
+//     in typesOut (blueprint-referenced) or oreTypes; the leftovers (the
+//     reprocessing skills themselves are not blueprint skills) come from a
+//     second, name-only pass over types.yaml.
+// ---------------------------------------------------------------------------
+const oreTypeNames = {};
+{
+  const wanted = new Set();
+  for (const o of Object.values(oresOut)) {
+    for (const [mtid] of o.m) wanted.add(mtid);
+    if (o.s != null) wanted.add(o.s);
+  }
+  const missing = new Set();
+  for (const tid of wanted) {
+    if (typesOut[tid]) oreTypeNames[tid] = typesOut[tid][0];
+    else if (oreTypes[tid]) oreTypeNames[tid] = oreTypes[tid].name;
+    else missing.add(tid);
+  }
+  if (missing.size) {
+    log(`ores.json types map: resolving ${missing.size} names via a second types.yaml pass ...`);
+    await new Promise((resolve, reject) => {
+      const rl = readline.createInterface({
+        input: fs.createReadStream(fsd('types.yaml'), { encoding: 'utf8' }),
+        crlfDelay: Infinity,
+      });
+      let curTid = null;
+      let curLines = [];
+      const flushN = () => {
+        if (curTid !== null && missing.has(curTid)) {
+          let t;
+          try { t = yaml.load(curLines.join('\n')) || {}; }
+          catch (e) { throw new Error(`YAML parse failed for typeID ${curTid}: ${e.message}`); }
+          oreTypeNames[curTid] = (t.name && (t.name.en || Object.values(t.name)[0])) || `type ${curTid}`;
+          missing.delete(curTid);
+        }
+        curTid = null;
+        curLines = [];
+      };
+      rl.on('line', (line) => {
+        const m = /^(\d+):\s*$/.exec(line);
+        if (m) {
+          flushN();
+          curTid = Number(m[1]);
+        } else if (curTid !== null && missing.has(curTid)) {
+          curLines.push(line);
+        }
+      });
+      rl.on('close', () => { flushN(); resolve(); });
+      rl.on('error', reject);
+    });
+    for (const tid of missing) {
+      console.error(`ORE WARNING: tid ${tid} (referenced by ores.json) missing from types.yaml — emitting a placeholder name`);
+      oreTypeNames[tid] = `type ${tid}`;
+    }
+  }
+  log(`ores.json types map: ${Object.keys(oreTypeNames).length} material/skill names`);
 }
 
 { // sanity: known in-game values that must hold in any healthy SDE
@@ -821,6 +908,27 @@ if (missingCompressed.length) {
       `Dense Veldspar trit/portion=${dense ? tritOf(dense) : '??'}; ` +
       `Zeolites b="${zeo ? zeo.b : '??'}" g="${zeo ? zeo.g : '??'}"; ` +
       `Clear Icicle ice=${icicle ? icicle.ice : '??'} v=${icicle ? icicle.v : '??'}`);
+
+  // reprocessing skills: three anchors with known in-game names, then the
+  // Equinox-era ores whose skill mapping used to be guessed downstream — their
+  // exact SDE values are logged so any future change is visible in the build log
+  const skillNameOf = (o) => (o && o.s != null ? oreTypeNames[o.s] : null);
+  for (const [ore, want] of [
+    ['veldspar', 'Simple Ore Processing'],
+    ['zeolites', 'Ubiquitous Moon Ore Processing'],
+    ['mercoxit', 'Mercoxit Ore Processing'],
+    ['clear icicle', 'Ice Processing'],
+  ]) {
+    const got = skillNameOf(probe(ore));
+    if (got !== want) {
+      console.error(`FATAL: ${ore} reprocessing skill is "${got}", expected "${want}" — skill extraction assumptions broke`);
+      process.exit(1);
+    }
+  }
+  const equinox = ['mordunium', 'kylixium', 'ytirium', 'griemeer', 'nocxite',
+    'hezorime', 'eifyrium', 'ducinium', 'ueganite'];
+  log('ore skill sanity: Veldspar/Zeolites/Mercoxit/Clear Icicle anchors OK; Equinox ores: ' +
+      equinox.map((n) => `${probe(n) ? probe(n).n : n}=${skillNameOf(probe(n)) || 'NONE'}`).join(', '));
 }
 
 // ---------------------------------------------------------------------------
@@ -851,7 +959,8 @@ log(`wrote ${outFile}: v=${version}, ${(bytes / 1024 / 1024).toFixed(2)} MB raw;
     `structures=${Object.keys(structuresOut).length}`);
 
 fs.mkdirSync(path.dirname(oresOutFile), { recursive: true });
-fs.writeFileSync(oresOutFile, JSON.stringify({ v: version, ores: oresOut, names: oreNames }));
+fs.writeFileSync(oresOutFile, JSON.stringify({ v: version, ores: oresOut, names: oreNames, types: oreTypeNames }));
 const oreBytes = fs.statSync(oresOutFile).size;
 log(`wrote ${oresOutFile}: v=${version}, ${(oreBytes / 1024).toFixed(1)} KB raw; ` +
-    `ores=${Object.keys(oresOut).length} (${unpublishedOres} unpublished asteroid types skipped)`);
+    `ores=${Object.keys(oresOut).length} (${unpublishedOres} unpublished asteroid types skipped), ` +
+    `types=${Object.keys(oreTypeNames).length}`);

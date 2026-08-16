@@ -12,8 +12,10 @@ served alongside the site at `data/industry.json` and `data/ores.json`.
 - `ores.json` (~80 KB) — every published Asteroid-category type (standard ores,
   moon ores, ice, every quality variant, compressed forms included) with exact
   per-variant reprocessing outputs (`typeMaterials`), portion size, unit volume,
-  base family name, its `Compressed <name>` counterpart tid/volume, and a
-  lowercased name → tid lookup. Consumed by the Mine tool.
+  base family name, its `Compressed <name>` counterpart tid/volume, the exact
+  reprocessing skill per type (dogma `reprocessingSkillType`), a lowercased
+  name → tid lookup, and a tid → name map covering every referenced material
+  and skill. Consumed by the Mine tool.
 
 Both schemas are documented at the top of `tools/build-industry-data.mjs`.
 
