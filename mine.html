@@ -181,13 +181,14 @@
   .moonitem:last-child .moonbtn{border-bottom:0}
   .moonitem:last-child .moondetail{border-bottom:0;border-top:1px solid #1a2233}
 
+  /* the two page modes — plan production vs fleet mode. One shared DOM: sections carry
+     .prod-only / .fleet-only and the body's data-mode decides which flow is visible;
+     the prices-&-refine section carries neither class and appears in both. */
+  body[data-mode=fleet] .prod-only{display:none!important}
+  body:not([data-mode=fleet]) .fleet-only{display:none!important}
+  #modeRow{margin-top:10px}
+
   /* fleet mode (survey-scan ranking) */
-  #secFleet summary{cursor:pointer;list-style:none}
-  #secFleet summary::-webkit-details-marker{display:none}
-  #secFleet summary h2{display:inline-block;margin:0}
-  #secFleet summary .caret{display:inline-block;margin-right:4px;color:var(--dim);font-size:11px;transition:transform .15s}
-  #secFleet details[open] summary .caret{transform:rotate(90deg)}
-  #secFleet details[open] summary{margin-bottom:8px}
   #fleetTable th[data-sort]{cursor:pointer;user-select:none}
   #fleetTable th[data-sort]:hover{color:var(--text)}
   #fleetTable th .dir{color:var(--cyan);margin-left:2px}
@@ -207,13 +208,24 @@
 </nav>
 <header>
   <h1>Mining Production Console</h1>
-  <p>Paste the materials your production line needs and get the answer in mining terms: which asteroid
+  <p class="prod-only">Paste the materials your production line needs and get the answer in mining terms: which asteroid
      rocks and moon ores carry them densest, how many m³ of what to dig at your refine rate, and which
      of your alliance moons are worth opening. Prices pull live from Jita via ESI (no login).</p>
+  <p class="fleet-only">Sitting in a belt with a survey scanner and no shopping list? Paste the scan, set your
+     refine and price basis, and see which rocks to shoot for max value — refined vs compressed ISK per m³
+     (and per hour). Prices pull live from Jita via ESI (no login).</p>
+  <div class="rowline" id="modeRow">
+    <span class="seg">
+      <button id="modeProd" type="button" aria-pressed="true"
+        title="the shopping-list workflow: targets → prices &amp; refine → what to mine → your moons">Plan production</button>
+      <button id="modeFleet" type="button" aria-pressed="false"
+        title="no shopping list: paste a survey scan → refine &amp; prices → what to shoot">Fleet mode</button>
+    </span>
+  </div>
 </header>
 <main>
 
-<section>
+<section id="secTargets" class="prod-only">
   <h2>1 · What you need</h2>
   <label for="need">Materials needed — one per line: <code>Name</code>, <code>Name&#9;qty</code>,
     <code>Name x1,000</code> or <code>Name 1000</code> (EU/US number formats both fine)</label>
@@ -228,8 +240,25 @@
     parsing the paste sets chips and quantities; toggling a chip adds or removes a quantity-less target.</p>
 </section>
 
-<section>
-  <h2>2 · Prices &amp; refine</h2>
+<section id="secScan" class="fleet-only">
+  <h2>1 · Paste your survey scan <span class="subttl">· no shopping list — every rock in the field gets a value</span></h2>
+  <label for="fleetScan" style="margin-top:4px">Paste the in-game survey scanner results — rows of
+    <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> (tab or multi-space separated; EU
+    <code>1.234.567</code> and US <code>1,234,567</code> numbers both fine; the distance column is
+    ignored; header lines are skipped)</label>
+  <textarea id="fleetScan" spellcheck="false" style="height:120px"
+    placeholder="Concentrated Veldspar&#9;64,213&#9;6,421 m3&#9;7,431 m&#10;Magma Mercoxit&#9;402&#9;16,080 m3&#9;44 km"></textarea>
+  <div class="rowline">
+    <button id="btnFleetSample" type="button">Load sample scan</button>
+    <button id="btnFleetClear" type="button">Clear</button>
+    <span id="fleetNote" class="hint"></span>
+  </div>
+  <div id="fleetUnknown" class="hint warn" style="margin-top:6px" hidden></div>
+  <div id="fleetDataNote" class="hint" style="margin-top:6px" hidden></div>
+</section>
+
+<section id="secPrices">
+  <h2>2 · <span id="pricesTitle">Prices &amp; refine</span></h2>
   <div class="rowline" style="margin-top:0">
     <span class="hint">rank by</span>
     <span class="seg">
@@ -289,7 +318,7 @@
   </details>
 </section>
 
-<section>
+<section id="secMine" class="prod-only">
   <h2>3 · What to mine <span class="subttl">· asteroid rocks and moon ores in the same per-m³ units</span></h2>
   <div class="rowline" style="margin-top:0">
     <span class="hint" id="rankHint"></span>
@@ -302,11 +331,11 @@
   <div id="planBox"></div>
   <p class="hint" style="margin:8px 0 0">m³ to mine = needed ÷ (units per m³ × refine&nbsp;%); drill hours
     assume 30,000&nbsp;m³ of chunk per hour. The best ore may not exist in your alliance's moons — hunt
-    these ore names in your alliance moon list, then paste the candidates in section 5. Click any number
+    these ore names in your alliance moon list, then paste the candidates in section 4. Click any number
     to copy its raw value.</p>
 </section>
 
-<section id="secArrays">
+<section id="secArrays" class="prod-only">
   <h2>3b · Sov array deposits <span class="subttl">· where the mineral rocks actually spawn</span></h2>
   <div class="rowline" style="margin-top:0">
     <span class="seg">
@@ -325,59 +354,45 @@
     volumes and yields: exact SDE data.</p>
 </section>
 
-<section id="secFleet">
-  <details id="fleetBox">
-    <summary><span class="caret">▸</span><h2>4 · Fleet mode <span class="subttl">· no shopping list — paste a
-      survey scan, see what to shoot for max value</span></h2></summary>
-    <label for="fleetScan" style="margin-top:10px">Paste the in-game survey scanner results — rows of
-      <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> (tab or multi-space separated; EU
-      <code>1.234.567</code> and US <code>1,234,567</code> numbers both fine; the distance column is
-      ignored; header lines are skipped)</label>
-    <textarea id="fleetScan" spellcheck="false" style="height:120px"
-      placeholder="Concentrated Veldspar&#9;64,213&#9;6,421 m3&#9;7,431 m&#10;Magma Mercoxit&#9;402&#9;16,080 m3&#9;44 km"></textarea>
-    <div class="rowline">
-      <button id="btnFleetSample" type="button">Load sample scan</button>
-      <button id="btnFleetClear" type="button">Clear</button>
-      <span id="fleetNote" class="hint"></span>
-      <span id="fleetPriceNote" class="hint"></span>
-      <span class="sep"></span>
-      <button id="btnFleetPrices" type="button" hidden
-        title="drop the cached compressed/extra Jita prices and fetch them again">refresh fleet prices</button>
-      <span class="hint">ISK/h</span>
-      <span class="seg">
-        <button id="fleetHrOff" type="button" aria-pressed="true" title="pure value-density ranking">off</button>
-        <button id="fleetHrOn" type="button" aria-pressed="false"
-          title="add ISK/h and time-to-clear from your ship's mining yield">on</button>
-      </span>
-    </div>
-    <div id="fleetUnknown" class="hint warn" style="margin-top:6px" hidden></div>
-    <div id="fleetDataNote" class="hint" style="margin-top:6px" hidden></div>
-    <div class="rowline" id="fleetYieldRow" hidden>
-      <span class="hint">ship yield</span>
-      <span class="seg">
-        <button id="fleetYRate" type="button" aria-pressed="true" title="enter the yield directly">m³/h</button>
-        <button id="fleetYCycle" type="button" aria-pressed="false"
-          title="enter m³ per mining cycle and the cycle time — the hourly rate is computed live">per cycle</button>
-      </span>
-      <label for="fleetRate" id="fleetRateLab" style="margin:0">m³ per hour</label>
-      <input id="fleetRate" type="number" min="1" step="any" placeholder="e.g. 45000">
-      <label for="fleetCycM3" id="fleetCycM3Lab" style="margin:0" hidden>m³ per cycle</label>
-      <input id="fleetCycM3" type="number" min="0.1" step="any" placeholder="e.g. 750" hidden>
-      <label for="fleetCycSec" id="fleetCycSecLab" style="margin:0" hidden>cycle seconds</label>
-      <input id="fleetCycSec" type="number" min="1" step="any" placeholder="e.g. 60" hidden>
-      <span id="fleetRateNote" class="hint"></span>
-    </div>
-    <div id="fleetTable" style="margin-top:4px"></div>
-    <p class="hint" style="margin:8px 0 0">Refined ISK/m³ prices each variant's exact reprocessing outputs
-      (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
-      compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
-      per m³ of raw rock — ore compresses 100:1 by units, ice 1:1. Ice is unit-harvested and only ranks
-      against other ice. Click any number to copy its raw value.</p>
-  </details>
+<section id="secShoot" class="fleet-only">
+  <h2>3 · What to shoot <span class="subttl">· the scanned field ranked by refined vs compressed value</span></h2>
+  <div class="rowline" style="margin-top:0">
+    <span class="hint">ISK/h</span>
+    <span class="seg">
+      <button id="fleetHrOff" type="button" aria-pressed="true" title="pure value-density ranking">off</button>
+      <button id="fleetHrOn" type="button" aria-pressed="false"
+        title="add ISK/h and time-to-clear from your ship's mining yield">on</button>
+    </span>
+    <span id="fleetPriceNote" class="hint"></span>
+    <span class="sep"></span>
+    <button id="btnFleetPrices" type="button" hidden
+      title="drop the cached compressed/extra Jita prices and fetch them again">refresh fleet prices</button>
+  </div>
+  <div class="rowline" id="fleetYieldRow" hidden>
+    <span class="hint">ship yield</span>
+    <span class="seg">
+      <button id="fleetYRate" type="button" aria-pressed="true" title="enter the yield directly">m³/h</button>
+      <button id="fleetYCycle" type="button" aria-pressed="false"
+        title="enter m³ per mining cycle and the cycle time — the hourly rate is computed live">per cycle</button>
+    </span>
+    <label for="fleetRate" id="fleetRateLab" style="margin:0">m³ per hour</label>
+    <input id="fleetRate" type="number" min="1" step="any" placeholder="e.g. 45000">
+    <label for="fleetCycM3" id="fleetCycM3Lab" style="margin:0" hidden>m³ per cycle</label>
+    <input id="fleetCycM3" type="number" min="0.1" step="any" placeholder="e.g. 750" hidden>
+    <label for="fleetCycSec" id="fleetCycSecLab" style="margin:0" hidden>cycle seconds</label>
+    <input id="fleetCycSec" type="number" min="1" step="any" placeholder="e.g. 60" hidden>
+    <span id="fleetRateNote" class="hint"></span>
+  </div>
+  <div id="fleetTable" style="margin-top:4px"></div>
+  <p class="hint" style="margin:8px 0 0">Refined ISK/m³ prices each variant's exact reprocessing outputs
+    (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
+    compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
+    per m³ of raw rock — ore compresses 100:1 by units, ice 1:1. Ice is unit-harvested and only ranks
+    against other ice. Click any number to copy its raw value.</p>
 </section>
 
-<section>
-  <h2>5 · Your moons <span class="subttl">· the final check — which of them cover the shopping list</span></h2>
+<section id="secMoons" class="prod-only">
+  <h2>4 · Your moons <span class="subttl">· the final check — which of them cover the shopping list</span></h2>
   <label for="moons">Paste moons — in-game survey scan, Alliance&nbsp;Auth “Moon details” copy, or
     Alliance&nbsp;Auth “Extraction details” copy (format auto-detected per moon, several moons per paste)</label>
   <textarea id="moons" spellcheck="false"
@@ -487,7 +502,7 @@ const matCls = m => MINERALS.includes(m) ? 'm-' + MSLUG[m] : tierCls(TIER_OF[m])
      ice 0|1, s reprocSkillTid|null } plus names (lowercased name → tid) and
    types (tid → name for every material and reprocessing-skill tid).
    The planner (ranks/plan/arrays/moons/skills panel) and fleet mode all read from it —
-   loaded lazily on first need (targets exist, a moon paste, or the fleet section),
+   loaded lazily on first need (targets exist, a moon paste, or entering fleet mode),
    NEVER approximated: without the file those sections show an inline error + retry. */
 let oreDB = null, oreDBErr = null, oreDBPending = false;
 
@@ -556,6 +571,8 @@ function loadOreDB(){
 
 /* ---------- state ---------- */
 const state = {
+  mode: 'prod',              // 'prod' (plan production) | 'fleet' — which flow the page shows;
+                             // a pure view swap: every state below is shared between the modes
   targets: new Map(),        // material -> qty (integer) or null for a quantity-less target
   unknown: [],               // unparseable names from the needs paste (display only)
   basis: 'isk',              // 'isk' | 'units' — how targets are weighted in the rankings
@@ -1336,7 +1353,7 @@ function renderArrays(){
   });
 }
 
-/* ---------- section 5 · your moons ---------- */
+/* ---------- production section 4 · your moons ---------- */
 function emptyHint(text){ return el('span', 'hint', text); }
 
 function coverageText(r){
@@ -1455,7 +1472,7 @@ function renderMoons(){
   });
 }
 
-/* ---------- section 4 · fleet mode: survey-scan value ranking ---------- */
+/* ---------- fleet mode (sections 1 + 3): survey-scan value ranking ---------- */
 // data/ores.json is loaded through the shared loader in the data block above; refine
 // outputs already priced in the section-2 grid resolve via MAT_TID (derived from the
 // data's types map). Anything not in that map (ice products: Heavy Water, isotopes, …)
@@ -1695,7 +1712,8 @@ function fleetFlag(text, warn, title){
 }
 
 function renderFleet(){
-  if (!$('fleetBox').open) return;   // lazy: nothing computed while collapsed
+  if (state.mode !== 'fleet') return;   // lazy: nothing computed outside fleet mode
+  loadOreDB();                          // fleet data loads on first use of fleet mode
   renderFleetYield();
   const box = $('fleetTable');
   box.textContent = '';
@@ -1953,6 +1971,12 @@ const SAMPLE_SCAN = [
 
 /* ---------- render all ---------- */
 function renderControls(){
+  // the mode switcher: body[data-mode] drives which flow's sections the CSS shows,
+  // and the shared prices-&-refine section takes its per-mode title (2 · in both flows)
+  document.body.dataset.mode = state.mode;
+  $('modeProd').setAttribute('aria-pressed', String(state.mode === 'prod'));
+  $('modeFleet').setAttribute('aria-pressed', String(state.mode === 'fleet'));
+  $('pricesTitle').textContent = state.mode === 'fleet' ? 'Refine & prices' : 'Prices & refine';
   $('basisIsk').setAttribute('aria-pressed', String(state.basis === 'isk'));
   $('basisUnits').setAttribute('aria-pressed', String(state.basis === 'units'));
   $('viewSite').setAttribute('aria-pressed', String(state.arrayView === 'site'));
@@ -2135,6 +2159,7 @@ function persist(){
     for (const [t, p] of Object.entries(state.fleet.prices))
       if (p && !p.err) fleetPrices[t] = p;
     localStorage.setItem(LS_KEY, JSON.stringify({
+      mode: state.mode,
       needText: $('need').value,
       targets: [...state.targets],
       basis: state.basis,
@@ -2150,7 +2175,6 @@ function persist(){
       priceOpen: $('priceBox').open,
       fleetText: $('fleetScan').value,
       fleet: {
-        open: $('fleetBox').open,
         iskh: state.fleet.iskh, ymode: state.fleet.ymode,
         rate: state.fleet.rate, cycM3: state.fleet.cycM3, cycSec: state.fleet.cycSec,
         sortKey: state.fleet.sortKey, sortDir: state.fleet.sortDir, valueCol: state.fleet.valueCol,
@@ -2164,6 +2188,10 @@ function restore(){
   let s = null;
   try{ s = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); }catch(_e){}
   if (!s) return;
+  if (s.mode === 'prod' || s.mode === 'fleet') state.mode = s.mode;
+  else if (s.fleet && typeof s.fleet === 'object' && s.fleet.open)
+    state.mode = 'fleet';   // pre-mode layouts stored the fleet SECTION's open state — an
+                            // open fleet section meant the user was fleet mining
   if (typeof s.needText === 'string') $('need').value = s.needText;
   if (Array.isArray(s.targets)){
     state.targets = new Map();
@@ -2235,7 +2263,6 @@ function restore(){
       for (const [t, n] of Object.entries(f.matNames))
         if (/^\d+$/.test(t) && typeof n === 'string') state.fleet.matNames[t] = n;
     if (typeof f.fetchedAt === 'number') state.fleet.fetchedAt = f.fetchedAt;
-    $('fleetBox').open = !!f.open;   // the toggle event lazily loads ores.json when open
   }
   if (state.fetchedAt)
     $('esiStatus').textContent = 'using Jita prices fetched ' + new Date(state.fetchedAt).toLocaleString();
@@ -2304,15 +2331,26 @@ $('btnClearMoons').addEventListener('click', () => {
 });
 $('priceBox').addEventListener('toggle', persist);
 
-/* fleet mode wiring — ores.json loads lazily on the section's first real use */
-$('fleetBox').addEventListener('toggle', () => {
-  if ($('fleetBox').open){ loadOreDB(); renderFleet(); }
+/* mode switcher — fleet mode is a peer entry point, not a step of the production flow.
+   Switching is a pure view swap (the CSS shows one flow's sections): no state is touched,
+   and the production sections stay current underneath because every render above runs
+   regardless of visibility. Entering fleet mode renders it (and renderFleet lazily loads
+   ores.json on that first use). */
+function setMode(mode){
+  if (state.mode === mode) return;
+  state.mode = mode;
+  renderControls();
+  if (mode === 'fleet') renderFleet();
   persist();
-});
-$('fleetScan').addEventListener('input', () => { loadOreDB(); renderFleet(); persist(); });
+}
+$('modeProd').addEventListener('click', () => setMode('prod'));
+$('modeFleet').addEventListener('click', () => setMode('fleet'));
+
+/* fleet mode wiring — renderFleet no-ops outside fleet mode and lazily loads ores.json */
+$('fleetScan').addEventListener('input', () => { renderFleet(); persist(); });
 $('btnFleetSample').addEventListener('click', () => {
   $('fleetScan').value = SAMPLE_SCAN;
-  loadOreDB(); renderFleet(); persist();
+  renderFleet(); persist();
 });
 $('btnFleetClear').addEventListener('click', () => { $('fleetScan').value = ''; renderFleet(); persist(); });
 $('btnFleetPrices').addEventListener('click', () => {

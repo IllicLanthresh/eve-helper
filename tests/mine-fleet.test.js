@@ -1,6 +1,7 @@
-/* The Mine page against exact SDE ore data: survey-scan parsing, refined vs compressed
-   ISK/m³ with real (mocked) skills and a picked facility, the 100:1 compression model,
-   ISK/h math, the shopping-list planner (ranks + mining plan) on the same exact numbers,
+/* The Mine page against exact SDE ore data: the two page modes (plan production vs
+   fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³
+   with real (mocked) skills and a picked facility, the 100:1 compression model, ISK/h
+   math, the shopping-list planner (ranks + mining plan) on the same exact numbers,
    the data-derived skills panel, and persistence — all against a hand-written
    data/ores.json fixture.
 
@@ -265,11 +266,58 @@ H.run('mine-fleet', async () => {
   const server = await H.startServer();
   const browser = await H.launch();
   try {
+    /* ================= the mode switcher: two peer flows, one shared DOM ================= */
+    section('mode switcher: production flow vs fleet flow');
+    const sParse = await openMine(browser, server, { login: false, label: 'parse' });
+    const visibleSections = page => page.evaluate(() =>
+      [...document.querySelectorAll('main > section')]
+        .filter(s => getComputedStyle(s).display !== 'none')
+        .map(s => ({ id: s.id, h2: s.querySelector('h2').textContent.trim() })));
+    const visibleIntro = page => page.evaluate(() =>
+      [...document.querySelectorAll('header p')]
+        .filter(p => getComputedStyle(p).display !== 'none').map(p => p.textContent).join(' | '));
+    eq('first-time users land in production mode',
+      await sParse.page.$eval('body', b => b.dataset.mode), 'prod');
+    let secs = await visibleSections(sParse.page);
+    check('...showing the classic flow: targets → prices → what to mine → your moons',
+      JSON.stringify(secs.map(x => x.id)) === '["secTargets","secPrices","secMine","secMoons"]',
+      JSON.stringify(secs));
+    check('...numbered 1 / 2 / 3 / 4 — the moons are step 4 now, no gap where fleet sat',
+      secs.every((x, i) => x.h2.startsWith(['1 ·', '2 ·', '3 ·', '4 ·'][i])),
+      JSON.stringify(secs.map(x => x.h2)));
+    check('...and no section is numbered 5 or named Fleet mode any more',
+      secs.every(x => !/^5 ·/.test(x.h2) && !/Fleet mode/.test(x.h2)), JSON.stringify(secs));
+    eq('the shared section reads "Prices & refine" in production',
+      await sParse.page.$eval('#pricesTitle', el => el.textContent), 'Prices & refine');
+    check('the production intro line is the shopping-list one',
+      /production line needs/.test(await visibleIntro(sParse.page)), await visibleIntro(sParse.page));
+
+    // switch: an instant view swap into the paste-first fleet flow
+    await sParse.page.click('#modeFleet');
+    await sParse.page.waitForFunction(() => document.body.dataset.mode === 'fleet');
+    secs = await visibleSections(sParse.page);
+    check('fleet mode is paste-first: survey scan → refine & prices → what to shoot',
+      JSON.stringify(secs.map(x => x.id)) === '["secScan","secPrices","secShoot"]',
+      JSON.stringify(secs));
+    check('...numbered 1 / 2 / 3 for its own flow',
+      secs.every((x, i) => x.h2.startsWith(['1 ·', '2 ·', '3 ·'][i])),
+      JSON.stringify(secs.map(x => x.h2)));
+    eq('...with the shared section retitled "Refine & prices"',
+      await sParse.page.$eval('#pricesTitle', el => el.textContent), 'Refine & prices');
+    check('...targets, plan, arrays and moons are all hidden',
+      await sParse.page.evaluate(() => ['secTargets', 'secMine', 'secArrays', 'secMoons']
+        .every(id => getComputedStyle(document.getElementById(id)).display === 'none')));
+    check('the fleet intro line replaces the production one',
+      /no shopping list/.test(await visibleIntro(sParse.page)), await visibleIntro(sParse.page));
+    eq('the refine section is ONE shared DOM instance, not a copy: one #facStruct',
+      await sParse.page.evaluate(() => document.querySelectorAll('#facStruct').length), 1);
+    eq('...one #priceGrid', await sParse.page.evaluate(() => document.querySelectorAll('#priceGrid').length), 1);
+    check('...visible inside the fleet flow',
+      await sParse.page.$eval('#facStruct', el => getComputedStyle(el.closest('section')).display !== 'none'));
+
     /* ================= survey-scan parser ================= */
     section('survey-scan parser');
-    const sParse = await openMine(browser, server, { login: false, label: 'parse' });
-    // open the section so ores.json loads; parseSurvey needs the name index
-    await sParse.page.click('#fleetBox summary');
+    // entering fleet mode is what loads ores.json; parseSurvey needs the name index
     await waitOreDB(sParse.page);
 
     const parse = text => sParse.page.evaluate(t => {
@@ -400,21 +448,23 @@ H.run('mine-fleet', async () => {
       /—/.test(iceRow.text.ref) && iceRow.flags.some(f => f === 'unpriced'),
       JSON.stringify({ text: iceRow.text.ref, flags: iceRow.flags }));
 
-    // collapsed state persists (and the paste survives underneath it). The toggle
-    // event that persists the close is a queued task, so wait for the STORED state —
-    // reloading on the mere DOM state races the persist.
-    await sParse.page.click('#fleetBox summary');   // close
+    // the chosen mode persists (and the fleet paste survives a visit to production).
+    // Wait for the STORED state, not the mere DOM state — reloading mid-persist races.
+    await sParse.page.click('#modeProd');   // back to production
     await sParse.page.waitForFunction(() => {
       const st = JSON.parse(localStorage.getItem('eveHelper.mine.v1') || '{}');
-      return !document.getElementById('fleetBox').open && st.fleet && st.fleet.open === false;
+      return document.body.dataset.mode === 'prod' && st.mode === 'prod';
     });
     const fetchesBeforeReload = sParse.state.oresFetches;
     await sParse.page.reload();
     await sParse.page.waitForFunction(() => document.querySelector('#rankList').children.length > 0);
-    eq('a closed fleet box stays closed across reload',
-      await sParse.page.$eval('#fleetBox', el => el.open), false);
-    eq('...and the collapsed page does not refetch ores.json', sParse.state.oresFetches, fetchesBeforeReload);
-    eq('...while the paste text still restored underneath',
+    eq('production mode persists across reload',
+      await sParse.page.$eval('body', b => b.dataset.mode), 'prod');
+    eq('...the fleet sections stay hidden',
+      await sParse.page.$eval('#secScan', el => getComputedStyle(el).display), 'none');
+    eq('...and the production page (no targets, no moons) does not refetch ores.json',
+      sParse.state.oresFetches, fetchesBeforeReload);
+    eq('...while the fleet paste still restored underneath',
       await sParse.page.$eval('#fleetScan', el => el.value.split('\n')[1]),
       'Concentrated Veldspar\t64,213\t6,421 m3\t7,431 m');
     await sParse.close();
@@ -484,8 +534,14 @@ H.run('mine-fleet', async () => {
 
     /* ================= refined vs compressed with real skills ================= */
     section('refined ISK/m³ from seeded skills (NPC station)');
-    await s.page.click('#fleetBox summary');
+    await s.page.click('#modeFleet');
     await waitOreDB(s.page);
+    // the same #facStruct/#skillsBox DOM that just drove the mining plan now sits in the
+    // fleet flow — same skills, same facility, one instance
+    check('the shared refine section is visible in fleet mode',
+      await s.page.$eval('#secPrices', el => getComputedStyle(el).display !== 'none'));
+    check('...with the imported-skills panel still in it',
+      await s.page.$eval('#skillsBox', el => !el.hidden));
     await s.page.fill('#fleetScan', SCAN10);
     await waitSettled(s.page);
 
@@ -683,7 +739,7 @@ H.run('mine-fleet', async () => {
     await s.page.reload();
     await waitSkillsNote(s.page);
     await waitSettled(s.page);   // table re-renders purely from the persisted caches
-    eq('the fleet box reopens', await s.page.$eval('#fleetBox', el => el.open), true);
+    eq('fleet mode persists across reload', await s.page.$eval('body', b => b.dataset.mode), 'fleet');
     eq('the paste survives the reload', await s.page.$eval('#fleetScan', el => el.value), SCAN10);
     const persisted = await s.page.evaluate(() => ({
       iskh: state.fleet.iskh, ymode: state.fleet.ymode, cycM3: state.fleet.cycM3,
@@ -718,7 +774,7 @@ H.run('mine-fleet', async () => {
         headers: { 'Access-Control-Allow-Origin': '*' }, body: 'boom' });
       route.fallback();
     });
-    await sErr.page.click('#fleetBox summary');
+    await sErr.page.click('#modeFleet');
     await waitOreDB(sErr.page);
     await sErr.page.fill('#fleetScan', 'Veldspar\t10,000\t1,000 m3\nClear Icicle\t10\t10,000 m3');
     await waitSettled(sErr.page);
@@ -782,12 +838,14 @@ H.run('mine-fleet', async () => {
         ['eveHelper.mine.v1', {
           fac: { struct: 's:9000001', rig: 't2', sec: 'ns', imp: 4, structInfo: TATARA },
           fleetText: 'Dense Veldspar\t10,000\t1,000 m3',
-          fleet: { open: true },
+          fleet: { open: true },   // pre-mode storage: the fleet SECTION's open flag
         }],
         ['eveHelper.structInfo.v1', { 9000001: TATARA }],
       ],
     });
     await waitSkillsNote(sFac.page);
+    eq('legacy storage with the old fleet section open migrates to fleet mode',
+      await sFac.page.$eval('body', b => b.dataset.mode), 'fleet');
     await waitSettled(sFac.page);
     const facNote = await sFac.page.$eval('#facNote', el => el.textContent);
     eq('the facility row shows the structure, its detected band and rig multiplier',
@@ -811,17 +869,17 @@ H.run('mine-fleet', async () => {
     section('lazy data load, missing ores.json, retry');
     const sLazy = await openMine(browser, server, { login: false, label: 'lazy' });
     await sLazy.page.waitForFunction(() => document.querySelector('#rankList').children.length > 0);
-    eq('the fleet section starts collapsed', await sLazy.page.$eval('#fleetBox', el => el.open), false);
-    eq('...and a collapsed section fetches no ore data at all', sLazy.state.oresFetches, 0);
+    eq('the page starts in production mode', await sLazy.page.$eval('body', b => b.dataset.mode), 'prod');
+    eq('...which, with no targets or moons, fetches no ore data at all', sLazy.state.oresFetches, 0);
     await sLazy.page.reload();
     await sLazy.page.waitForFunction(() => document.querySelector('#rankList').children.length > 0);
     eq('...even across a reload', sLazy.state.oresFetches, 0);
 
     sLazy.state.oresFail = true;   // deploy-time file absent: the fetch 404s
-    await sLazy.page.click('#fleetBox summary');
+    await sLazy.page.click('#modeFleet');
     await sLazy.page.waitForFunction(() => typeof oreDBErr !== 'undefined' && oreDBErr !== null,
       null, { timeout: 15000 });
-    eq('opening the section is what triggers the load', sLazy.state.oresFetches, 1);
+    eq('entering fleet mode is what triggers the load', sLazy.state.oresFetches, 1);
     await sLazy.page.fill('#fleetScan', 'Veldspar 1000');
     const dn = await sLazy.page.$eval('#fleetDataNote', el => ({ hidden: el.hidden, cls: el.className, text: el.textContent }));
     eq('with a paste and no data, the inline error shows', dn.hidden, false);

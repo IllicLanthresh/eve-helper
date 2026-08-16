@@ -26,7 +26,7 @@ anywhere but here.
 | `auth.test.js` | `auth.js`: PKCE callback, multi-character login, v1→v2 migration, logout, scope dropping, degraded standings | yes |
 | `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on all three pages | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
-| `mine-fleet.test.js` | Mine fleet mode: survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
+| `mine-fleet.test.js` | the Mine page: the two modes (plan production / fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
 
 ## Environment
 

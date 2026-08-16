@@ -7,7 +7,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | Tool | Page | What it does |
 | --- | --- | --- |
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
-| **Mine** | `mine.html` | Paste the materials you need for production → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). Fleet mode: paste a survey scan at the belt and rank the field by refined vs compressed ISK/m³. Live Jita prices. |
+| **Mine** | `mine.html` | Two modes over one page. **Plan production**: paste the materials you need → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). **Fleet mode**: paste a survey scan at the belt and rank the field by refined vs compressed ISK/m³. Live Jita prices. |
 | **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
 
 ## EVE login (optional)
@@ -209,9 +209,15 @@ real 250-item hangar for instant experimentation (fetch prices to value it).
 
 # Mine Helper (`mine.html`)
 
-The shopping-list workflow (sections 1–3 and 5) is described above under *EVE login*: paste
-the materials a production line needs, get the densest rocks/moon ores per m³ at your real
-refine yields, and check which of your alliance moons cover the list.
+One page, two peer modes, switched by a segmented control under the page title (the choice
+persists; production planning is the default). **Plan production** is the shopping-list
+workflow described above under *EVE login*: paste the materials a production line needs
+(1), set prices & refine (2), see what to mine — ranking, mining plan and sov-array
+deposits (3), and check which of your alliance moons cover the list (4). **Fleet mode** is
+a different entry point, not a step of that flow — no shopping list, you're sitting in a
+belt with a survey scanner: paste the scan (1), the same refine-&-prices section production
+uses (2 — one shared section, not a copy), and see what to shoot (3). Switching is an
+instant view swap over shared state: prices, skills, facility and pastes all carry across.
 
 ## Exact SDE data
 
@@ -232,8 +238,8 @@ state with a retry; nothing ever falls back to approximations.
 ## Fleet mode (survey scan)
 
 Mining in an alliance fleet with no shopping list — just a belt or a moon chunk and the
-question *what should I shoot for max value*? Section 4 (collapsible) takes the in-game
-**survey scanner** output pasted as-is: `Ore  Quantity  Volume  Distance` rows, tab or
+question *what should I shoot for max value*? Fleet mode's paste-first section takes the
+in-game **survey scanner** output pasted as-is: `Ore  Quantity  Volume  Distance` rows, tab or
 multi-space separated, EU (`1.234.567`) and US (`1,234,567`) number formats both fine;
 header lines and the distance column are ignored, and unrecognized names are listed
 visibly instead of silently dropped. Rocks aggregate per ore type and every type gets two
@@ -256,7 +262,7 @@ ranked only against other ice (unit-based harvesting), Mercoxit is flagged deep-
 (own crystals, own yield), and unpriced types show a flag — never a fake zero. Toggle
 **ISK/h** to enter your ship's yield (m³/h directly, or m³ per cycle + cycle seconds,
 converted live) and the table adds ISK/h on both bases plus time-to-clear per ore and for
-the whole field. Paste, toggle, yield inputs and the collapsed state persist; a **Load
+the whole field. Paste, toggles, yield inputs and the chosen mode persist; a **Load
 sample scan** button ships a realistic mixed scan (ore variants, a moon ore, Mercoxit,
 ice) to try it dry.
 
