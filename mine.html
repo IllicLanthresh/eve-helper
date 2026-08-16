@@ -1453,19 +1453,34 @@ function fleetRefineFor(o){
    via parseNum; header lines and blanks skipped; distance ignored; unknown names surface
    in the visible unrecognized note — never silently dropped. Rows aggregate per ore type. */
 const SCAN_HEADER_RX = /^(ore(\s*type)?|asteroid|type|name|moon materials?)$/i;
+// a number in a tab-less fallback row: space-grouped runs (e.g. FR "64 213") first, so a
+// grouped quantity is never truncated at its first group, then EU/US/apostrophe separators
+const SCAN_NUM = "\\d{1,3}(?: \\d{3})+(?:[.,]\\d+)?|\\d[\\d.,']*";
+// quantity + m³-suffixed volume: the suffix anchors the volume column, so the pattern can
+// tell "64 213 6 421 m3" (grouped qty + grouped vol) from "100 200 m3" (qty + vol)
+const SCAN_QV_RX = new RegExp('^(.+?)\\s+(' + SCAN_NUM + ')\\s+(' + SCAN_NUM + ')\\s*(?:m3|m³)(?:\\s+\\S.*)?$', 'i');
+// quantity (or a lone m³-suffixed volume — kept with its suffix so the column logic can
+// tell them apart) with an optional second number
+const SCAN_Q_RX = new RegExp('^(.+?)\\s+(' + SCAN_NUM + '(?:\\s*(?:m3|m³))?)(?:\\s+(' + SCAN_NUM + ')\\s*(?:m3|m³)?)?(?:\\s+\\S.*)?$', 'i');
 function splitScanLine(line){
-  let cells = line.split('\t').map(c => c.trim()).filter(Boolean);
+  const cells = line.split('\t').map(c => c.trim());
+  // strip only TRAILING empty cells — an interior blank (empty Quantity cell) must keep
+  // the Volume cell in its own column instead of shifting it into the quantity slot
+  while (cells.length && !cells[cells.length - 1]) cells.pop();
   if (cells.length >= 2) return cells;
-  cells = line.split(/\s{2,}/).map(c => c.trim()).filter(Boolean);
-  if (cells.length >= 2) return cells;
-  const m = /^(.+?)\s+(\d[\d.,']*)(?:\s+(\d[\d.,']*)\s*(?:m3|m³)?)?(?:\s+\S.*)?$/i.exec(line);
+  const sp = line.split(/\s{2,}/).map(c => c.trim()).filter(Boolean);
+  if (sp.length >= 2) return sp;
+  let m = SCAN_QV_RX.exec(line);
+  if (m) return [m[1], m[2], m[3]];
+  m = SCAN_Q_RX.exec(line);
   if (m) return m[3] != null ? [m[1], m[2], m[3]] : [m[1], m[2]];
   return [line];
 }
 function parseSurvey(text){
   const rows = new Map(), unknown = new Map();
   let numberless = 0, volFixed = 0;
-  for (const raw of String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').split('\n')){
+  // NBSP, narrow NBSP and figure space (locale group separators) all become plain spaces
+  for (const raw of String(text || '').replace(/[\u00a0\u202f\u2007]/g, ' ').replace(/\r\n?/g, '\n').split('\n')){
     const line = raw.trim();
     if (!line) continue;
     const low = line.toLowerCase();   // header row from the scanner window copy
@@ -1476,8 +1491,13 @@ function parseSurvey(text){
     const tid = oreDB.names[name.toLowerCase()];
     const o = tid != null ? oreDB.ores[tid] : null;
     if (!o){ unknown.set(name, (unknown.get(name) || 0) + 1); continue; }
-    let qty = cells.length > 1 ? parseNum(cells[1]) : NaN;
-    let vol = cells.length > 2 ? parseNum(cells[2]) : NaN;   // "44 km" distances parse as NaN and fall through
+    let qtyCell = cells.length > 1 ? cells[1] : null;
+    let volCell = cells.length > 2 ? cells[2] : null;
+    // an m³-suffixed cell is never a quantity — hand-typed rows can put the volume in the
+    // quantity slot, and reading "6,421 m3" as 6,421 units would be 10× off for Veldspar
+    if (qtyCell && /(?:m3|m³)\s*$/i.test(qtyCell)){ volCell = qtyCell; qtyCell = null; }
+    let qty = qtyCell != null ? parseNum(qtyCell) : NaN;
+    let vol = volCell != null ? parseNum(volCell) : NaN;   // "44 km" distances parse as NaN and fall through
     if (!(qty > 0) && !(vol > 0)){ numberless++; continue; }
     if (qty > 0 && vol > 0 && o.v > 0 && Math.abs(vol - qty * o.v) > qty * o.v * 0.02){
       vol = qty * o.v; volFixed++;    // third column wasn't this rock's volume (e.g. a bare distance)
@@ -1501,11 +1521,17 @@ function fleetTidPrice(tid){
   const v = state.priceBasis === 'buy' ? e.buy : e.sell;
   return (typeof v === 'number' && Number.isFinite(v)) ? v : null;   // null: no book on this side
 }
+// a cached entry that records a FAILED fetch (network/ESI error) — not the same thing as
+// "fetched fine, no book": failures render their own flag and are never persisted
+const fleetTidErr = tid => { const e = state.fleet.prices[tid]; return !!(e && e.err); };
 function fleetMatName(tid){
   return MAT_TID[tid] || state.fleet.matNames[tid]
     || (oreDB && oreDB.ores[tid] ? oreDB.ores[tid].n : 'type ' + tid);
 }
 function queueFleetPrices(tids){
+  // an err entry counts as "has an entry" here on purpose: within a session a failure is
+  // not auto-retried on every render (no ESI retry storm) — it is skipped by persist(),
+  // so the next page load fetches it again, and "refresh fleet prices" retries on demand
   for (const t of tids)
     if (t != null && !state.fleet.prices[t]) fleetFetchQ.add(t);
   if (fleetFetchQ.size) runFleetFetch();   // no-op while a run is already draining the queue
@@ -1560,24 +1586,36 @@ async function runFleetFetch(){
 function fleetCompute(rows){
   const need = new Set();
   const out = [];
+  let usedPlaceholder = false;
+  // a section-2 material only prices the refined column once it has a real value there
+  // (user override or a fetched book) — before that it is fetched live by tid like every
+  // other output, so the refined and compressed columns never compare hardcoded
+  // placeholders against live Jita prices
+  const secPriced = nm => {
+    const sp = state.prices[nm];
+    return sp.override != null
+      || !!(sp.fetched && (state.priceBasis === 'buy' ? sp.fetched.buy : sp.fetched.sell) != null);
+  };
   for (const row of rows){
     const o = row.o;
     const r = fleetRefineFor(o);
     let matVal = 0, pending = false;
-    const unpriced = [];
+    const unpriced = [], failed = [];
     for (const [mtid, q] of (o.m || [])){
       const nm = MAT_TID[mtid];
-      if (nm){ matVal += q * priceOf(nm); continue; }
+      if (nm && secPriced(nm)){ matVal += q * priceOf(nm); continue; }
       const p = fleetTidPrice(mtid);
       if (p === undefined){ pending = true; need.add(mtid); }
-      else if (p == null) unpriced.push(fleetMatName(mtid));
-      else matVal += q * p;
+      else if (p != null) matVal += q * p;
+      else if (nm){ matVal += q * priceOf(nm); usedPlaceholder = true; }   // no book anywhere —
+      // the section-2 placeholder is the last resort, and the visible note says so
+      else (fleetTidErr(mtid) ? failed : unpriced).push(fleetMatName(mtid));
     }
     let ref = null, refState = 'ok';
     if (!(o.m || []).length) refState = 'none';
     else if (pending) refState = 'pending';
-    else if (matVal > 0){ ref = matVal * (r.pct / 100) / (o.p * o.v); if (unpriced.length) refState = 'partial'; }
-    else refState = 'unpriced';
+    else if (matVal > 0){ ref = matVal * (r.pct / 100) / (o.p * o.v); if (unpriced.length || failed.length) refState = 'partial'; }
+    else refState = failed.length ? 'failed' : 'unpriced';
     const ratio = o.ice ? 1 : 100;
     let comp = null, compTag = null, compState = 'ok';
     if (o.c != null){
@@ -1591,15 +1629,16 @@ function fleetCompute(rows){
       else if (rp != null){
         comp = rp / o.v;
         compTag = o.c == null ? 'no compressed variant — raw ore price'
+          : fleetTidErr(o.c) ? 'the compressed type’s price fetch failed — raw ore price (refresh fleet prices to retry)'
           : `compressed type has no Jita ${state.priceBasis} book — raw ore price`;
-      } else compState = 'unpriced';
+      } else compState = (fleetTidErr(row.tid) || (o.c != null && fleetTidErr(o.c))) ? 'failed' : 'unpriced';
     }
     const cvExpect = o.ice ? o.v / 10 : o.v / 100;   // the SDE's own pattern for the assumed ratios
     const cvOdd = o.cv != null && cvExpect > 0 && Math.abs(o.cv - cvExpect) > cvExpect * 0.01;
-    out.push({ ...row, r, ref, refState, unpriced, comp, compTag, compState, cvOdd,
+    out.push({ ...row, r, ref, refState, unpriced, failed, comp, compTag, compState, cvOdd,
       ice: !!o.ice, merc: /mercoxit/i.test(o.b || '') || /mercoxit/i.test(o.g || '') });
   }
-  return { rows: out, need };
+  return { rows: out, need, usedPlaceholder };
 }
 
 const fleetRate = () => {
@@ -1643,10 +1682,14 @@ function renderFleet(){
   $('fleetUnknown').hidden = true;
   $('fleetDataNote').hidden = true;
   $('btnFleetPrices').hidden = !Object.keys(state.fleet.prices).length || fleetFetching;
-  if (!fleetFetching)
+  if (!fleetFetching){
+    // the completion note must not read as success when types failed — carry the count
+    const nFail = Object.values(state.fleet.prices).filter(p => p && p.err).length;
     $('fleetPriceNote').textContent = state.fleet.fetchedAt
       ? 'compressed/extra prices fetched ' + new Date(state.fleet.fetchedAt).toLocaleTimeString()
+        + (nFail ? ` — ${nFail} price fetch${nFail > 1 ? 'es' : ''} failed (refresh fleet prices to retry)` : '')
       : '';
+  }
   const text = $('fleetScan').value;
   if (!text.trim()){
     $('fleetNote').textContent = '';
@@ -1677,21 +1720,31 @@ function renderFleet(){
     $('fleetUnknown').hidden = false;
     $('fleetUnknown').textContent = 'unrecognized — not an asteroid/moon/ice type in the SDE (rows kept out of the ranking): ' + list;
   }
-  const { rows, need } = fleetCompute(parsed.rows);
+  const { rows, need, usedPlaceholder } = fleetCompute(parsed.rows);
   if (need.size) queueFleetPrices([...need]);
   const totRocks = rows.reduce((s, r) => s + r.rocks, 0);
   const totM3 = rows.reduce((s, r) => s + r.m3, 0);
-  $('fleetNote').textContent = rows.length
-    ? `${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`
-      + (parsed.numberless ? ` · ${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped` : '')
-      + (parsed.volFixed ? ` · ${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)` : '')
-    : '';
+  const bits = [];
+  if (rows.length) bits.push(`${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
+  if (parsed.numberless) bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped`);
+  if (parsed.volFixed) bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)`);
+  // the flat-fallback basis of the whole refined column deserves more than a hover tooltip
+  if (rows.length && !(charSkills && charSkills.groups && Object.keys(charSkills.groups).length))
+    bits.push(`refined values use the flat ${state.refine}% refine — log in with EVE for per-ore yields`);
+  $('fleetNote').textContent = bits.join(' · ');
   if (!rows.length){
-    box.appendChild(el('div', 'hint', 'no recognized ore rows in the paste'));
+    // recognized names whose rows carried no readable numbers must not masquerade as
+    // "not recognized" — say what actually kept the table empty
+    box.appendChild(el('div', 'hint', parsed.numberless
+      ? `no usable rows — ${parsed.numberless} recognized ore row${parsed.numberless > 1 ? 's' : ''} without a readable quantity or volume`
+      : 'no recognized ore rows in the paste'));
     return;
   }
-  if (!state.fetchedAt && !fleetFetching)
-    $('fleetPriceNote').textContent = 'refine-output prices are section-2 placeholders — hit “Fetch Jita prices” there for live refined values';
+  if (usedPlaceholder && !fleetFetching){
+    const pn = $('fleetPriceNote');
+    pn.textContent = (pn.textContent ? pn.textContent + ' · ' : '')
+      + 'some refine outputs are priced from section-2 placeholders — hit “Fetch Jita prices” there for live refined values';
+  }
 
   // % of best per the current value column; ice only ever competes with ice
   const vc = state.fleet.valueCol;
@@ -1720,6 +1773,11 @@ function renderFleet(){
       default: return 0;
     }
   };
+  const on = state.fleet.iskh;
+  // a hidden hourly column must never stay the sort key (the ▲/▼ arrow would sit on no
+  // visible header) — each one remaps to its visible twin, which orders identically
+  if (!on && ['refh', 'comph', 'ttc'].includes(state.fleet.sortKey))
+    state.fleet.sortKey = { refh: 'ref', comph: 'comp', ttc: 'm3' }[state.fleet.sortKey];
   const k = state.fleet.sortKey, dir = state.fleet.sortDir;
   rows.sort((a, b) => {
     const x = sv(a, k), y = sv(b, k);
@@ -1727,7 +1785,6 @@ function renderFleet(){
     return c ? c * dir : a.o.n.localeCompare(b.o.n);
   });
 
-  const on = state.fleet.iskh;
   const cols = [
     { k: 'name', h: 'ore' },
     { k: 'rocks', h: 'rocks' },
@@ -1765,12 +1822,21 @@ function renderFleet(){
     if (v == null){
       const td = el('td', 'num');
       td.appendChild(el('span', 'hint', '—'));
-      td.appendChild(fleetFlag(st === 'none' ? 'no refine outputs' : 'unpriced', false,
-        side === 'comp' ? 'neither the compressed type nor the raw ore has a Jita ' + state.priceBasis + ' book'
-          : 'none of this ore’s refine outputs could be priced'));
+      // 'failed' is a network/ESI error, not a market fact — it must not claim "no book"
+      td.appendChild(st === 'failed'
+        ? fleetFlag('fetch failed', true,
+          'the Jita price fetch failed (network/ESI error) — “refresh fleet prices” retries now; failures are not kept across reloads')
+        : fleetFlag(st === 'none' ? 'no refine outputs' : 'unpriced', false,
+          side === 'comp' ? 'neither the compressed type nor the raw ore has a Jita ' + state.priceBasis + ' book'
+            : 'none of this ore’s refine outputs could be priced'));
       return td;
     }
     if (perHour){
+      // the entered rate is an ORE m³/h — ice harvests fixed units per cycle and Mercoxit
+      // mines at its own deep-core yield, so an hourly figure from that rate would be wrong
+      if (r.ice || r.merc) return numTd(null, '—', r.ice
+        ? 'ice harvesters cycle per unit, not per m³ — your ore yield does not apply'
+        : 'Mercoxit mines at its own deep-core yield — your ore yield does not apply');
       if (!rate) return numTd(null, '—', 'enter your ship’s yield in the row above');
       return numTd(v * rate, fmtBig(v * rate), fmt.format(Math.round(v * rate)) + ' ISK/h at ' + fmt.format(Math.round(rate)) + ' m³/h');
     }
@@ -1778,9 +1844,14 @@ function renderFleet(){
       side === 'ref'
         ? 'refine outputs × ' + (Math.round(r.r.pct * 10) / 10) + '% ÷ (portion × m³/unit) · ' + r.r.detail
         : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (' + (r.ice ? 1 : 100) + ' × unit m³)')));
-    if (side === 'ref' && r.refState === 'partial')
-      td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
-        'these refine outputs have no Jita ' + state.priceBasis + ' book — the value shown excludes them'));
+    if (side === 'ref' && r.refState === 'partial'){
+      if (r.unpriced.length)
+        td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
+          'these refine outputs have no Jita ' + state.priceBasis + ' book — the value shown excludes them'));
+      if (r.failed.length)
+        td.appendChild(fleetFlag('fetch failed: ' + r.failed.join(', '), true,
+          'the price fetch for these refine outputs failed (network/ESI error) — the value shown excludes them; “refresh fleet prices” retries now'));
+    }
     if (side === 'comp' && r.compTag) td.appendChild(fleetFlag('raw', true, r.compTag));
     if (side === 'comp' && r.cvOdd)
       td.appendChild(fleetFlag('ratio?', true,
@@ -1808,25 +1879,38 @@ function renderFleet(){
     if (on) tr.appendChild(iskCell(r, 'comp', true));
     tr.appendChild(r.pct == null ? el('td', 'num hint', '—')
       : numTd(r.pct, fmt.format(Math.round(r.pct * 10) / 10) + '%'));
-    if (on) tr.appendChild(rate ? numTd(r.m3 / rate, hFmt(r.m3 / rate),
-      fmt.format(Math.round(r.m3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
+    if (on) tr.appendChild((r.ice || r.merc)
+      ? numTd(null, '—', r.ice
+        ? 'ice harvesters cycle per unit, not per m³ — a clear time from your ore yield does not apply'
+        : 'Mercoxit mines at its own deep-core yield — a clear time from your ore yield does not apply')
+      : rate ? numTd(r.m3 / rate, hFmt(r.m3 / rate),
+        fmt.format(Math.round(r.m3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
     tb.appendChild(tr);
   }
 
-  // field totals: what the whole scanned field is worth on each basis
+  // field totals: what the whole scanned field is worth on each basis. The hourly figures
+  // only ever cover volume the entered ORE yield can actually mine — ice (unit-based
+  // harvesting) and Mercoxit (deep-core yield) stay out of both sides of the ÷, so the
+  // clear time and the per-hour averages are not driven by rocks the rate cannot touch
   const refIsk = rows.reduce((s, r) => s + (r.ref != null ? r.ref * r.m3 : 0), 0);
   const compIsk = rows.reduce((s, r) => s + (r.comp != null ? r.comp * r.m3 : 0), 0);
-  const totH = rate ? totM3 / rate : null;
+  const mine = rows.filter(r => !r.ice && !r.merc);
+  const mineM3 = mine.reduce((s, r) => s + r.m3, 0);
+  const mineRefIsk = mine.reduce((s, r) => s + (r.ref != null ? r.ref * r.m3 : 0), 0);
+  const mineCompIsk = mine.reduce((s, r) => s + (r.comp != null ? r.comp * r.m3 : 0), 0);
+  const excl = mineM3 < totM3 ? ' — ice/Mercoxit rows excluded (your ore yield does not mine them)' : '';
+  const totH = (rate && mineM3 > 0) ? mineM3 / rate : null;
   const trt = el('tr', 'total');
   trt.appendChild(el('td', null, 'field value'));
   trt.appendChild(numTd(totRocks, String(totRocks)));
   trt.appendChild(numTd(totM3, fmt.format(Math.round(totM3)) + ' m³'));
   trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)'));
-  if (on) trt.appendChild(totH ? numTd(refIsk / totH, fmtBig(refIsk / totH), 'field average, refined') : numTd(null, '—'));
+  if (on) trt.appendChild(totH ? numTd(mineRefIsk / totH, fmtBig(mineRefIsk / totH), 'field average, refined' + excl) : numTd(null, '—'));
   trt.appendChild(numTd(compIsk, fmtBig(compIsk) + ' ISK', 'the whole field, compressed (priced rows only)'));
-  if (on) trt.appendChild(totH ? numTd(compIsk / totH, fmtBig(compIsk / totH), 'field average, compressed') : numTd(null, '—'));
+  if (on) trt.appendChild(totH ? numTd(mineCompIsk / totH, fmtBig(mineCompIsk / totH), 'field average, compressed' + excl) : numTd(null, '—'));
   trt.appendChild(el('td'));
-  if (on) trt.appendChild(totH ? numTd(totH, hFmt(totH), 'whole field ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
+  if (on) trt.appendChild(totH ? numTd(totH, hFmt(totH),
+    fmt.format(Math.round(mineM3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h' + excl) : numTd(null, '—'));
   tb.appendChild(trt);
   tbl.appendChild(tb);
   box.appendChild(tbl);
@@ -2023,6 +2107,12 @@ function persist(){
       const p = state.prices[m];
       if (p.override != null || p.fetched) prices[m] = { o: p.override, f: p.fetched };
     }
+    // failed fleet fetches (err entries) are session-only: persisting them would freeze a
+    // transient network error into a permanently "unpriced" ore — drop them so the next
+    // page load simply fetches those types again
+    const fleetPrices = {};
+    for (const [t, p] of Object.entries(state.fleet.prices))
+      if (p && !p.err) fleetPrices[t] = p;
     localStorage.setItem(LS_KEY, JSON.stringify({
       needText: $('need').value,
       targets: [...state.targets],
@@ -2043,7 +2133,7 @@ function persist(){
         iskh: state.fleet.iskh, ymode: state.fleet.ymode,
         rate: state.fleet.rate, cycM3: state.fleet.cycM3, cycSec: state.fleet.cycSec,
         sortKey: state.fleet.sortKey, sortDir: state.fleet.sortDir, valueCol: state.fleet.valueCol,
-        prices: state.fleet.prices, matNames: state.fleet.matNames, fetchedAt: state.fleet.fetchedAt,
+        prices: fleetPrices, matNames: state.fleet.matNames, fetchedAt: state.fleet.fetchedAt,
       },
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
@@ -2115,9 +2205,10 @@ function restore(){
     if (f.valueCol === 'ref' || f.valueCol === 'comp') state.fleet.valueCol = f.valueCol;
     if (f.prices && typeof f.prices === 'object')
       for (const [t, p] of Object.entries(f.prices)){
-        if (!/^\d+$/.test(t) || !p || typeof p !== 'object') continue;
+        // err entries were never real prices — skip them (also cleans up storage written
+        // before failures stopped being persisted) so those types get fetched again
+        if (!/^\d+$/.test(t) || !p || typeof p !== 'object' || p.err) continue;
         state.fleet.prices[t] = { sell: numOrNull(p.sell), buy: numOrNull(p.buy) };
-        if (p.err) state.fleet.prices[t].err = 1;
       }
     if (f.matNames && typeof f.matNames === 'object')
       for (const [t, n] of Object.entries(f.matNames))

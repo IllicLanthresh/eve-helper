@@ -317,6 +317,24 @@ H.run('mine-fleet', async () => {
     p = await parse('Dense Veldspar   41,500   4,150 m3   9 km');
     eq('multi-space separated rows split on runs of spaces', p.rows[0] && p.rows[0].units, 41500);
 
+    // an interior empty Quantity cell must not shift the volume into the quantity slot
+    p = await parse('Veldspar\t\t10 m3');
+    near('an empty Quantity cell keeps the volume in its own column: 10 m³', p.rows[0] && p.rows[0].m3, 10, 1e-9);
+    eq('...deriving 100 units from it — not 10 units from the shifted cell', p.rows[0] && p.rows[0].units, 100);
+    // a cell carrying the m³ suffix is a volume no matter which slot it landed in
+    p = await parse('Veldspar\t6,421 m3');
+    near('an m³-suffixed cell in the quantity slot is read as the volume', p.rows[0] && p.rows[0].m3, 6421, 1e-9);
+    eq('...with the quantity derived from it', p.rows[0] && p.rows[0].units, 64210);
+    p = await parse('Veldspar 6,421 m3');
+    near('...also in a single-space hand-typed row', p.rows[0] && p.rows[0].m3, 6421, 1e-9);
+    // FR-locale space grouping survives losing its tabs (Discord/chat relays)
+    p = await parse('Concentrated Veldspar 64 213 6 421 m3 7 431 m');
+    eq('space-grouped (FR) numbers in a single-space row: the full 64,213 quantity', p.rows[0] && p.rows[0].units, 64213);
+    near('...and the full 6,421 m³ volume', p.rows[0] && p.rows[0].m3, 6421, 1e-9);
+    eq('...with no volume cell flagged as ignored', p.volFixed, 0);
+    p = await parse('Veldspar 64\u202f213');   // narrow NBSP grouping (FR locale)
+    eq('narrow-NBSP grouped quantities parse whole', p.rows[0] && p.rows[0].units, 64213);
+
     /* ---------- parser notes in the UI ---------- */
     section('parser notes in the UI');
     await sParse.page.fill('#fleetScan',
@@ -329,12 +347,22 @@ H.run('mine-fleet', async () => {
     eq('the unrecognized note is visible', unk.hidden, false);
     check('...listing the name with its ×2 count', /Quafe Zero ×2/.test(unk.text), unk.text);
 
+    // recognized names whose rows all lack numbers must not read as "not recognized"
+    await sParse.page.fill('#fleetScan', 'Veldspar\nDense Veldspar\tabc');
+    await sParse.page.waitForFunction(
+      () => /no usable rows/.test(document.getElementById('fleetTable').textContent));
+    note = await sParse.page.$eval('#fleetTable', el => el.textContent);
+    check('an all-numberless paste says what actually kept the table empty',
+      /no usable rows — 2 recognized ore rows without a readable quantity or volume/.test(note), note);
+
     // the sample scan: 9 rows, 8 types, Concentrated Veldspar pasted twice
     await sParse.page.click('#btnFleetSample');
     await waitSettled(sParse.page);
     note = await sParse.page.$eval('#fleetNote', el => el.textContent);
     check('the sample scan parses to 8 ore types from 9 rocks', /8 ore types · 9 rocks/.test(note), note);
     eq('...with nothing unrecognized', await sParse.page.$eval('#fleetUnknown', el => el.hidden), true);
+    check('logged out, a visible note declares the flat-refine basis of the whole column',
+      /refined values use the flat 75% refine — log in with EVE/.test(note), note);
     let raw = await rawRows(sParse.page);
     const concS = raw.find(r => r.name === 'Concentrated Veldspar');
     eq('the two Concentrated Veldspar rows aggregate to 2 rocks', concS && concS.rocks, 2);
@@ -464,6 +492,11 @@ H.run('mine-fleet', async () => {
       tbl.rows.every(r => !r.flags.includes('ratio?')));
     note = await s.page.$eval('#fleetNote', el => el.textContent);
     check('the summary counts 10 ore types · 10 rocks', /10 ore types · 10 rocks/.test(note), note);
+    check('...with no flat-refine disclaimer while logged in', !/flat \d+% refine/.test(note), note);
+    // minerals have no mocked books here, so their placeholder fallback must be declared
+    check('placeholder-priced refine outputs get a visible note, not just tooltips',
+      /section-2 placeholders/.test(await s.page.$eval('#fleetPriceNote', el => el.textContent)),
+      await s.page.$eval('#fleetPriceNote', el => el.textContent));
 
     // field totals: Σ value × m³ over priced rows only
     const totalRow = tbl.rows.find(r => r.total);
@@ -502,8 +535,24 @@ H.run('mine-fleet', async () => {
     near('clear time = m³ ÷ rate (Veldspar 10,000 ÷ 60,000 h)', cp(T2('Veldspar').copy.ttc), 10000 / 60000, 0.006);
     eq('...printed in minutes under an hour', T2('Veldspar').text.ttc, '10 min');
     eq('...and in hours above one (Brimful 612,400 m³)', T2('Brimful Zeolites').text.ttc, '10.2 h');
-    near('the totals row clears the whole field in Σm³ ÷ rate',
-      cp(tbl.rows.find(r => r.total).copy.ttc), TOT_M3 / 60000, 0.006);
+
+    // the entered rate is an ORE yield — it cannot mine ice (unit-based) or Mercoxit
+    // (deep-core), so no hourly figure may be derived from it for those rows
+    const MINE_M3 = TOT_M3 - M3.ice - M3.mag;
+    eq('Mercoxit gets no ISK/h from the ore yield', T2('Magma Mercoxit').text.refh, '—');
+    check('...its tooltip says why', /deep-core/.test(T2('Magma Mercoxit').title.refh),
+      T2('Magma Mercoxit').title.refh);
+    eq('...nor a clear time', T2('Magma Mercoxit').text.ttc, '—');
+    eq('ice gets no ISK/h from the ore yield either', T2('Clear Icicle').text.comph, '—');
+    eq('...nor a clear time', T2('Clear Icicle').text.ttc, '—');
+    near('the totals clear time covers mineable rows only — ice and Mercoxit excluded',
+      cp(tbl.rows.find(r => r.total).copy.ttc), MINE_M3 / 60000, 0.006);
+    check('...and its tooltip declares the exclusion',
+      /ice\/Mercoxit rows excluded/.test(tbl.rows.find(r => r.total).title.ttc),
+      tbl.rows.find(r => r.total).title.ttc);
+    const mineRefIsk = expRefIsk - EXP.refIce * M3.ice - EXP.refMag * M3.mag;
+    near('the field-average refined ISK/h uses the same mineable subset on both sides of the ÷',
+      cp(tbl.rows.find(r => r.total).copy.refh), mineRefIsk / (MINE_M3 / 60000), 0.02);
 
     await s.page.click('#fleetYCycle');
     await s.page.fill('#fleetCycM3', '750');
@@ -532,6 +581,20 @@ H.run('mine-fleet', async () => {
     await s.page.waitForFunction(() => state.fleet.sortDir === 1);
     tbl = await tableData(s.page);
     eq('a second click flips the direction — unpriced Magma Mercoxit first', tbl.rows[0].name, 'Magma Mercoxit');
+
+    // hiding the hourly columns must never leave the sort on an invisible column
+    await s.page.click('#fleetTable th[data-sort="comph"]');
+    await s.page.waitForFunction(() => state.fleet.sortKey === 'comph' && state.fleet.sortDir === -1);
+    await s.page.click('#fleetHrOff');
+    await s.page.waitForFunction(() => !state.fleet.iskh && state.fleet.sortKey === 'comp');
+    tbl = await tableData(s.page);
+    check('a comph sort remaps to comp when the hourly columns hide — the arrow stays visible',
+      tbl.headers.some(h => /compressed ISK\/m³[▲▼]/.test(h)), JSON.stringify(tbl.headers));
+    eq('...with the identical ordering (Banidine still first)', tbl.rows[0].name, 'Banidine');
+    // back to the state the persistence checks below expect: hourly on, comp ascending
+    await s.page.click('#fleetHrOn');
+    await s.page.click('#fleetTable th[data-sort="comp"]');
+    await s.page.waitForFunction(() => state.fleet.iskh && state.fleet.sortDir === 1);
 
     /* ================= persistence across reload ================= */
     section('persistence across reload');
@@ -562,6 +625,70 @@ H.run('mine-fleet', async () => {
     near('...with the same exact refined value',
       cp(tbl.rows.find(r => r.name === 'Veldspar').copy.ref), EXP.refVeld, 0.006);
     await s.close();
+
+    /* ================= transient price-fetch failures ================= */
+    section('failed price fetches: flagged honestly, never persisted, retried on reload');
+    // Compressed Veldspar and Helium Isotopes fail while this set is populated; a 400
+    // makes esiFetch throw immediately (no 5xx retry loop), a clean transient error
+    const failIds = new Set([62516, 16274]);
+    const sErr = await openMine(browser, server, { login: false, books: BOOKS, label: 'fail' });
+    await sErr.context.route('**/markets/*/orders/**', route => {
+      const tid = Number(new URL(route.request().url()).searchParams.get('type_id'));
+      if (failIds.has(tid)) return route.fulfill({ status: 400,
+        headers: { 'Access-Control-Allow-Origin': '*' }, body: 'boom' });
+      route.fallback();
+    });
+    await sErr.page.click('#fleetBox summary');
+    await waitOreDB(sErr.page);
+    await sErr.page.fill('#fleetScan', 'Veldspar\t10,000\t1,000 m3\nClear Icicle\t10\t10,000 m3');
+    await waitSettled(sErr.page);
+
+    raw = await rawRows(sErr.page);
+    const veldE = raw.find(r => r.name === 'Veldspar') || {};
+    const iceE = raw.find(r => r.name === 'Clear Icicle') || {};
+    eq('a failed compressed fetch (raw ore bookless) is state failed — NOT unpriced', veldE.compState, 'failed');
+    eq('...comp null, not zero', veldE.comp, null);
+    eq('a failed refine-output fetch leaves the ice row partial', iceE.refState, 'partial');
+    near('...priced from the outputs that did fetch (Heavy Water + Liquid Ozone, 75% flat)',
+      iceE.ref, (69 * 15 + 35 * 90) * 0.75 / 1000, 1e-9);
+    tbl = await tableData(sErr.page);
+    const veldRow = tbl.rows.find(r => r.name === 'Veldspar');
+    const iceRow2 = tbl.rows.find(r => r.name === 'Clear Icicle');
+    check('the compressed cell is flagged "fetch failed" — no false "no Jita book" claim',
+      veldRow.flags.includes('fetch failed'), JSON.stringify(veldRow.flags));
+    const failTitle = await sErr.page.evaluate(() => {
+      const f = [...document.querySelectorAll('#fleetTable .flag')].find(x => x.textContent === 'fetch failed');
+      return f ? f.title : null;
+    });
+    check('...whose tooltip names the error and the retry path',
+      /network\/ESI error/.test(failTitle || '') && /refresh fleet prices/.test(failTitle || ''), failTitle);
+    check('the ice refined cell names exactly the failed output',
+      iceRow2.flags.some(f => f === 'fetch failed: Helium Isotopes'), JSON.stringify(iceRow2.flags));
+    check('...separately from the bookless one', iceRow2.flags.some(f => f === 'excl. Strontium Clathrates'),
+      JSON.stringify(iceRow2.flags));
+    note = await sErr.page.$eval('#fleetPriceNote', el => el.textContent);
+    check('the completion note carries the failure count instead of reading as success',
+      /2 price fetches failed/.test(note), note);
+
+    const stored = await sErr.page.evaluate(
+      () => JSON.parse(localStorage.getItem('eveHelper.mine.v1')).fleet.prices);
+    eq('failed entries are NOT persisted: Compressed Veldspar', stored['62516'], undefined);
+    eq('...nor Helium Isotopes', stored['16274'], undefined);
+    check('...while successful fetches are (Compressed Clear Icicle)', !!stored['28434'],
+      JSON.stringify(Object.keys(stored)));
+
+    failIds.clear();   // the transient error clears — a plain reload must recover on its own
+    await sErr.page.reload();
+    await waitSettled(sErr.page);
+    raw = await rawRows(sErr.page);
+    near('after a reload the failed types refetch automatically: Compressed Veldspar prices',
+      (raw.find(r => r.name === 'Veldspar') || {}).comp, EXP.compVeld, 1e-9);
+    near('...and the ice row refines in full (bookless Strontium stays excluded)',
+      (raw.find(r => r.name === 'Clear Icicle') || {}).ref,
+      (69 * 15 + 35 * 90 + 414 * 850) * 0.75 / 1000, 1e-9);
+    note = await sErr.page.$eval('#fleetPriceNote', el => el.textContent);
+    check('...and the failure note is gone', !/failed/.test(note), note);
+    await sErr.close();
 
     /* ================= a picked facility drives the yield ================= */
     section('a picked refining facility drives the refined value');
