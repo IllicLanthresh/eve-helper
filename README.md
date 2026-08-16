@@ -213,6 +213,22 @@ The shopping-list workflow (sections 1–3 and 5) is described above under *EVE 
 the materials a production line needs, get the densest rocks/moon ores per m³ at your real
 refine yields, and check which of your alliance moons cover the list.
 
+## Exact SDE data
+
+Every per-ore number on the page comes straight from CCP's Static Data Export via
+`data/ores.json` (the same CI build as `industry.json`): unit volumes, portion sizes,
+per-variant reprocessing outputs, and — per type — the **exact reprocessing skill** from
+the SDE's own `reprocessingSkillType` dogma attribute. The former hand-curated density
+table and the name-based skill grouping are gone, including the assumed mapping for the
+nine Equinox-era ores — and the SDE disagreed with two of those guesses: **Kylixium**
+refines with *Variegated* (not Simple) and **Hezorime** with *Complex* (not Variegated)
+Ore Processing; the other seven were right. The imported-skills panel's "applies to"
+column is likewise derived from the data (each skill lists the ores that actually carry
+it). The **only** curated data left is which ores spawn in which sov-array anomaly type —
+game-world spawn info that no CCP export provides (EVE University Wiki). Without
+`data/ores.json` the affected sections show an explicit "exact ore data unavailable"
+state with a retry; nothing ever falls back to approximations.
+
 ## Fleet mode (survey scan)
 
 Mining in an alliance fleet with no shopping list — just a belt or a moon chunk and the

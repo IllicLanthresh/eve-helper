@@ -321,7 +321,8 @@
   <p class="hint" style="margin:10px 0 0">Sites are the 7 signature Sov-Hub Ore Prospecting Array
     deposits (tier-2, 4 h 20 m respawn); small sites are tier-1 and large ones take 10 h, but their
     compositions scale proportionally, so the ranking holds. Totals are gross — multiply by your net
-    refine rate. Data: EVE University Wiki.</p>
+    refine rate. Compositions: EVE University Wiki (spawn info is in no CCP export); per-ore
+    volumes and yields: exact SDE data.</p>
 </section>
 
 <section id="secFleet">
@@ -406,39 +407,31 @@ const REGION = 10000002, SYSTEM = 30000142, STATION = 60003760;   // The Forge �
 const LS_KEY = 'eveHelper.mine.v1';
 const M3_PER_HOUR = 30000;   // moon extraction: 30k m3 of chunk per hour of drill prep
 
-/* ---------- data · asteroid ores: mineral yield per 100-unit batch + m3 per unit (EVE University Wiki) ---------- */
-const ORES = {
-  Veldspar:     { m3: 0.1,  min: { Tritanium: 400 } },
-  Scordite:     { m3: 0.15, min: { Tritanium: 150, Pyerite: 110 } },
-  Pyroxeres:    { m3: 0.3,  min: { Pyerite: 90, Mexallon: 30 } },
-  Plagioclase:  { m3: 0.35, min: { Tritanium: 175, Mexallon: 70 } },
-  Omber:        { m3: 0.6,  min: { Pyerite: 90, Isogen: 75 } },
-  Kernite:      { m3: 1.2,  min: { Mexallon: 60, Isogen: 120 } },
-  Jaspet:       { m3: 2,    min: { Mexallon: 150, Nocxium: 50 } },
-  Hemorphite:   { m3: 3,    min: { Isogen: 240, Nocxium: 90 } },
-  Hedbergite:   { m3: 3,    min: { Pyerite: 450, Nocxium: 120 } },
-  "Dark Ochre": { m3: 8,    min: { Mexallon: 1360, Isogen: 1200, Nocxium: 320 } },
-  Gneiss:       { m3: 5,    min: { Pyerite: 2000, Mexallon: 1500, Isogen: 800 } },
-  Crokite:      { m3: 16,   min: { Pyerite: 800, Mexallon: 2000, Nocxium: 800 } },
-  Bistot:       { m3: 16,   min: { Pyerite: 3200, Mexallon: 1200, Zydrine: 160 } },
-  Arkonor:      { m3: 16,   min: { Pyerite: 3200, Mexallon: 1200, Megacyte: 120 } },
-  Mercoxit:     { m3: 40,   min: { Morphite: 140 } },
-  Spodumain:    { m3: 16,   min: { Tritanium: 48000, Isogen: 1000, Nocxium: 160, Zydrine: 80, Megacyte: 40 } },
-  Bezdnacine:   { m3: 16,   min: { Tritanium: 40000, Isogen: 4800, Megacyte: 128 } },
-  Rakovene:     { m3: 16,   min: { Tritanium: 40000, Isogen: 3200, Zydrine: 200 } },
-  Talassonite:  { m3: 16,   min: { Tritanium: 40000, Nocxium: 960, Megacyte: 32 } },
-  Eifyrium:     { m3: 16,   min: { Zydrine: 266 } },
-  Ytirium:      { m3: 0.6,  min: { Isogen: 240 } },
-  Ducinium:     { m3: 16,   min: { Megacyte: 170 } },
-  Mordunium:    { m3: 0.1,  min: { Pyerite: 97 } },
-  Kylixium:     { m3: 1.2,  min: { Tritanium: 300, Pyerite: 200, Mexallon: 550 } },
-  Griemeer:     { m3: 0.8,  min: { Tritanium: 250, Isogen: 80 } },
-  Nocxite:      { m3: 4,    min: { Tritanium: 900, Pyerite: 150, Nocxium: 105 } },
-  Hezorime:     { m3: 5,    min: { Tritanium: 2000, Isogen: 120, Zydrine: 60 } },
-  Ueganite:     { m3: 5,    min: { Tritanium: 800, Megacyte: 40 } },
+/* ---------- data · every per-ore number comes from data/ores.json (exact SDE data) ---------- */
+// What stays curated here is IDENTITY, not math: WHICH asteroid families the shopping-list
+// sections rank (the mineable ones — mission/event one-offs excluded), the R-tier labels
+// for the SDE's five moon-ore groups, and the sov-array spawn table below. Densities,
+// volumes, refine outputs and reprocessing skills are all read from data/ores.json,
+// built from CCP's SDE by tools/build-industry-data.mjs.
+const AST_ORE_NAMES = [
+  'Veldspar', 'Scordite', 'Pyroxeres', 'Plagioclase', 'Omber', 'Kernite', 'Jaspet',
+  'Hemorphite', 'Hedbergite', 'Dark Ochre', 'Gneiss', 'Crokite', 'Bistot', 'Arkonor',
+  'Mercoxit', 'Spodumain', 'Bezdnacine', 'Rakovene', 'Talassonite', 'Eifyrium', 'Ytirium',
+  'Ducinium', 'Mordunium', 'Kylixium', 'Griemeer', 'Nocxite', 'Hezorime', 'Ueganite',
+];
+
+/* moon tier labels by SDE group name (labels only — the ores themselves come from the data) */
+const MOON_TIER_BY_GROUP = {
+  'Ubiquitous Moon Asteroids': 'R4', 'Common Moon Asteroids': 'R8',
+  'Uncommon Moon Asteroids': 'R16', 'Rare Moon Asteroids': 'R32',
+  'Exceptional Moon Asteroids': 'R64',
 };
 
-/* Ore Prospecting Array deposits (sov-null): array name + ore quantities (units) */
+/* Ore Prospecting Array deposits (sov-null): array name + ore quantities (units).
+   CURATED spawn metadata (EVE University Wiki) — which ores spawn in which anomaly type
+   is game-world spawn info that NO CCP export provides, so this table is the one piece
+   of Mine data that cannot come from the SDE. The per-ore volumes and yields used to
+   value these compositions still do. */
 const ANOMALIES = {
   "Veldspar Deposit":  { array: "Tritanium", comp: { Veldspar: 31200000, Scordite: 3333334, Plagioclase: 1085715 } },
   "Mordunium Deposit": { array: "Pyerite",   comp: { Mordunium: 30000000, Scordite: 8000000, Pyroxeres: 2000000, Omber: 1000000, Hedbergite: 200000 } },
@@ -447,30 +440,6 @@ const ANOMALIES = {
   "Nocxite Deposit":   { array: "Nocxium",   comp: { Nocxite: 675000, Hedbergite: 45000, "Dark Ochre": 11250, Crokite: 4688 } },
   "Hezorime Deposit":  { array: "Zydrine",   comp: { Hezorime: 870000, Eifyrium: 60000, Bistot: 18750 } },
   "Ueganite Deposit":  { array: "Megacyte",  comp: { Ueganite: 640000, Arkonor: 36250, Ducinium: 13749 } },
-};
-
-/* ---------- data · moon ores: material yield per 1,000 m3 of chunk (EVE University Wiki) ---------- */
-const MOON_ORES = {
-  Zeolites:   { tier: 'R4',  yield: { 'Atmospheric Gases': 65, Pyerite: 8000, Mexallon: 400 } },
-  Sylvite:    { tier: 'R4',  yield: { 'Evaporite Deposits': 65, Pyerite: 4000, Mexallon: 400 } },
-  Bitumens:   { tier: 'R4',  yield: { Hydrocarbons: 65, Pyerite: 6000, Mexallon: 400 } },
-  Coesite:    { tier: 'R4',  yield: { Silicates: 65, Pyerite: 2000, Mexallon: 400 } },
-  Cobaltite:  { tier: 'R8',  yield: { Cobalt: 40 } },
-  Euxenite:   { tier: 'R8',  yield: { Scandium: 40 } },
-  Titanite:   { tier: 'R8',  yield: { Titanium: 40 } },
-  Scheelite:  { tier: 'R8',  yield: { Tungsten: 40 } },
-  Otavite:    { tier: 'R16', yield: { Cadmium: 40, 'Atmospheric Gases': 10 } },
-  Sperrylite: { tier: 'R16', yield: { Platinum: 40, 'Evaporite Deposits': 10 } },
-  Chromite:   { tier: 'R16', yield: { Chromium: 40, Hydrocarbons: 10 } },
-  Vanadinite: { tier: 'R16', yield: { Vanadium: 40, Silicates: 10 } },
-  Carnotite:  { tier: 'R32', yield: { Technetium: 50, Cobalt: 10, 'Atmospheric Gases': 15 } },
-  Pollucite:  { tier: 'R32', yield: { Caesium: 50, Scandium: 10, Hydrocarbons: 15 } },
-  Zircon:     { tier: 'R32', yield: { Hafnium: 50, Titanium: 10, Silicates: 15 } },
-  Cinnabar:   { tier: 'R32', yield: { Mercury: 50, Tungsten: 10, 'Evaporite Deposits': 15 } },
-  Xenotime:   { tier: 'R64', yield: { Dysprosium: 22, Vanadium: 10, Cobalt: 20, 'Atmospheric Gases': 20 } },
-  Monazite:   { tier: 'R64', yield: { Neodymium: 22, Chromium: 10, Tungsten: 20, 'Evaporite Deposits': 20 } },
-  Loparite:   { tier: 'R64', yield: { Promethium: 22, Platinum: 10, Scandium: 20, Hydrocarbons: 20 } },
-  Ytterbite:  { tier: 'R64', yield: { Thulium: 22, Cadmium: 10, Titanium: 20, Silicates: 20 } },
 };
 
 const MINERALS = ["Tritanium", "Pyerite", "Mexallon", "Isogen", "Nocxium", "Zydrine", "Megacyte", "Morphite"];
@@ -512,14 +481,78 @@ for (const g of GROUPS) if (g.tier !== 'MIN') for (const m of g.mats) TIER_OF[m]
 const tierCls = t => 't-' + String(t).toLowerCase();
 const matCls = m => MINERALS.includes(m) ? 'm-' + MSLUG[m] : tierCls(TIER_OF[m]);
 
-/* unified sources: every asteroid rock and moon ore, densities normalized to units per m³ mined */
-const SOURCES = [];
-for (const [name, o] of Object.entries(ORES))
-  SOURCES.push({ name, kind: 'ast',
-    dens: Object.fromEntries(Object.entries(o.min).map(([m, u]) => [m, u / (100 * o.m3)])) });
-for (const [name, o] of Object.entries(MOON_ORES))
-  SOURCES.push({ name, kind: 'moon', tier: o.tier,
-    dens: Object.fromEntries(Object.entries(o.yield).map(([m, u]) => [m, u / 1000])) });
+/* ---------- data/ores.json · ONE shared load for every section ----------
+   { n name, v m³/unit, p portionSize, g groupName, b baseFamilyName,
+     m [[materialTid, qtyPerPortion]...], c compressedTid|null, cv compressedVol|null,
+     ice 0|1, s reprocSkillTid|null } plus names (lowercased name → tid) and
+   types (tid → name for every material and reprocessing-skill tid).
+   The planner (ranks/plan/arrays/moons/skills panel) and fleet mode all read from it —
+   loaded lazily on first need (targets exist, a moon paste, or the fleet section),
+   NEVER approximated: without the file those sections show an inline error + retry. */
+let oreDB = null, oreDBErr = null, oreDBPending = false;
+
+/* unified sources: the ranked asteroid rocks and every SDE moon ore, densities in exact
+   units per m³ mined = qtyPerPortion / (portionSize × unitVolume) — built once loaded */
+let SOURCES = null;      // array of { name, kind, tier?, vol, dens, perUnit, skill, skillTid }
+let SRC = null;          // name -> the same entries
+let MAT_TID = {};        // material tid -> section-2 price-grid name (from oreDB.types)
+let MOON_ORE_NAMES = [], MOON_ORE_LOWER = new Map(), MOON_ORE_RX = null;
+
+function buildSources(){
+  const nameOf = tid => oreDB.types[tid] || ('type ' + tid);
+  MAT_TID = {};
+  for (const [tid, nm] of Object.entries(oreDB.types))
+    if (MAT_LOWER.has(nm.toLowerCase())) MAT_TID[tid] = nm;
+  SOURCES = [];
+  SRC = new Map();
+  const push = (o, kind, tier) => {
+    const dens = {}, perUnit = {};
+    for (const [mtid, q] of o.m){
+      const nm = nameOf(mtid);
+      dens[nm] = q / (o.p * o.v);      // units of material per m³ mined — exact
+      perUnit[nm] = q / o.p;           // units of material per ore unit — exact
+      if (!MAT_LOWER.has(nm.toLowerCase()))
+        console.warn(`mine: ${o.n} refine output "${nm}" has no row in the price grid`);
+    }
+    const src = { name: o.n, kind, tier, vol: o.v, dens, perUnit,
+      skillTid: o.s, skill: o.s != null ? nameOf(o.s) : null };
+    SOURCES.push(src);
+    SRC.set(o.n, src);
+    return src;
+  };
+  for (const name of AST_ORE_NAMES){
+    const tid = oreDB.names[name.toLowerCase()];
+    if (tid == null){ console.warn('mine: ore missing from data/ores.json: ' + name); continue; }
+    push(oreDB.ores[tid], 'ast');
+  }
+  // every base moon ore straight from the data (b === n in the five moon groups)
+  const tierRank = { R4: 0, R8: 1, R16: 2, R32: 3, R64: 4 };
+  const moon = Object.values(oreDB.ores).filter(o => MOON_TIER_BY_GROUP[o.g] && o.b === o.n)
+    .sort((a, b) => tierRank[MOON_TIER_BY_GROUP[a.g]] - tierRank[MOON_TIER_BY_GROUP[b.g]]
+      || a.n.localeCompare(b.n));
+  for (const o of moon) push(o, 'moon', MOON_TIER_BY_GROUP[o.g]);
+  MOON_ORE_NAMES = moon.map(o => o.n);
+  MOON_ORE_LOWER = new Map(MOON_ORE_NAMES.map(o => [o.toLowerCase(), o]));
+  MOON_ORE_RX = new RegExp('\\b(' + MOON_ORE_NAMES.join('|') + ')\\b', 'i');
+  // the curated anomaly table only names ores — their numbers must exist in the data
+  for (const a of Object.values(ANOMALIES))
+    for (const ore of Object.keys(a.comp))
+      if (!SRC.has(ore)) console.warn('mine: anomaly ore missing from data/ores.json: ' + ore);
+}
+
+function loadOreDB(){
+  if (oreDB || oreDBErr || oreDBPending) return;
+  oreDBPending = true;
+  fetch('data/ores.json')
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (!d || !d.ores || !d.names || !d.types) throw new Error('unexpected shape');
+      oreDB = d;
+      buildSources();
+    })
+    .catch(e => { oreDBErr = e.message; })
+    .finally(() => { oreDBPending = false; renderAll(); });
+}
 
 /* ---------- state ---------- */
 const state = {
@@ -568,46 +601,33 @@ function facilityBasePct(){
   const typeBase = FACILITY_BASE[(st && st.refinery) || 'npc'];
   return typeBase * (1 + RIG_BONUS[state.fac.rig] * SEC_MULT[state.fac.sec]);
 }
-// asteroid ore → reprocessing skill group (post-2021 consolidated skills);
-// entries in ASSUMED_GROUP have no published mapping — flagged in tooltips
-const ORE_SKILL_GROUP = {
-  Veldspar: 'Simple Ore Processing', Scordite: 'Simple Ore Processing',
-  Pyroxeres: 'Simple Ore Processing', Plagioclase: 'Simple Ore Processing',
-  Mordunium: 'Simple Ore Processing', Kylixium: 'Simple Ore Processing',
-  Omber: 'Coherent Ore Processing', Kernite: 'Coherent Ore Processing',
-  Jaspet: 'Coherent Ore Processing', Hemorphite: 'Coherent Ore Processing',
-  Hedbergite: 'Coherent Ore Processing', Ytirium: 'Coherent Ore Processing',
-  Griemeer: 'Coherent Ore Processing', Nocxite: 'Coherent Ore Processing',
-  Gneiss: 'Variegated Ore Processing', 'Dark Ochre': 'Variegated Ore Processing',
-  Crokite: 'Variegated Ore Processing', Hezorime: 'Variegated Ore Processing',
-  Bistot: 'Complex Ore Processing', Arkonor: 'Complex Ore Processing',
-  Spodumain: 'Complex Ore Processing', Eifyrium: 'Complex Ore Processing',
-  Ducinium: 'Complex Ore Processing', Ueganite: 'Complex Ore Processing',
-  Bezdnacine: 'Abyssal Ore Processing', Rakovene: 'Abyssal Ore Processing',
-  Talassonite: 'Abyssal Ore Processing', Mercoxit: 'Mercoxit Ore Processing',
-};
-const ASSUMED_GROUP = new Set(['Mordunium', 'Kylixium', 'Ytirium', 'Griemeer', 'Nocxite',
-  'Hezorime', 'Eifyrium', 'Ducinium', 'Ueganite']);
-const MOON_TIER_SKILL = { R4: 'Ubiquitous Moon Ore Processing', R8: 'Common Moon Ore Processing',
-  R16: 'Uncommon Moon Ore Processing', R32: 'Rare Moon Ore Processing', R64: 'Exceptional Moon Ore Processing' };
-
 let charSkills = null;   // set once EVE login + skills are available
 
-function skillGroupOf(source){
-  return source.kind === 'moon' ? MOON_TIER_SKILL[source.tier] : ORE_SKILL_GROUP[source.name];
-}
-// returns { pct, detail } — the refine yield used for this source in the plan
-function refineFor(source){
+// returns { pct, detail } — the refine yield for a type whose EXACT reprocessing skill
+// (from the SDE via ores.json "s") is the given name/tid. The 11 ore-group skills
+// auth.js imports resolve by name; anything else (Ice Processing, the legacy event-ore
+// skills) resolves by tid from the full trained-skill list.
+function refineWithSkill(skillName, skillTid){
   if (!charSkills || !charSkills.groups || !Object.keys(charSkills.groups).length)
     return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
-  const grp = skillGroupOf(source);
-  const gl = charSkills.groups[grp] || 0;
   const base = facilityBasePct();
+  let gl = 0, grpTxt;
+  if (skillTid == null){
+    grpTxt = 'no reprocessing skill on this type in the SDE — counted at level 0';
+  } else if (charSkills.groups[skillName] != null){
+    gl = charSkills.groups[skillName];
+    grpTxt = `${skillName} ${gl}`;
+  } else {
+    const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills()) || null;
+    gl = all ? (all[skillTid] || 0) : 0;
+    grpTxt = `${skillName} ${gl}${all ? '' : ' (level unknown — refresh skills via the topbar)'}`;
+  }
   const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
     * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
-  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grp} ${gl}${ASSUMED_GROUP.has(source.name) ? ' (group assumed — unpublished mapping)' : ''}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
+  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grpTxt}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
   return { pct, detail };
 }
+const refineFor = source => refineWithSkill(source.skill, source.skillTid);
 
 /* ---------- facility controls (structure picked via the shared modal) ---------- */
 function facNoteText(){
@@ -665,19 +685,21 @@ const SKILL_PANEL = [
   'Ubiquitous Moon Ore Processing', 'Common Moon Ore Processing',
   'Uncommon Moon Ore Processing', 'Rare Moon Ore Processing', 'Exceptional Moon Ore Processing',
 ];
+// derived from the data: the ores whose SDE reprocessing skill ("s") is this skill
 function governsText(grp){
-  const moon = Object.entries(MOON_TIER_SKILL).find(([, g]) => g === grp);
-  if (moon) return moon[0] + ' moon ores';
-  const ores = Object.entries(ORE_SKILL_GROUP).filter(([, g]) => g === grp).map(([o]) => o);
-  const published = ores.filter(o => !ASSUMED_GROUP.has(o));
-  const assumed = ores.length - published.length;
-  return published.join(', ') + (assumed ? ` (+${assumed} assumed)` : '');
+  if (!SOURCES) return 'exact ore data unavailable (data/ores.json)';
+  const carriers = SOURCES.filter(s => s.skill === grp);
+  if (!carriers.length) return '—';
+  if (carriers.every(s => s.kind === 'moon'))
+    return carriers[0].tier + ' moon ores — ' + carriers.map(s => s.name).join(', ');
+  return carriers.map(s => s.name).join(', ');
 }
 function renderSkillsPanel(){
   const box = $('skillsBox');
   const on = !!(charSkills && charSkills.groups);
   box.hidden = !on;
   if (!on) return;
+  if (!SOURCES) loadOreDB();   // the governs column derives from the exact ore data
   const who = window.EveAuth && EveAuth.character();
   $('skillsSummary').textContent =
     `⚡ skills imported from ${who ? who.name : 'EVE'}: Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency}`;
@@ -795,9 +817,8 @@ function parseNeeds(text){
       next NN% token on the same or a following line ("2,072 ISK per unit" / "1.9b" values ignored)
    c) Alliance Auth "Extraction details": ore lines carrying a large plain number (>= 10,000,
       comma/dot grouped) = absolute m³ of that ore in the chunk; moon name from a Moon:<TAB>name line */
-const ORE_NAMES = Object.keys(MOON_ORES);
-const ORE_LOWER = new Map(ORE_NAMES.map(o => [o.toLowerCase(), o]));
-const ORE_RX = new RegExp('\\b(' + ORE_NAMES.join('|') + ')\\b', 'i');
+// moon-ore names for the parser (MOON_ORE_RX / MOON_ORE_LOWER) come from ores.json —
+// see the shared data block above; parsing waits for the data like everything else
 const PCT_RX = /(?<![\w.,])(\d{1,3}(?:[.,]\d+)?)\s*%/;
 const SKIP_RX = /^(location|labels|refinery|corporation|est\.?\s*value|last\s+updated|chunk\s+arrival|total)\b/i;
 const VALUEISH_RX = /^[\d.,\s]+\s*(%|b|m|k|isk)?$/i;   // "1.9b", "32%", bare numbers — never a moon name
@@ -859,11 +880,11 @@ function parseMoonPaste(text){
       continue;
     }
     if (/^(extraction|moon)$/i.test(t)){ newBlock(null); continue; }   // bare Auth headings
-    if (SKIP_RX.test(t) && !ORE_RX.test(t)) continue;   // Labels / Refinery / Est. Value / Total…
+    if (SKIP_RX.test(t) && !MOON_ORE_RX.test(t)) continue;   // Labels / Refinery / Est. Value / Total…
 
-    const oreM = ORE_RX.exec(t);
+    const oreM = MOON_ORE_RX.exec(t);
     if (oreM){
-      const ore = ORE_LOWER.get(oreM[1].toLowerCase());
+      const ore = MOON_ORE_LOWER.get(oreM[1].toLowerCase());
       if (!cur) newBlock(null);
       cur.pending = null;
       const parsed = parseOreLine(line, ore);
@@ -899,10 +920,10 @@ function moonStats(b){
   const out = {};
   let fill = 0, chunkM3 = 0;
   for (const o of b.ores){
-    const y = MOON_ORES[o.ore].yield;
+    const dens = SRC.get(o.ore).dens;   // exact units of material per m³ (ores.json)
     const vol = b.mode === 'chunk' ? o.m3 : o.frac * M3_PER_HOUR;
     if (b.mode === 'chunk') chunkM3 += o.m3; else fill += o.frac;
-    for (const [mat, u] of Object.entries(y)) out[mat] = (out[mat] || 0) + vol * u / 1000;
+    for (const [mat, d] of Object.entries(dens)) out[mat] = (out[mat] || 0) + vol * d;
   }
   const tg = [...state.targets.keys()];
   const covered = tg.filter(x => (out[x] || 0) > 0);
@@ -960,6 +981,24 @@ function kindBadge(s){
   return s.kind === 'ast'
     ? el('span', 'tierbadge t-ast', 'ASTEROID')
     : el('span', 'tierbadge ' + tierCls(s.tier), s.tier);
+}
+
+/* shared inline state for every section that needs data/ores.json — an explicit
+   error + retry, never a silent fall-back to approximate numbers */
+function appendOreDataMsg(box){
+  if (oreDBErr){
+    const d = el('div', 'hint warn empty',
+      'exact ore data unavailable (' + oreDBErr + ') — data/ores.json is generated at deploy '
+      + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally. ');
+    const retry = el('button', null, 'retry');
+    retry.type = 'button';
+    retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderAll(); });
+    d.appendChild(retry);
+    box.appendChild(d);
+  } else {
+    box.appendChild(el('div', 'hint empty', 'loading exact ore data (data/ores.json)…'));
+    loadOreDB();
+  }
 }
 
 /* ---------- section 1 · chips ---------- */
@@ -1101,6 +1140,11 @@ function renderRanks(){
     btn.hidden = true;
     return;
   }
+  if (!SOURCES){
+    appendOreDataMsg(box);
+    btn.hidden = true;
+    return;
+  }
   const rows = rankRows();
   const shown = state.showAllRanks ? rows : rows.slice(0, 10);
   const max = rows.length ? rows[0].score : 0;
@@ -1133,6 +1177,10 @@ function renderPlan(){
   if (!withQty.length){
     box.appendChild(el('div', 'hint',
       'Give at least one target a quantity — paste “Name  qty” lines or fill a chip’s qty box — to get a plan.'));
+    return;
+  }
+  if (!SOURCES){
+    appendOreDataMsg(box);
     return;
   }
   const tbl = el('table', 'plan');
@@ -1211,9 +1259,10 @@ function arrayRows(sel){
     let vol = 0;
     const perMin = {};
     for (const [ore, units] of Object.entries(a.comp)){
-      const o = ORES[ore];
-      vol += units * o.m3;
-      for (const m of sel) if (o.min[m]) perMin[m] = (perMin[m] || 0) + units * o.min[m] / 100;
+      const o = SRC.get(ore);   // exact unit volume + per-unit yields from ores.json
+      if (!o) continue;         // missing from the data — warned once in buildSources
+      vol += units * o.vol;
+      for (const m of sel) if (o.perUnit[m]) perMin[m] = (perMin[m] || 0) + units * o.perUnit[m];
     }
     const value = sel.reduce((s, m) => s + (perMin[m] || 0) * weightOf(m), 0);
     return { name, array: a.array, comp: a.comp, vol, perMin, value, perM3: vol > 0 ? value / vol : 0 };
@@ -1229,6 +1278,11 @@ function renderArrays(){
   if (!sel.length) return;
   const box = $('arraysList');
   box.textContent = '';
+  if (!SRC){
+    $('arraysHint').textContent = '';
+    appendOreDataMsg(box);
+    return;
+  }
   $('arraysHint').textContent = state.arrayView === 'site'
     ? 'total haul from clearing the deposit'
     : 'haul per m³ mined — for hold-limited trips';
@@ -1296,12 +1350,17 @@ function renderMoons(){
   const box = $('moonList');
   box.textContent = '';
   const raw = $('moons').value;
-  const moons = parseMoonPaste(raw);
   if (!raw.trim()){
     $('moonNote').textContent = '';
     box.appendChild(emptyHint('paste survey scans or Alliance-Auth moon/extraction copies — or load the demo'));
     return;
   }
+  if (!SRC){   // the parser and the yields both need the exact ore data
+    $('moonNote').textContent = '';
+    appendOreDataMsg(box);
+    return;
+  }
+  const moons = parseMoonPaste(raw);
   if (!moons.length){
     $('moonNote').textContent = '';
     box.appendChild(emptyHint('no known moon-ore rows found in the paste'));
@@ -1328,7 +1387,7 @@ function renderMoons(){
     btn.appendChild(el('span', 'rname', r.mo.name));
     const tags = el('span', 'mtags');
     for (const o of r.mo.ores){
-      const t = el('span', 'tiertag ' + tierCls(MOON_ORES[o.ore].tier),
+      const t = el('span', 'tiertag ' + tierCls(SRC.get(o.ore).tier),
         r.mo.mode === 'chunk'
           ? o.ore + ' ' + fmt.format(Math.round(o.m3)) + ' m³'
           : o.ore + ' ' + (o.frac * 100).toFixed(0) + '%');
@@ -1369,8 +1428,8 @@ function renderMoons(){
     dhead('Composition');
     const comp = el('div', 'dline');
     for (const o of r.mo.ores){
-      const c = el('span', 'comp ' + tierCls(MOON_ORES[o.ore].tier));
-      c.appendChild(el('span', 'tierbadge ' + tierCls(MOON_ORES[o.ore].tier), MOON_ORES[o.ore].tier));
+      const c = el('span', 'comp ' + tierCls(SRC.get(o.ore).tier));
+      c.appendChild(el('span', 'tierbadge ' + tierCls(SRC.get(o.ore).tier), SRC.get(o.ore).tier));
       c.appendChild(document.createTextNode(' ' + o.ore + ' '
         + (r.mo.mode === 'chunk' ? fmt.format(Math.round(o.m3)) + ' m³' : (o.frac * 100).toFixed(1) + '%')));
       comp.appendChild(c);
@@ -1397,55 +1456,16 @@ function renderMoons(){
 }
 
 /* ---------- section 4 · fleet mode: survey-scan value ranking ---------- */
-// data/ores.json (built from the SDE next to industry.json) carries every asteroid-category
-// type: { n name, v m³/unit, p portionSize, g groupName, b baseFamilyName,
-//         m [[materialTid, qtyPerPortion]...], c compressedTid|null, cv compressedVol|null, ice 0|1 }
-let oreDB = null, oreDBErr = null, oreDBPending = false;
-function loadOreDB(){
-  if (oreDB || oreDBErr || oreDBPending) return;
-  oreDBPending = true;
-  fetch('data/ores.json')
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(d => {
-      if (!d || !d.ores || !d.names) throw new Error('unexpected shape');
-      oreDB = d;
-    })
-    .catch(e => { oreDBErr = e.message; })
-    .finally(() => { oreDBPending = false; renderFleet(); });
-}
+// data/ores.json is loaded through the shared loader in the data block above; refine
+// outputs already priced in the section-2 grid resolve via MAT_TID (derived from the
+// data's types map). Anything not in that map (ice products: Heavy Water, isotopes, …)
+// is priced by tid through the on-demand fleet fetch instead.
 
-// refine outputs already priced in the section-2 grid, by SDE type id → material name.
-// Anything not in this map (ice products: Heavy Water, isotopes, …) is priced by tid
-// through the on-demand fleet fetch instead.
-const MAT_TID = {
-  34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen',
-  38: 'Nocxium', 39: 'Zydrine', 40: 'Megacyte', 11399: 'Morphite',
-  16633: 'Hydrocarbons', 16634: 'Atmospheric Gases', 16635: 'Evaporite Deposits', 16636: 'Silicates',
-  16637: 'Tungsten', 16638: 'Titanium', 16639: 'Scandium', 16640: 'Cobalt',
-  16641: 'Chromium', 16642: 'Vanadium', 16643: 'Cadmium', 16644: 'Platinum',
-  16646: 'Mercury', 16647: 'Caesium', 16648: 'Hafnium', 16649: 'Technetium',
-  16650: 'Dysprosium', 16651: 'Neodymium', 16652: 'Promethium', 16653: 'Thulium',
-};
-const ICE_SKILL_TID = 18025;   // Ice Processing — not one of the 11 ore-group skills auth.js tracks
-
-// per-variant refine yield: route the base family through the existing refineFor()
-// (same skills + facility row as the mining plan); ice uses Ice Processing from the
-// full trained-skill list; a family with no known skill group counts that skill at 0
+// per-variant refine yield: same skills + facility row as the mining plan, keyed by the
+// variant's own EXACT reprocessing skill from the SDE (ores.json "s") — no name-based
+// family mapping anywhere
 function fleetRefineFor(o){
-  if (!o.ice && MOON_ORES[o.b]) return refineFor({ kind: 'moon', tier: MOON_ORES[o.b].tier, name: o.b });
-  if (!o.ice && ORE_SKILL_GROUP[o.b]) return refineFor({ kind: 'ast', name: o.b });
-  if (!charSkills || !charSkills.groups || !Object.keys(charSkills.groups).length)
-    return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
-  const base = facilityBasePct();
-  const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills()) || null;
-  const gl = o.ice ? (all ? (all[ICE_SKILL_TID] || 0) : 0) : 0;
-  const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
-    * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
-  const grpTxt = o.ice
-    ? `Ice Processing ${gl}${all ? '' : ' (level unknown — refresh skills via the topbar)'}`
-    : `no known skill group for family "${o.b}" — counted at level 0`;
-  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grpTxt}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
-  return { pct, detail };
+  return refineWithSkill(o.s != null ? (oreDB.types[o.s] || 'type ' + o.s) : null, o.s);
 }
 
 /* survey-scan parser: "<Ore Type> <qty> <volume m³> <distance>" rows, tab or multi-space
@@ -1945,6 +1965,7 @@ function renderAll(){
   renderControls();
   renderNeeds();
   renderPrices();
+  renderSkillsPanel();
   renderRanks();
   renderPlan();
   renderArrays();

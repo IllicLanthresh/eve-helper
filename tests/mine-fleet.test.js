@@ -1,12 +1,16 @@
-/* Fleet mode on the Mine page: survey-scan parsing, refined vs compressed ISK/m³ with
-   real (mocked) skills and a picked facility, the 100:1 compression model, ISK/h math,
-   and persistence — all against a hand-written data/ores.json fixture.
+/* The Mine page against exact SDE ore data: survey-scan parsing, refined vs compressed
+   ISK/m³ with real (mocked) skills and a picked facility, the 100:1 compression model,
+   ISK/h math, the shopping-list planner (ranks + mining plan) on the same exact numbers,
+   the data-derived skills panel, and persistence — all against a hand-written
+   data/ores.json fixture.
 
    data/ores.json is gitignored and built from the SDE at deploy time, so it is normally
    absent from a checkout. The fetch is intercepted and served a fixture whose entries
    are copied VERBATIM from the real SDE 2025-07-07 build (Veldspar 400 Tritanium per
-   100-unit portion, Dense 440, Brimful Zeolites 9200/460/75, Clear Icicle's four ice
-   products, Banidine with no refine outputs and no compressed variant), so every
+   100-unit portion, Dense 440, Scordite 99 Pyerite — not the 110 the old curated table
+   claimed, Mordunium 88 — not 97, Brimful Zeolites 9200/460/75, Clear Icicle's four ice
+   products, Banidine with no refine outputs and no compressed variant, per-type "s"
+   reprocessing-skill tids incl. Kylixium=Variegated and Hezorime=Complex), so every
    expected number below is hand-computed from known-true data. */
 'use strict';
 const H = require('./helper');
@@ -18,22 +22,37 @@ const CHAR = { id: 93813310, name: 'Miquel Dreamer' };
 const ORES_FIXTURE = {
   v: '2025-07-07',
   ores: {
-    1230:  { n: 'Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 400]], c: 62516, cv: 0.001, ice: 0 },
-    17470: { n: 'Concentrated Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 420]], c: 62517, cv: 0.001, ice: 0 },
-    17471: { n: 'Dense Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 440]], c: 62518, cv: 0.001, ice: 0 },
-    17453: { n: 'Fiery Kernite', v: 1.2, p: 100, g: 'Kernite', b: 'Kernite', m: [[36, 66], [37, 132]], c: 62538, cv: 0.012, ice: 0 },
-    17449: { n: 'Pristine Jaspet', v: 2, p: 100, g: 'Jaspet', b: 'Jaspet', m: [[36, 165], [38, 55]], c: 62542, cv: 0.02, ice: 0 },
-    17428: { n: 'Triclinic Bistot', v: 16, p: 100, g: 'Bistot', b: 'Bistot', m: [[35, 3360], [36, 1260], [39, 168]], c: 62565, cv: 0.16, ice: 0 },
-    17869: { n: 'Magma Mercoxit', v: 40, p: 100, g: 'Mercoxit', b: 'Mercoxit', m: [[11399, 147]], c: 62587, cv: 0.4, ice: 0 },
-    46280: { n: 'Brimful Zeolites', v: 10, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 9200], [36, 460], [16634, 75]], c: 62464, cv: 0.1, ice: 0 },
-    16262: { n: 'Clear Icicle', v: 1000, p: 1, g: 'Ice', b: 'Clear Icicle', m: [[16272, 69], [16273, 35], [16274, 414], [16275, 1]], c: 28434, cv: 100, ice: 1 },
-    28617: { n: 'Banidine', v: 0.1, p: 1, g: 'Veldspar', b: 'Banidine', m: [], c: null, cv: null, ice: 0 },
+    1230:  { n: 'Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 400]], c: 62516, cv: 0.001, ice: 0, s: 60377 },
+    1228:  { n: 'Scordite', v: 0.15, p: 100, g: 'Scordite', b: 'Scordite', m: [[34, 150], [35, 99]], c: 62520, cv: 0.0015, ice: 0, s: 60377 },
+    17470: { n: 'Concentrated Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 420]], c: 62517, cv: 0.001, ice: 0, s: 60377 },
+    17471: { n: 'Dense Veldspar', v: 0.1, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 440]], c: 62518, cv: 0.001, ice: 0, s: 60377 },
+    17453: { n: 'Fiery Kernite', v: 1.2, p: 100, g: 'Kernite', b: 'Kernite', m: [[36, 66], [37, 132]], c: 62538, cv: 0.012, ice: 0, s: 60378 },
+    17449: { n: 'Pristine Jaspet', v: 2, p: 100, g: 'Jaspet', b: 'Jaspet', m: [[36, 165], [38, 55]], c: 62542, cv: 0.02, ice: 0, s: 60378 },
+    17428: { n: 'Triclinic Bistot', v: 16, p: 100, g: 'Bistot', b: 'Bistot', m: [[35, 3360], [36, 1260], [39, 168]], c: 62565, cv: 0.16, ice: 0, s: 60380 },
+    17869: { n: 'Magma Mercoxit', v: 40, p: 100, g: 'Mercoxit', b: 'Mercoxit', m: [[11399, 147]], c: 62587, cv: 0.4, ice: 0, s: 12189 },
+    74521: { n: 'Mordunium', v: 0.1, p: 100, g: 'Mordunium', b: 'Mordunium', m: [[35, 88]], c: 75275, cv: 0.001, ice: 0, s: 60377 },
+    81900: { n: 'Kylixium', v: 1.2, p: 100, g: 'Kylixium', b: 'Kylixium', m: [[34, 300], [35, 200], [36, 550]], c: 82300, cv: 0.012, ice: 0, s: 60379 },
+    82163: { n: 'Hezorime', v: 5, p: 100, g: 'Hezorime', b: 'Hezorime', m: [[34, 2000], [37, 120], [39, 60]], c: 82312, cv: 0.05, ice: 0, s: 60380 },
+    45490: { n: 'Zeolites', v: 10, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 8000], [36, 400], [16634, 65]], c: 62463, cv: 0.1, ice: 0, s: 46152 },
+    46280: { n: 'Brimful Zeolites', v: 10, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 9200], [36, 460], [16634, 75]], c: 62464, cv: 0.1, ice: 0, s: 46152 },
+    16262: { n: 'Clear Icicle', v: 1000, p: 1, g: 'Ice', b: 'Clear Icicle', m: [[16272, 69], [16273, 35], [16274, 414], [16275, 1]], c: 28434, cv: 100, ice: 1, s: 18025 },
+    28617: { n: 'Banidine', v: 0.1, p: 1, g: 'Veldspar', b: 'Banidine', m: [], c: null, cv: null, ice: 0, s: 60377 },
   },
   names: {
-    'veldspar': 1230, 'concentrated veldspar': 17470, 'dense veldspar': 17471,
+    'veldspar': 1230, 'scordite': 1228, 'concentrated veldspar': 17470, 'dense veldspar': 17471,
     'fiery kernite': 17453, 'pristine jaspet': 17449, 'triclinic bistot': 17428,
-    'magma mercoxit': 17869, 'brimful zeolites': 46280, 'clear icicle': 16262,
+    'magma mercoxit': 17869, 'mordunium': 74521, 'kylixium': 81900, 'hezorime': 82163,
+    'zeolites': 45490, 'brimful zeolites': 46280, 'clear icicle': 16262,
     'banidine': 28617,
+  },
+  types: {
+    34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen', 38: 'Nocxium',
+    39: 'Zydrine', 11399: 'Morphite', 16634: 'Atmospheric Gases',
+    16272: 'Heavy Water', 16273: 'Liquid Ozone', 16274: 'Helium Isotopes', 16275: 'Strontium Clathrates',
+    12189: 'Mercoxit Ore Processing', 18025: 'Ice Processing',
+    46152: 'Ubiquitous Moon Ore Processing', 60377: 'Simple Ore Processing',
+    60378: 'Coherent Ore Processing', 60379: 'Variegated Ore Processing',
+    60380: 'Complex Ore Processing',
   },
 };
 
@@ -400,10 +419,71 @@ H.run('mine-fleet', async () => {
       'Concentrated Veldspar\t64,213\t6,421 m3\t7,431 m');
     await sParse.close();
 
-    /* ================= refined vs compressed with real skills ================= */
-    section('refined ISK/m³ from seeded skills (NPC station)');
+    /* ================= the shopping-list planner on exact SDE numbers ================= */
+    section('mining plan from exact ores.json densities (no curated numbers)');
     const s = await openMine(browser, server, { books: BOOKS, label: 'skills' });
     await waitSkillsNote(s.page);
+    await s.page.fill('#need', 'Pyerite\t1,000,000');
+    await s.page.waitForFunction(() => !!document.querySelector('#planBox table'));
+    // Pyerite carriers among the ranked base ores in the fixture, densities straight
+    // from ores.json (qtyPerPortion ÷ (portionSize × unitVolume)):
+    //   Mordunium  88 / (100 × 0.1)  = 8.8 u/m³  (the old curated table said 9.7)
+    //   Zeolites 8000 / (100 × 10)   = 8.0 u/m³
+    //   Scordite   99 / (100 × 0.15) = 6.6 u/m³  (the old curated table said 7.33)
+    // effective m³ = qty ÷ (dens × yield); Simple 5 → 68.31 %, Ubiquitous Moon 4 → 67.068 %
+    const M3_MORD = 1e6 / (8.8 * P_SIMPLE / 100);
+    const M3_ZEO = 1e6 / (8.0 * P_UBIQ / 100);
+    const M3_SCOR = 1e6 / (6.6 * P_SIMPLE / 100);
+    const plan = await s.page.evaluate(() => {
+      const tr = document.querySelector('#planBox tbody tr');
+      return {
+        best: tr.children[2].textContent.trim(),
+        m3: tr.children[3].dataset.copy, m3Title: tr.children[3].title,
+        hours: tr.children[4].textContent.trim(),
+        alts: [...tr.children[5].querySelectorAll('.alt')].map(a => ({ t: a.textContent, copy: a.dataset.copy })),
+      };
+    });
+    check('the best Pyerite source is Mordunium', /Mordunium/.test(plan.best), plan.best);
+    near('its m³ to mine is hand-computed from exact SDE numbers: 1e6 ÷ (8.8 × 68.31%)',
+      parseFloat(plan.m3), Math.round(M3_MORD), 0.5);
+    check('...the breakdown names its exact SDE reprocessing skill',
+      /Simple Ore Processing 5/.test(plan.m3Title), plan.m3Title);
+    eq('...an asteroid source gets no drill hours', plan.hours, '—');
+    check('the runner-ups are Zeolites then Scordite',
+      plan.alts.length === 2 && /Zeolites/.test(plan.alts[0].t) && /Scordite/.test(plan.alts[1].t),
+      JSON.stringify(plan.alts));
+    near('...Zeolites at 1e6 ÷ (8.0 × 67.068%)', parseFloat(plan.alts[0].copy), Math.round(M3_ZEO), 0.5);
+    near('...Scordite at the SDE 6.6 u/m³, not the curated 7.33',
+      parseFloat(plan.alts[1].copy), Math.round(M3_SCOR), 0.5);
+    const rankTxt = await s.page.$eval('#rankList', el => el.textContent);
+    check('the source ranking shows the exact 8.8 Pye/m³ — the curated 9.7 is gone',
+      /8\.8\/m³/.test(rankTxt) && !/9\.7\/m³/.test(rankTxt), rankTxt);
+    check('...and Scordite at 6.6, not 7.33', /6\.6\/m³/.test(rankTxt) && !/7\.33/.test(rankTxt), rankTxt);
+
+    section('imported-skills panel: the governs column derives from the data');
+    const govern = await s.page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#skillsTblBody tr')].slice(1);
+      return Object.fromEntries(rows.map(tr => [tr.children[0].textContent, tr.children[2].textContent]));
+    });
+    check('Variegated governs Kylixium — the SDE mapping (the old page guessed Simple)',
+      /Kylixium/.test(govern['Variegated Ore Processing']), govern['Variegated Ore Processing']);
+    check('Complex governs Hezorime — the SDE mapping (the old page guessed Variegated)',
+      /Hezorime/.test(govern['Complex Ore Processing']), govern['Complex Ore Processing']);
+    check('...and Hezorime is NOT under Variegated any more',
+      !/Hezorime/.test(govern['Variegated Ore Processing']), govern['Variegated Ore Processing']);
+    check('Simple governs Veldspar, Scordite and Mordunium',
+      ['Veldspar', 'Scordite', 'Mordunium'].every(o => new RegExp('\\b' + o + '\\b').test(govern['Simple Ore Processing'])),
+      govern['Simple Ore Processing']);
+    check('the moon skill lists its tier and its actual ores',
+      /R4 moon ores — .*Zeolites/.test(govern['Ubiquitous Moon Ore Processing']),
+      govern['Ubiquitous Moon Ore Processing']);
+    check('no visible text or tooltip reads "assumed" any more',
+      await s.page.evaluate(() =>
+        !/assumed/i.test(document.body.innerText)
+        && ![...document.querySelectorAll('[title]')].some(e => /assumed/i.test(e.title))));
+
+    /* ================= refined vs compressed with real skills ================= */
+    section('refined ISK/m³ from seeded skills (NPC station)');
     await s.page.click('#fleetBox summary');
     await waitOreDB(s.page);
     await s.page.fill('#fleetScan', SCAN10);
@@ -758,6 +838,41 @@ H.run('mine-fleet', async () => {
     near('...at the flat logged-out refine: 400×5 × 0.75 ÷ 10 = 150',
       cp(tbl.rows[0].copy.ref), 2000 * (75 / 100) / (100 * 0.1), 0.006);
     await sLazy.close();
+
+    /* ================= the planner needs the data too ================= */
+    section('planner data-unavailable state: inline error + retry, never approximations');
+    const sPlan = await openMine(browser, server, { login: false, label: 'plan-data' });
+    sPlan.state.oresFail = true;
+    await sPlan.page.fill('#need', 'Pyerite\t1000');
+    await sPlan.page.waitForFunction(
+      () => /exact ore data unavailable/.test(document.getElementById('rankList').textContent));
+    check('the source ranking shows the unavailable state naming the builder',
+      /tools\/build-industry-data\.mjs/.test(await sPlan.page.$eval('#rankList', el => el.textContent)),
+      await sPlan.page.$eval('#rankList', el => el.textContent));
+    check('...and so does the mining plan',
+      /exact ore data unavailable/.test(await sPlan.page.$eval('#planBox', el => el.textContent)),
+      await sPlan.page.$eval('#planBox', el => el.textContent));
+    await sPlan.page.fill('#moons', 'GMLH-K VIII - 4\nZeolites\t32%');
+    await sPlan.page.waitForFunction(
+      () => /exact ore data unavailable/.test(document.getElementById('moonList').textContent));
+    check('...and the moons section once it has a paste', true);
+    check('no plan table was rendered from approximate numbers',
+      !(await sPlan.page.$('#planBox table')));
+    sPlan.state.oresFail = false;   // the file gets built — retry must recover in place
+    await sPlan.page.click('#planBox button');
+    await sPlan.page.waitForFunction(() => !!document.querySelector('#planBox table'));
+    const planFlat = await sPlan.page.evaluate(() => {
+      const tr = document.querySelector('#planBox tbody tr');
+      return { best: tr.children[2].textContent.trim(), m3: tr.children[3].dataset.copy };
+    });
+    check('retry recovers the plan in place: best Pyerite source Mordunium',
+      /Mordunium/.test(planFlat.best), planFlat.best);
+    near('...at the flat 75% refine: 1000 ÷ (8.8 × 0.75)',
+      parseFloat(planFlat.m3), Math.round(1000 / (8.8 * 0.75)), 0.5);
+    check('...and the moons section recovered too',
+      !/exact ore data unavailable/.test(await sPlan.page.$eval('#moonList', el => el.textContent)),
+      await sPlan.page.$eval('#moonList', el => el.textContent));
+    await sPlan.close();
   } finally {
     await browser.close();
     await server.close();
