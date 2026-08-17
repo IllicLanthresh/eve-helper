@@ -290,6 +290,10 @@
       <option value="2">RX-802 +2%</option>
       <option value="4">RX-804 +4%</option>
     </select>
+    <label for="reproChar" style="margin:0">reprocessed by</label>
+    <select id="reproChar" style="width:150px" disabled
+      title="whose skills compute the per-ore refine yields on this page — a page-local role, the topbar's site-wide active character is not touched"></select>
+    <span id="reproWarn" class="flag warn" hidden></span>
     <span id="facNote" class="hint"></span>
     <label for="refine" style="margin:0">flat refine %</label>
     <input id="refine" type="number" min="30" max="95" step="1" value="75" style="width:70px"
@@ -363,6 +367,11 @@
       <button id="fleetHrOn" type="button" aria-pressed="false"
         title="add ISK/h and time-to-clear from your ship's mining yield">on</button>
     </span>
+    <label for="sellChar" style="margin:0">sold by</label>
+    <select id="sellChar" style="width:150px" disabled
+      title="whose sales tax nets the refined and compressed values — tax only, 7.5% × (1 − 0.11 × Accounting); no broker fee: fleet loot valuation assumes instant-style disposal"></select>
+    <span id="sellWarn" class="flag warn" hidden></span>
+    <span id="fleetSellNote" class="hint"></span>
     <span id="fleetPriceNote" class="hint"></span>
     <span class="sep"></span>
     <button id="btnFleetPrices" type="button" hidden
@@ -388,7 +397,10 @@
     (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
     compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
     per m³ of raw rock — ore compresses 100:1 by units, ice 1:1. Ice is unit-harvested and only ranks
-    against other ice. Click any number to copy its raw value.</p>
+    against other ice. With a <em>sold by</em> character chosen, both value columns and everything
+    derived from them are net of that character's sales tax (tax only — fleet loot valuation assumes
+    instant-style disposal, so no broker fee); the note by the selector says which basis is showing.
+    Click any number to copy its raw value.</p>
 </section>
 
 <section id="secMoons" class="prod-only">
@@ -583,6 +595,10 @@ const state = {
   // refining facility (skill mode): struct is 'npc' or 's:<structureId>' with structInfo
   // holding the picked structure's cached identity (type/security/system)
   fac: { struct: 'npc', rig: 'none', sec: 'hs', imp: 0, structInfo: null },
+  // page-local role characters (persisted ids): REPRO's skills drive every refine
+  // yield on the page; SELLER's sales tax nets fleet mode's displayed values
+  // (null = follow the active character / gross). Neither touches EveAuth.setActive.
+  roles: { repro: null, seller: null },
   showAllRanks: false,
   arrayView: 'site',         // 'site' | 'm3'
   openDeposits: new Set(),
@@ -635,7 +651,7 @@ function refineWithSkill(skillName, skillTid){
     gl = charSkills.groups[skillName];
     grpTxt = `${skillName} ${gl}`;
   } else {
-    const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills()) || null;
+    const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills(reproCharId())) || null;
     gl = all ? (all[skillTid] || 0) : 0;
     grpTxt = `${skillName} ${gl}${all ? '' : ' (level unknown — refresh skills via the topbar)'}`;
   }
@@ -645,6 +661,98 @@ function refineWithSkill(skillName, skillTid){
   return { pct, detail };
 }
 const refineFor = source => refineWithSkill(source.skill, source.skillTid);
+
+/* ---------- role characters ----------
+   Two page-local, persisted roles (industry.html's buyer/seller/manufacturer pattern):
+   REPROCESSED BY — whose skills feed every per-ore refine yield on the page (both
+   modes; defaults to the active character); SOLD BY — fleet mode only, whose sales
+   tax nets the displayed refined/compressed values (defaults to gross — no seller).
+   Neither role ever calls EveAuth.setActive: the topbar's site-wide active character
+   is untouched. A chosen character that logged out falls back to the active (else
+   first) logged-in character with an inline warning; with nobody logged in the page
+   degrades exactly as before (flat refine, gross values). */
+function charList(){ return window.EveAuth ? EveAuth.characters() : []; }
+function charNameOf(id){
+  const c = charList().find(x => x.id === id);
+  return c ? c.name : '—';
+}
+function reproCharId(){
+  const chars = charList();
+  if (!chars.length) return null;
+  const want = state.roles.repro;
+  if (want != null && chars.some(c => c.id === want)) return want;
+  const act = EveAuth.active();
+  return chars.some(c => c.id === act) ? act : chars[0].id;
+}
+function sellerCharId(){
+  if (state.roles.seller == null) return null;      // gross — the default
+  const chars = charList();
+  if (!chars.length) return null;                   // fully logged out → gross
+  if (chars.some(c => c.id === state.roles.seller)) return state.roles.seller;
+  const act = EveAuth.active();
+  return chars.some(c => c.id === act) ? act : chars[0].id;
+}
+// sales tax — the verified formula the Industry tool uses: 7.5% × (1 − 0.11 × Accounting).
+// Tax ONLY, no broker fee: fleet loot valuation assumes instant-style disposal.
+const SALES_TAX_BASE_PCT = 7.5;
+const ACCOUNTING_REL_PER_LEVEL = 0.11;
+const sellerSkillsTried = new Set();   // one fetch attempt per character per session
+function fleetSellerInfo(){            // null = gross; taxPct null = skills still fetching
+  const id = sellerCharId();
+  if (id == null) return null;
+  const sk = EveAuth.skills(id);
+  if (!sk){
+    if (!sellerSkillsTried.has(id)){
+      sellerSkillsTried.add(id);
+      EveAuth.fetchSkills(id)
+        .catch(e => console.error('seller skills fetch failed:', e))
+        .finally(() => renderFleet());
+    }
+    return { id, name: charNameOf(id), taxPct: null };
+  }
+  // rounded to the formula's own 3-decimal grid (0.11 is not FP-exact: Accounting 5
+  // would otherwise compute 3.374999…% and display as 3.37% instead of the true 3.38%)
+  return { id, name: charNameOf(id),
+    taxPct: Math.round(SALES_TAX_BASE_PCT * (1 - ACCOUNTING_REL_PER_LEVEL * (sk.accounting || 0)) * 1000) / 1000 };
+}
+function fleetNetFactor(){
+  const si = fleetSellerInfo();
+  return si && si.taxPct != null ? 1 - si.taxPct / 100 : 1;
+}
+function renderRoles(){
+  const chars = charList();
+  const rsel = $('reproChar'), ssel = $('sellChar');
+  const opt = (sel, value, label) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = label;
+    sel.appendChild(o);
+  };
+  rsel.textContent = '';
+  if (!chars.length){
+    opt(rsel, '', 'log in…');
+    rsel.disabled = true;
+  } else {
+    rsel.disabled = false;
+    for (const c of chars) opt(rsel, String(c.id), c.name);
+    rsel.value = String(reproCharId());
+  }
+  ssel.textContent = '';
+  opt(ssel, '', 'gross (no seller)');
+  for (const c of chars) opt(ssel, String(c.id), c.name);
+  ssel.disabled = !chars.length;
+  const sEff = sellerCharId();
+  ssel.value = sEff != null ? String(sEff) : '';
+  // inline warnings when a CHOSEN character logged out while others remain — fully
+  // logged out, the selects' own state already says what the page falls back to
+  const rLost = chars.length && state.roles.repro != null && reproCharId() !== state.roles.repro;
+  $('reproWarn').hidden = !rLost;
+  $('reproWarn').textContent = rLost
+    ? `reprocessor character logged out — using ${charNameOf(reproCharId())}` : '';
+  const sLost = chars.length && state.roles.seller != null && sEff !== state.roles.seller;
+  $('sellWarn').hidden = !sLost;
+  $('sellWarn').textContent = sLost
+    ? `seller character logged out — using ${charNameOf(sEff)}` : '';
+}
 
 /* ---------- facility controls (structure picked via the shared modal) ---------- */
 function facNoteText(){
@@ -717,9 +825,9 @@ function renderSkillsPanel(){
   box.hidden = !on;
   if (!on) return;
   if (!SOURCES) loadOreDB();   // the governs column derives from the exact ore data
-  const who = window.EveAuth && EveAuth.character();
+  const rid = reproCharId();   // the panel shows the REPROCESSOR role's skills
   $('skillsSummary').textContent =
-    `⚡ skills imported from ${who ? who.name : 'EVE'}: Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency}`;
+    `⚡ skills imported from ${rid != null ? charNameOf(rid) : 'EVE'} (reprocessor): Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency}`;
   const tb = $('skillsTblBody');
   tb.textContent = '';
   const facLabel = state.fac.struct === 'npc' ? 'NPC station' : ((state.fac.structInfo || {}).name || 'structure');
@@ -1485,10 +1593,14 @@ function fleetRefineFor(o){
   return refineWithSkill(o.s != null ? (oreDB.types[o.s] || 'type ' + o.s) : null, o.s);
 }
 
-/* survey-scan parser: "<Ore Type> <qty> <volume m³> <distance>" rows, tab or multi-space
-   separated (a single-space fallback peels trailing numbers off the name); EU/US numbers
-   via parseNum; header lines and blanks skipped; distance ignored; unknown names surface
-   in the visible unrecognized note — never silently dropped. Rows aggregate per ore type. */
+/* survey-scan parser: "<Ore Type> <qty> <volume m³> [<est. value ISK>] <distance>" rows,
+   tab or multi-space separated (a single-space fallback peels trailing numbers off the
+   name); EU/US numbers via parseNum; header lines and blanks skipped; the Est. Value
+   column (ISK-suffixed, or a bare "-") and the distance are ignored; unknown names
+   surface in the visible unrecognized note — never silently dropped. The scanner window
+   groups rocks by ore type and Ctrl+A copies the bare ore-name group-header rows too:
+   a recognized name with no data cells is such a header — counted for the parse-status
+   note and skipped as data (the rows beneath carry everything). Rows aggregate per type. */
 const SCAN_HEADER_RX = /^(ore(\s*type)?|asteroid|type|name|moon materials?)$/i;
 // a number in a tab-less fallback row: space-grouped runs (e.g. FR "64 213") first, so a
 // grouped quantity is never truncated at its first group, then EU/US/apostrophe separators
@@ -1515,7 +1627,7 @@ function splitScanLine(line){
 }
 function parseSurvey(text){
   const rows = new Map(), unknown = new Map();
-  let numberless = 0, volFixed = 0;
+  let numberless = 0, volFixed = 0, headers = 0;
   // NBSP, narrow NBSP and figure space (locale group separators) all become plain spaces
   for (const raw of String(text || '').replace(/[\u00a0\u202f\u2007]/g, ' ').replace(/\r\n?/g, '\n').split('\n')){
     const line = raw.trim();
@@ -1528,11 +1640,19 @@ function parseSurvey(text){
     const tid = oreDB.names[name.toLowerCase()];
     const o = tid != null ? oreDB.ores[tid] : null;
     if (!o){ unknown.set(name, (unknown.get(name) || 0) + 1); continue; }
+    // a recognized ore name with nothing but empty/"-" cells after it is a survey-window
+    // GROUP HEADER (the scanner groups rocks by ore type and a full copy includes those
+    // rows) — structure, not data: count it for the parse-status note and move on
+    if (!cells.slice(1).some(c => c && c !== '-')){ headers++; continue; }
     let qtyCell = cells.length > 1 ? cells[1] : null;
     let volCell = cells.length > 2 ? cells[2] : null;
     // an m³-suffixed cell is never a quantity — hand-typed rows can put the volume in the
     // quantity slot, and reading "6,421 m3" as 6,421 units would be 10× off for Veldspar
     if (qtyCell && /(?:m3|m³)\s*$/i.test(qtyCell)){ volCell = qtyCell; qtyCell = null; }
+    // an ISK-suffixed cell is the scanner's Est. Value column — a price, never a
+    // quantity or a volume (the page prices the field itself)
+    if (qtyCell && /isk\s*$/i.test(qtyCell)) qtyCell = null;
+    if (volCell && /isk\s*$/i.test(volCell)) volCell = null;
     let qty = qtyCell != null ? parseNum(qtyCell) : NaN;
     let vol = volCell != null ? parseNum(volCell) : NaN;   // "44 km" distances parse as NaN and fall through
     if (!(qty > 0) && !(vol > 0)){ numberless++; continue; }
@@ -1545,7 +1665,7 @@ function parseSurvey(text){
     r.rocks++; r.units += qty; r.m3 += vol;
     rows.set(tid, r);
   }
-  return { rows: [...rows.values()], unknown, numberless, volFixed };
+  return { rows: [...rows.values()], unknown, numberless, volFixed, headers };
 }
 
 /* on-demand Jita prices by type id (compressed ores, raw-ore fallbacks, extra refine
@@ -1624,6 +1744,9 @@ function fleetCompute(rows){
   const need = new Set();
   const out = [];
   let usedPlaceholder = false;
+  // the SOLD BY role: the seller's sales tax nets every displayed value — a uniform
+  // scale, so the ranking order and % of best are untouched; the ISK becomes honest
+  const net = fleetNetFactor();
   // a section-2 material only prices the refined column once it has a real value there
   // (user override or a fetched book) — before that it is fetched live by tid like every
   // other output, so the refined and compressed columns never compare hardcoded
@@ -1672,6 +1795,8 @@ function fleetCompute(rows){
     }
     const cvExpect = o.ice ? o.v / 10 : o.v / 100;   // the SDE's own pattern for the assumed ratios
     const cvOdd = o.cv != null && cvExpect > 0 && Math.abs(o.cv - cvExpect) > cvExpect * 0.01;
+    if (ref != null) ref *= net;
+    if (comp != null) comp *= net;
     out.push({ ...row, r, ref, refState, unpriced, failed, comp, compTag, compState, cvOdd,
       ice: !!o.ice, merc: /mercoxit/i.test(o.b || '') || /mercoxit/i.test(o.g || '') });
   }
@@ -1715,6 +1840,16 @@ function renderFleet(){
   if (state.mode !== 'fleet') return;   // lazy: nothing computed outside fleet mode
   loadOreDB();                          // fleet data loads on first use of fleet mode
   renderFleetYield();
+  // the SOLD BY state must be visible at the table, whatever it shows: gross, or net
+  // of exactly whose tax at exactly what rate
+  const seller = fleetSellerInfo();
+  $('fleetSellNote').textContent = seller == null
+    ? 'gross — no seller selected'
+    : seller.taxPct == null
+      ? `fetching ${seller.name}’s skills for their sales tax…`
+      : `net of ${seller.name}’s ${seller.taxPct.toFixed(2)}% sales tax`;
+  const netSuffix = seller && seller.taxPct != null
+    ? ` · net of ${seller.name}’s ${seller.taxPct.toFixed(2)}% sales tax` : '';
   const box = $('fleetTable');
   box.textContent = '';
   $('fleetUnknown').hidden = true;
@@ -1754,9 +1889,11 @@ function renderFleet(){
   }
   const parsed = parseSurvey(text);
   if (parsed.unknown.size){
+    // no SDE claim here — an unrecognized name only means THIS page's data did not
+    // resolve it (a stale ores.json build once made that assertion factually wrong)
     const list = [...parsed.unknown].map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(', ');
     $('fleetUnknown').hidden = false;
-    $('fleetUnknown').textContent = 'unrecognized — not an asteroid/moon/ice type in the SDE (rows kept out of the ranking): ' + list;
+    $('fleetUnknown').textContent = 'unrecognized ore names (rows kept out of the ranking): ' + list;
   }
   const { rows, need, usedPlaceholder } = fleetCompute(parsed.rows);
   if (need.size) queueFleetPrices([...need]);
@@ -1764,6 +1901,7 @@ function renderFleet(){
   const totM3 = rows.reduce((s, r) => s + r.m3, 0);
   const bits = [];
   if (rows.length) bits.push(`${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
+  if (parsed.headers) bits.push(`${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} ignored`);
   if (parsed.numberless) bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped`);
   if (parsed.volFixed) bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)`);
   // the flat-fallback basis of the whole refined column deserves more than a hover tooltip
@@ -1775,7 +1913,9 @@ function renderFleet(){
     // "not recognized" — say what actually kept the table empty
     box.appendChild(el('div', 'hint', parsed.numberless
       ? `no usable rows — ${parsed.numberless} recognized ore row${parsed.numberless > 1 ? 's' : ''} without a readable quantity or volume`
-      : 'no recognized ore rows in the paste'));
+      : parsed.headers
+        ? `no data rows — only ${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} (bare ore-type names)`
+        : 'no recognized ore rows in the paste'));
     return;
   }
   if (usedPlaceholder && !fleetFetching){
@@ -1879,9 +2019,9 @@ function renderFleet(){
       return numTd(v * rate, fmtBig(v * rate), fmt.format(Math.round(v * rate)) + ' ISK/h at ' + fmt.format(Math.round(rate)) + ' m³/h');
     }
     const td = numTd(v, fmt.format(Math.round(v * 100) / 100),
-      side === 'ref'
+      (side === 'ref'
         ? 'refine outputs × ' + (Math.round(r.r.pct * 10) / 10) + '% ÷ (portion × m³/unit) · ' + r.r.detail
-        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (' + (r.ice ? 1 : 100) + ' × unit m³)')));
+        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (' + (r.ice ? 1 : 100) + ' × unit m³)'))) + netSuffix);
     if (side === 'ref' && r.refState === 'partial'){
       if (r.unpriced.length)
         td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
@@ -1942,10 +2082,10 @@ function renderFleet(){
   trt.appendChild(el('td', null, 'field value'));
   trt.appendChild(numTd(totRocks, String(totRocks)));
   trt.appendChild(numTd(totM3, fmt.format(Math.round(totM3)) + ' m³'));
-  trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)'));
-  if (on) trt.appendChild(totH ? numTd(mineRefIsk / totH, fmtBig(mineRefIsk / totH), 'field average, refined' + excl) : numTd(null, '—'));
-  trt.appendChild(numTd(compIsk, fmtBig(compIsk) + ' ISK', 'the whole field, compressed (priced rows only)'));
-  if (on) trt.appendChild(totH ? numTd(mineCompIsk / totH, fmtBig(mineCompIsk / totH), 'field average, compressed' + excl) : numTd(null, '—'));
+  trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)' + netSuffix));
+  if (on) trt.appendChild(totH ? numTd(mineRefIsk / totH, fmtBig(mineRefIsk / totH), 'field average, refined' + excl + netSuffix) : numTd(null, '—'));
+  trt.appendChild(numTd(compIsk, fmtBig(compIsk) + ' ISK', 'the whole field, compressed (priced rows only)' + netSuffix));
+  if (on) trt.appendChild(totH ? numTd(mineCompIsk / totH, fmtBig(mineCompIsk / totH), 'field average, compressed' + excl + netSuffix) : numTd(null, '—'));
   trt.appendChild(el('td'));
   if (on) trt.appendChild(totH ? numTd(totH, hFmt(totH),
     fmt.format(Math.round(mineM3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h' + excl) : numTd(null, '—'));
@@ -1987,6 +2127,7 @@ function renderControls(){
 
 function renderAll(){
   renderControls();
+  renderRoles();
   renderNeeds();
   renderPrices();
   renderSkillsPanel();
@@ -2168,6 +2309,7 @@ function persist(){
       fetchedAt: state.fetchedAt,
       refine: state.refine,
       fac: state.fac,
+      roles: state.roles,
       moonText: $('moons').value,
       showAllRanks: state.showAllRanks,
       arrayView: state.arrayView,
@@ -2226,6 +2368,10 @@ function restore(){
       state.fac.structInfo = s.fac.structInfo;
   }
   if (state.fac.struct !== 'npc' && !state.fac.structInfo) state.fac.struct = 'npc';
+  if (s.roles && typeof s.roles === 'object'){
+    state.roles.repro = numOrNull(s.roles.repro);
+    state.roles.seller = numOrNull(s.roles.seller);
+  }
   $('facRig').value = state.fac.rig;
   $('facImp').value = String(state.fac.imp);
   // refresh the cached structure identity (instant when already cached; needs login otherwise)
@@ -2360,6 +2506,11 @@ $('btnFleetPrices').addEventListener('click', () => {
 });
 $('fleetHrOff').addEventListener('click', () => { state.fleet.iskh = false; renderFleet(); persist(); });
 $('fleetHrOn').addEventListener('click', () => { state.fleet.iskh = true; renderFleet(); persist(); });
+$('sellChar').addEventListener('change', () => {
+  const v = $('sellChar').value;
+  state.roles.seller = v === '' ? null : Number(v);
+  renderRoles(); renderFleet(); persist();
+});
 $('fleetYRate').addEventListener('click', () => { state.fleet.ymode = 'rate'; renderFleet(); persist(); });
 $('fleetYCycle').addEventListener('click', () => { state.fleet.ymode = 'cycle'; renderFleet(); persist(); });
 for (const [id, key] of [['fleetRate', 'rate'], ['fleetCycM3', 'cycM3'], ['fleetCycSec', 'cycSec']])
@@ -2373,8 +2524,9 @@ restore();
 renderFacControls();
 renderAll();
 
-// logged in → per-ore refine from the ACTIVE character's skills (incl. the ore-group
-// skills) + the facility selectors; the flat refine input becomes a disabled bystander
+// logged in → per-ore refine from the REPROCESSOR role character's skills (incl. the
+// ore-group skills) + the facility selectors; the flat refine input becomes a disabled
+// bystander. The role select never touches the site-wide active character.
 (async () => {
   if (!window.EveAuth) return;
   await EveAuth.ready;
@@ -2382,44 +2534,13 @@ renderAll();
 
   const note = document.createElement('span');
   note.className = 'hint';
-  $('facImp').insertAdjacentElement('afterend', note);
+  $('reproWarn').insertAdjacentElement('afterend', note);
 
-  // with several characters logged in, pick whose skills drive the refine — this sets
-  // the site-wide active character, so the Sell tool follows along
-  let selWrap = null, charSel = null;
-  function renderCharSel(){
-    const chars = EveAuth.characters();
-    if (chars.length < 2){
-      if (selWrap){ selWrap.remove(); selWrap = null; charSel = null; }
-      return;
-    }
-    if (!selWrap){
-      selWrap = document.createElement('span');
-      selWrap.style.cssText = 'display:inline-flex;gap:6px;align-items:center';
-      const lab = document.createElement('label');
-      lab.style.margin = '0';
-      lab.textContent = 'skills from';
-      charSel = document.createElement('select');
-      charSel.id = 'skillChar';
-      charSel.style.width = '150px';
-      charSel.title = 'whose skills compute the refine yields (sets the site-wide active character)';
-      charSel.addEventListener('change', () => EveAuth.setActive(charSel.value));
-      selWrap.append(lab, charSel);
-      $('facImp').insertAdjacentElement('afterend', selWrap);
-    }
-    charSel.textContent = '';
-    for (const c of chars){
-      const o = document.createElement('option');
-      o.value = c.id; o.textContent = c.name;
-      charSel.appendChild(o);
-    }
-    charSel.value = String(EveAuth.active());
-  }
-
-  let seq = 0;   // a char switch mid-fetch supersedes the older run
+  let seq = 0;   // a role switch mid-fetch supersedes the older run
   async function apply(){
     const my = ++seq;
-    if (!EveAuth.isLoggedIn()){
+    const rid = reproCharId();
+    if (rid == null){
       // logged out live: degrade to the flat refine fallback
       charSkills = null;
       note.textContent = '';
@@ -2433,7 +2554,8 @@ renderAll();
     // the skills scope is what makes every per-ore yield real — without it the whole
     // panel is a manual fallback, so say that where the yields would have been
     const skillsPerm = EveAuth.permissionNote
-      ? EveAuth.permissionNote('esi-skills.read_skills.v1', null, { label: 'refine yields unavailable' })
+      ? EveAuth.permissionNote('esi-skills.read_skills.v1', null,
+        { label: `refine yields for ${charNameOf(rid)} unavailable` })
       : null;
     if (skillsPerm){
       charSkills = null;
@@ -2447,9 +2569,9 @@ renderAll();
       return;
     }
     try{
-      let sk = EveAuth.skills();
+      let sk = EveAuth.skills(rid);
       if (!sk || !sk.groups || Date.now() - Date.parse(sk.fetched) > 86400e3)
-        sk = await EveAuth.fetchSkills();
+        sk = await EveAuth.fetchSkills(rid);
       if (my !== seq) return;
       if (!sk.groups || !Object.keys(sk.groups).length)
         throw new Error('ore-group skill levels unavailable');
@@ -2457,16 +2579,22 @@ renderAll();
       renderFacControls();
       renderSkillsPanel();
       $('refine').disabled = true;
-      $('refine').title = 'not used while logged in — refine is computed per ore from your skills and the facility selectors';
-      note.textContent = ` ⚡ per-ore refine from ${EveAuth.character().name}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
+      $('refine').title = 'not used while logged in — refine is computed per ore from the reprocessor’s skills and the facility selectors';
+      note.textContent = ` ⚡ per-ore refine from ${charNameOf(rid)}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
       renderPlan(); renderFleet();
     }catch(e){
       console.error('skill auto-fill failed:', e);
     }
   }
 
-  EveAuth.onChange(() => { renderCharSel(); apply(); });
-  renderCharSel();
+  $('reproChar').addEventListener('change', () => {
+    const v = $('reproChar').value;
+    if (v !== '') state.roles.repro = Number(v);
+    persist(); renderRoles(); apply();
+  });
+
+  EveAuth.onChange(() => { renderRoles(); apply(); });
+  renderRoles();
   await apply();
 })();
 </script>

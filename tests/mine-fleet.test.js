@@ -38,6 +38,12 @@ const ORES_FIXTURE = {
     46280: { n: 'Brimful Zeolites', v: 10, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 9200], [36, 460], [16634, 75]], c: 62464, cv: 0.1, ice: 0, s: 46152 },
     16262: { n: 'Clear Icicle', v: 1000, p: 1, g: 'Ice', b: 'Clear Icicle', m: [[16272, 69], [16273, 35], [16274, 414], [16275, 1]], c: 28434, cv: 100, ice: 1, s: 18025 },
     28617: { n: 'Banidine', v: 0.1, p: 1, g: 'Veldspar', b: 'Banidine', m: [], c: null, cv: null, ice: 0, s: 60377 },
+    // the moon ores of the real 5-column survey scan (group headers + Est. Value column)
+    45494: { n: 'Cobaltite', v: 10, p: 100, g: 'Common Moon Asteroids', b: 'Cobaltite', m: [[16640, 40]], c: 62474, cv: 0.1, ice: 0, s: 46153 },
+    46288: { n: 'Copious Cobaltite', v: 10, p: 100, g: 'Common Moon Asteroids', b: 'Cobaltite', m: [[16640, 46]], c: 62475, cv: 0.1, ice: 0, s: 46153 },
+    45501: { n: 'Chromite', v: 10, p: 100, g: 'Uncommon Moon Asteroids', b: 'Chromite', m: [[16633, 10], [16641, 40]], c: 62480, cv: 0.1, ice: 0, s: 46154 },
+    45506: { n: 'Cinnabar', v: 10, p: 100, g: 'Rare Moon Asteroids', b: 'Cinnabar', m: [[16635, 15], [16637, 10], [16646, 50]], c: 62495, cv: 0.1, ice: 0, s: 46155 },
+    46310: { n: 'Replete Cinnabar', v: 10, p: 100, g: 'Rare Moon Asteroids', b: 'Cinnabar', m: [[16635, 17], [16637, 12], [16646, 58]], c: 62496, cv: 0.1, ice: 0, s: 46155 },
   },
   names: {
     'veldspar': 1230, 'scordite': 1228, 'concentrated veldspar': 17470, 'dense veldspar': 17471,
@@ -45,13 +51,19 @@ const ORES_FIXTURE = {
     'magma mercoxit': 17869, 'mordunium': 74521, 'kylixium': 81900, 'hezorime': 82163,
     'zeolites': 45490, 'brimful zeolites': 46280, 'clear icicle': 16262,
     'banidine': 28617,
+    'cobaltite': 45494, 'copious cobaltite': 46288, 'chromite': 45501,
+    'cinnabar': 45506, 'replete cinnabar': 46310,
   },
   types: {
     34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen', 38: 'Nocxium',
     39: 'Zydrine', 11399: 'Morphite', 16634: 'Atmospheric Gases',
+    16633: 'Hydrocarbons', 16635: 'Evaporite Deposits', 16637: 'Tungsten',
+    16640: 'Cobalt', 16641: 'Chromium', 16646: 'Mercury',
     16272: 'Heavy Water', 16273: 'Liquid Ozone', 16274: 'Helium Isotopes', 16275: 'Strontium Clathrates',
     12189: 'Mercoxit Ore Processing', 18025: 'Ice Processing',
-    46152: 'Ubiquitous Moon Ore Processing', 60377: 'Simple Ore Processing',
+    46152: 'Ubiquitous Moon Ore Processing', 46153: 'Common Moon Ore Processing',
+    46154: 'Uncommon Moon Ore Processing', 46155: 'Rare Moon Ore Processing',
+    60377: 'Simple Ore Processing',
     60378: 'Coherent Ore Processing', 60379: 'Variegated Ore Processing',
     60380: 'Complex Ore Processing',
   },
@@ -101,14 +113,20 @@ const BOOKS = {
   'Helium Isotopes': { buys: [], sells: [{ p: 850, v: 1e6 }] },
 };
 
-/* seeded character: Reprocessing 5, Efficiency 4, per-group ore skills, Ice Processing 3 */
+/* seeded character: Reprocessing 5, Efficiency 4, per-group ore skills, Ice Processing 3,
+   Accounting 5 (sales tax 7.5 × (1 − 0.11×5) = 3.375%) */
 const SKILLS = {
-  reprocessing: 5, reprocessingEfficiency: 4,
+  reprocessing: 5, reprocessingEfficiency: 4, accounting: 5,
   'Simple Ore Processing': 5, 'Coherent Ore Processing': 3,
   'Complex Ore Processing': 4, 'Mercoxit Ore Processing': 2,
   'Ubiquitous Moon Ore Processing': 4,
 };
 const RAW_SKILLS = { 18025: 3 };   // Ice Processing (by type id — not an ore-group skill)
+
+/* a second character with deliberately WORSE reprocessing and NO Accounting — the two
+   role dropdowns must produce different numbers depending on who holds each role */
+const CHAR2 = { id: 90000002, name: 'Nakiri Ayame' };
+const SKILLS2 = { reprocessing: 4, reprocessingEfficiency: 3, 'Simple Ore Processing': 2 };
 
 /* ---------- hand-computed expectations (same shapes as the page formulas) ----------
    yield% = base × (1+3%×Rep) × (1+2%×Eff) × (1+2%×group) × (1+implant)
@@ -172,14 +190,90 @@ const M3 = { veld: 10000, conc: 6421, dense: 4150, jasp: 6410, tri: 22592,
   mag: 16080, brim: 612400, ice: 1204000, fiery: 9617, ban: 500 };
 const TOT_M3 = 10000 + 6421 + 4150 + 6410 + 22592 + 16080 + 612400 + 1204000 + 9617 + 500;
 
+/* a REAL full survey-scan copy (verbatim user paste, tabs between cells): five columns
+   Name / Quantity / Volume / Est. Value / Distance, EU-grouped numbers, the client's
+   per-ore-type GROUP HEADER rows as bare names, and "-" Est. Value cells */
+const REAL_SCAN = [
+  'Chromite\t30.927\t309.270 m3\t51.600.000,00 ISK\t3.324 m',
+  'Chromite\t2.822\t28.220 m3\t4.710.000,00 ISK\t44 km',
+  'Chromite\t23.202\t232.020 m3\t38.700.000,00 ISK\t175 km',
+  'Replete Cinnabar\t8.187\t81.870 m3\t1.090.000,00 ISK\t94 km',
+  'Cinnabar\t26.650\t266.500 m3\t7.830.000,00 ISK\t16 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t23 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t33 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t36 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t38 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t42 km',
+  'Cinnabar\t39.974\t399.740 m3\t11.700.000,00 ISK\t46 km',
+  'Cinnabar\t26.650\t266.500 m3\t7.830.000,00 ISK\t68 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t69 km',
+  'Cinnabar\t39.974\t399.740 m3\t11.700.000,00 ISK\t111 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t113 km',
+  'Cinnabar\t38.329\t383.290 m3\t11.300.000,00 ISK\t115 km',
+  'Cinnabar\t6.203\t62.030 m3\t1.820.000,00 ISK\t122 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t126 km',
+  'Cinnabar\t4.819\t48.190 m3\t1.420.000,00 ISK\t128 km',
+  'Cinnabar\t13.325\t133.250 m3\t3.920.000,00 ISK\t135 km',
+  'Cinnabar\t30.306\t303.060 m3\t8.910.000,00 ISK\t137 km',
+  'Cinnabar\t7.950\t79.500 m3\t2.340.000,00 ISK\t138 km',
+  'Cinnabar\t6.868\t68.680 m3\t2.020.000,00 ISK\t144 km',
+  'Cinnabar\t26.650\t266.500 m3\t7.830.000,00 ISK\t153 km',
+  'Cinnabar\t1.404\t14.040 m3\t413.000,00 ISK\t157 km',
+  'Cinnabar\t39.974\t399.740 m3\t11.700.000,00 ISK\t169 km',
+  'Copious Cobaltite',
+  'Copious Cobaltite\t12.748\t127.480 m3\t-\t49 km',
+  'Copious Cobaltite\t23.761\t237.610 m3\t-\t61 km',
+  'Copious Cobaltite\t38.643\t386.430 m3\t-\t115 km',
+  'Copious Cobaltite\t13.325\t133.250 m3\t-\t141 km',
+  'Copious Cobaltite\t39.974\t399.740 m3\t-\t150 km',
+  'Copious Cobaltite\t13.325\t133.250 m3\t-\t161 km',
+  'Copious Cobaltite\t26.650\t266.500 m3\t-\t163 km',
+  'Cobaltite',
+  'Cobaltite\t13.313\t133.130 m3\t108.000.000,00 ISK\t12 km',
+  'Cobaltite\t26.650\t266.500 m3\t216.000.000,00 ISK\t13 km',
+  'Cobaltite\t3.998\t39.980 m3\t32.400.000,00 ISK\t66 km',
+  'Cobaltite\t13.325\t133.250 m3\t108.000.000,00 ISK\t84 km',
+  'Cobaltite\t26.650\t266.500 m3\t216.000.000,00 ISK\t88 km',
+  'Cobaltite\t39.974\t399.740 m3\t324.000.000,00 ISK\t102 km',
+  'Cobaltite\t39.974\t399.740 m3\t324.000.000,00 ISK\t105 km',
+  'Cobaltite\t26.650\t266.500 m3\t216.000.000,00 ISK\t116 km',
+  'Cobaltite\t13.325\t133.250 m3\t108.000.000,00 ISK\t144 km',
+  'Cobaltite\t26.650\t266.500 m3\t216.000.000,00 ISK\t146 km',
+  'Cobaltite\t26.650\t266.500 m3\t216.000.000,00 ISK\t153 km',
+  'Cobaltite\t13.284\t132.840 m3\t108.000.000,00 ISK\t153 km',
+  'Cobaltite\t39.974\t399.740 m3\t324.000.000,00 ISK\t174 km',
+].join('\n');
+
+/* role-character expectations: CHAR2's worse skills and the two Accounting levels */
+const P_SIMPLE2 = PCT(50, 4, 3, 2, 0);                    // 61.7344 — Nakiri's Simple ores
+const REF_VELD2 = REF([[400, 5]], P_SIMPLE2, 100, 0.1);   // 123.4688
+const TAX1 = 3.375;   // Miquel, Accounting 5: 7.5 × (1 − 0.11×5), on the formula's 3-decimal grid
+const TAX2 = 7.5;     // Nakiri, Accounting 0
+
 /* ---------- shared plumbing ---------- */
 
-/* Open mine.html with the ores.json fixture, mocked ESI and (optionally) a login. */
+/* mocked /characters/<id>/skills payload — helper.js's shape, but per character */
+const SKILL_ID_MAP = { accounting: 16622, brokerRelations: 3446, reprocessing: 3385, reprocessingEfficiency: 3389 };
+function skillList(skills, rawSkills) {
+  const list = [];
+  for (const [k, lvl] of Object.entries(skills || {})) {
+    const id = SKILL_ID_MAP[k] != null ? SKILL_ID_MAP[k] : H.NAMED_IDS[k];
+    if (id != null) list.push({ skill_id: id, active_skill_level: lvl, trained_skill_level: lvl });
+  }
+  for (const [id, lvl] of Object.entries(rawSkills || {}))
+    list.push({ skill_id: Number(id), active_skill_level: lvl, trained_skill_level: lvl });
+  return list;
+}
+
+/* Open mine.html with the ores.json fixture, mocked ESI and (optionally) a login.
+   opts.chars: characters to log in (default [CHAR]); opts.skillsByChar: per-character
+   skill payloads, e.g. { [CHAR2.id]: { skills: SKILLS2, rawSkills: {} } }. */
 async function openMine(browser, server, opts) {
   opts = opts || {};
   const context = await browser.newContext();
   const seed = [];
-  if (opts.login !== false) seed.push(['eveHelper.auth.v1', H.authState([CHAR])]);
+  const chars = opts.login !== false ? (opts.chars || [CHAR]) : [];
+  if (chars.length) seed.push(['eveHelper.auth.v1', H.authState(chars)]);
   if (opts.storage) seed.push(...opts.storage);
   if (seed.length) await H.seedStorage(context, server.url, seed);
   const counters = await H.mockEsi(context, {
@@ -189,6 +283,16 @@ async function openMine(browser, server, opts) {
     typeIds: MARKET_TIDS,
     books: opts.books || {},
   });
+  // per-character skills override (registered after mockEsi, so it wins; unknown
+  // characters fall back to the shared skills route above)
+  if (opts.skillsByChar) {
+    await context.route('**/characters/*/skills/**', route => {
+      const m = /\/characters\/(\d+)\/skills\//.exec(route.request().url());
+      const cfg = m && opts.skillsByChar[m[1]];
+      if (!cfg) return route.fallback();
+      route.fulfill(H.json({ skills: skillList(cfg.skills, cfg.rawSkills), total_sp: 1e8 }));
+    });
+  }
   // /universe/names resolves display names for the on-demand price fetch
   const state = { oresFetches: 0, namesCalls: 0, oresFail: false };
   await context.route('**/universe/names/**', route => {
@@ -325,6 +429,7 @@ H.run('mine-fleet', async () => {
       return {
         rows: p.rows.map(r => ({ tid: r.tid, name: r.o.n, rocks: r.rocks, units: r.units, m3: r.m3 })),
         unknown: [...p.unknown.entries()], numberless: p.numberless, volFixed: p.volFixed,
+        headers: p.headers,
       };
     }, text);
 
@@ -402,6 +507,43 @@ H.run('mine-fleet', async () => {
     p = await parse('Veldspar 64\u202f213');   // narrow NBSP grouping (FR locale)
     eq('narrow-NBSP grouped quantities parse whole', p.rows[0] && p.rows[0].units, 64213);
 
+    /* ---------- the real 5-column scan: group headers + Est. Value column ---------- */
+    section('real survey scan: group-header rows and the Est. Value column');
+    // verbatim user scan (tabs between cells): the scanner window groups rocks by ore
+    // type, and Ctrl+A/Ctrl+C copies the bare ore-name group-header rows too; the 4th
+    // column is the client's Est. Value in ISK \u2014 sometimes just "-"
+    p = await parse(REAL_SCAN);
+    eq('5 ore types parse from the 48-line paste', p.rows.length, 5);
+    eq('nothing lands in the unrecognized list', p.unknown.length, 0);
+    eq('the two bare group-header rows are counted as headers', p.headers, 2);
+    eq('...not as numberless rows', p.numberless, 0);
+    eq('...and the ISK/distance columns never trip the volume sanity check', p.volFixed, 0);
+    const PR = n => p.rows.find(r => r.name === n) || {};
+    eq('Chromite: 3 rocks', PR('Chromite').rocks, 3);
+    eq('...56,951 units (EU 30.927 + 2.822 + 23.202)', PR('Chromite').units, 56951);
+    near('...569,510 m\u00b3', PR('Chromite').m3, 569510, 1e-9);
+    eq('Replete Cinnabar: 1 rock', PR('Replete Cinnabar').rocks, 1);
+    eq('Cinnabar: 22 rocks', PR('Cinnabar').rocks, 22);
+    eq('Copious Cobaltite: all 7 data rows survive their "-" Est. Value cells', PR('Copious Cobaltite').rocks, 7);
+    eq('...168,426 units', PR('Copious Cobaltite').units, 168426);
+    eq('Cobaltite: all 13 data rows kept \u2014 nothing about the group is "unrecognized"', PR('Cobaltite').rocks, 13);
+    eq('...310,417 units', PR('Cobaltite').units, 310417);
+    // the header rule is name-resolution-based: a bare name the data does NOT resolve
+    // stays visibly unrecognized instead of being eaten as a "header"
+    p = await parse('Quafe Zero');
+    eq('a bare unresolvable name is not a group header', p.headers, 0);
+    check('...it stays in the unrecognized list', JSON.stringify([...p.unknown]) === '[["Quafe Zero",1]]',
+      JSON.stringify([...p.unknown]));
+    p = await parse('Cobaltite');
+    eq('a bare resolvable name IS a group header', p.headers, 1);
+    eq('...and makes no data row', p.rows.length, 0);
+    // an ISK-suffixed cell is the Est. Value column even when tabs collapsed it into
+    // the volume slot \u2014 a price must never be read as a volume
+    p = await parse('Veldspar\t1.000\t51.600.000,00 ISK');
+    near('an ISK cell in the volume slot is ignored \u2014 volume derives from qty \u00d7 unit m\u00b3',
+      p.rows[0] && p.rows[0].m3, 100, 1e-9);
+    eq('...without counting as an ignored volume cell', p.volFixed, 0);
+
     /* ---------- parser notes in the UI ---------- */
     section('parser notes in the UI');
     await sParse.page.fill('#fleetScan',
@@ -413,14 +555,36 @@ H.run('mine-fleet', async () => {
     const unk = await sParse.page.$eval('#fleetUnknown', el => ({ hidden: el.hidden, text: el.textContent }));
     eq('the unrecognized note is visible', unk.hidden, false);
     check('...listing the name with its ×2 count', /Quafe Zero ×2/.test(unk.text), unk.text);
+    check('...with the softened wording — no SDE assertion, just "unrecognized ore names"',
+      /^unrecognized ore names \(rows kept out of the ranking\): /.test(unk.text)
+      && !/SDE/.test(unk.text), unk.text);
 
     // recognized names whose rows all lack numbers must not read as "not recognized"
-    await sParse.page.fill('#fleetScan', 'Veldspar\nDense Veldspar\tabc');
+    await sParse.page.fill('#fleetScan', 'Veldspar\tabc\nDense Veldspar\txyz');
     await sParse.page.waitForFunction(
       () => /no usable rows/.test(document.getElementById('fleetTable').textContent));
     note = await sParse.page.$eval('#fleetTable', el => el.textContent);
     check('an all-numberless paste says what actually kept the table empty',
       /no usable rows — 2 recognized ore rows without a readable quantity or volume/.test(note), note);
+
+    // ...and a paste of nothing but group headers says THAT, not "no usable rows"
+    await sParse.page.fill('#fleetScan', 'Cobaltite\nChromite');
+    await sParse.page.waitForFunction(
+      () => /group header/.test(document.getElementById('fleetTable').textContent));
+    note = await sParse.page.$eval('#fleetTable', el => el.textContent);
+    check('a headers-only paste is called out as such',
+      /no data rows — only 2 group headers \(bare ore-type names\)/.test(note), note);
+
+    // the full real scan: headers surface in the parse-status note, nothing is dropped
+    await sParse.page.fill('#fleetScan', REAL_SCAN);
+    await waitSettled(sParse.page);
+    note = await sParse.page.$eval('#fleetNote', el => el.textContent);
+    check('the real scan summarizes 5 ore types · 46 rocks', /5 ore types · 46 rocks/.test(note), note);
+    check('...and mentions the ignored group headers', /2 group headers ignored/.test(note), note);
+    check('...with no numberless-row or ignored-volume complaint',
+      !/without readable numbers|volume cell/.test(note), note);
+    eq('...and the unrecognized note stays hidden',
+      await sParse.page.$eval('#fleetUnknown', el => el.hidden), true);
 
     // the sample scan: 9 rows, 8 types, Concentrated Veldspar pasted twice
     await sParse.page.click('#btnFleetSample');
@@ -761,6 +925,184 @@ H.run('mine-fleet', async () => {
     near('...with the same exact refined value',
       cp(tbl.rows.find(r => r.name === 'Veldspar').copy.ref), EXP.refVeld, 0.006);
     await s.close();
+
+    /* ================= role characters: reprocessor and seller ================= */
+    section('reprocessor role: page-local skills, active character untouched');
+    const sRole = await openMine(browser, server, {
+      books: BOOKS, label: 'roles',
+      chars: [CHAR, CHAR2],
+      skillsByChar: {
+        [CHAR.id]: { skills: SKILLS, rawSkills: RAW_SKILLS },
+        [CHAR2.id]: { skills: SKILLS2 },
+      },
+    });
+    await waitSkillsNote(sRole.page);   // the default reprocessor is the active character
+    check('the "reprocessed by" select lives in the shared refine section',
+      !!(await sRole.page.$('#secPrices select#reproChar')));
+    check('the old "skills from" selector is gone', !(await sRole.page.$('#skillChar')));
+    const reproOpts = await sRole.page.$eval('#reproChar', el => [...el.options].map(o => o.textContent));
+    check('...listing both logged-in characters (EveAuth lists them in id order)',
+      JSON.stringify(reproOpts) === JSON.stringify(['Nakiri Ayame', 'Miquel Dreamer']),
+      JSON.stringify(reproOpts));
+    eq('...defaulting to the character that was active',
+      await sRole.page.$eval('#reproChar', el => el.value), String(CHAR.id));
+
+    await sRole.page.click('#modeFleet');
+    await waitOreDB(sRole.page);
+    await sRole.page.fill('#fleetScan', 'Veldspar\t10,000\t1,000 m3');
+    await waitSettled(sRole.page);
+    raw = await rawRows(sRole.page);
+    near('with Miquel reprocessing, Veldspar refines at his Simple 5 yield (68.31%)',
+      raw[0].ref, EXP.refVeld, 1e-9);
+
+    await sRole.page.selectOption('#reproChar', String(CHAR2.id));
+    await sRole.page.waitForFunction(
+      () => /per-ore refine from Nakiri Ayame/.test(document.body.textContent));
+    raw = await rawRows(sRole.page);
+    near('switching the reprocessor to Nakiri gives HER yield: 400×5 × 61.7344% ÷ 10',
+      raw[0].ref, REF_VELD2, 1e-9);
+    check('...a genuinely different number than Miquel’s',
+      Math.abs(REF_VELD2 - EXP.refVeld) > 1, REF_VELD2 + ' vs ' + EXP.refVeld);
+    eq('...WITHOUT touching the site-wide active character',
+      await sRole.page.evaluate(() => EveAuth.active()), CHAR.id);
+    const skillsSum = await sRole.page.$eval('#skillsSummary', el => el.textContent);
+    check('the imported-skills panel names the reprocessor',
+      /skills imported from Nakiri Ayame \(reprocessor\)/.test(skillsSum), skillsSum);
+    check('...with her levels', /Reprocessing 4 · Efficiency 3/.test(skillsSum), skillsSum);
+
+    // the role lives in the SHARED section — production planning uses the same skills
+    await sRole.page.click('#modeProd');
+    await sRole.page.fill('#need', 'Tritanium\t1,000,000');
+    await sRole.page.waitForFunction(() => !!document.querySelector('#planBox table'));
+    const planTitle = await sRole.page.$eval('#planBox tbody tr td:nth-child(4)', el => el.title);
+    check('the production mining plan refines with the reprocessor’s skills too',
+      /Simple Ore Processing 2/.test(planTitle), planTitle);
+
+    section('seller role: sales tax nets the fleet values');
+    await sRole.page.click('#modeFleet');
+    eq('the "sold by" select defaults to gross',
+      await sRole.page.$eval('#sellChar', el => el.value), '');
+    eq('...and the table area says so',
+      await sRole.page.$eval('#fleetSellNote', el => el.textContent), 'gross — no seller selected');
+    const sellOpts = await sRole.page.$eval('#sellChar', el => [...el.options].map(o => o.textContent));
+    check('...its options are gross + both characters',
+      JSON.stringify(sellOpts) === JSON.stringify(['gross (no seller)', 'Nakiri Ayame', 'Miquel Dreamer']),
+      JSON.stringify(sellOpts));
+    check('...and its tooltip states the no-broker assumption',
+      /instant-style disposal/.test(await sRole.page.$eval('#sellChar', el => el.title)),
+      await sRole.page.$eval('#sellChar', el => el.title));
+
+    await sRole.page.selectOption('#sellChar', String(CHAR.id));
+    await sRole.page.waitForFunction(() =>
+      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+    raw = await rawRows(sRole.page);
+    near('refined ISK/m³ scales by exactly (1 − 3.375%) — Accounting 5',
+      raw[0].ref, REF_VELD2 * (1 - TAX1 / 100), 1e-9);
+    near('...and compressed ISK/m³ likewise', raw[0].comp, EXP.compVeld * (1 - TAX1 / 100), 1e-9);
+    tbl = await tableData(sRole.page);
+    near('the rendered refined cell is net', cp(tbl.rows[0].copy.ref), REF_VELD2 * (1 - TAX1 / 100), 0.006);
+    const totNet = tbl.rows.find(r => r.total);
+    near('the field totals are net too: net ref × 1,000 m³',
+      cp(totNet.copy.ref), REF_VELD2 * (1 - TAX1 / 100) * 1000, 0.02);
+    near('...compressed total likewise', cp(totNet.copy.comp), EXP.compVeld * (1 - TAX1 / 100) * 1000, 0.02);
+    check('...and the totals tooltip declares the netting',
+      /net of Miquel Dreamer’s 3\.38% sales tax/.test(totNet.title.ref), totNet.title.ref);
+
+    await sRole.page.click('#fleetHrOn');
+    await sRole.page.fill('#fleetRate', '60000');
+    await sRole.page.waitForFunction(() => state.fleet.rate === 60000);
+    tbl = await tableData(sRole.page);
+    near('ISK/h derives from the NET value',
+      cp(tbl.rows[0].copy.refh), REF_VELD2 * (1 - TAX1 / 100) * 60000, 0.02);
+    await sRole.page.click('#fleetHrOff');
+
+    await sRole.page.selectOption('#sellChar', String(CHAR2.id));
+    await sRole.page.waitForFunction(() =>
+      /net of Nakiri Ayame’s 7\.50% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+    raw = await rawRows(sRole.page);
+    near('an Accounting-0 seller nets the full 7.5%', raw[0].ref, REF_VELD2 * (1 - TAX2 / 100), 1e-9);
+    await sRole.page.selectOption('#sellChar', '');
+    await sRole.page.waitForFunction(() =>
+      document.getElementById('fleetSellNote').textContent === 'gross — no seller selected');
+    raw = await rawRows(sRole.page);
+    near('back to gross restores the un-netted value', raw[0].ref, REF_VELD2, 1e-9);
+
+    section('role persistence across reload');
+    await sRole.page.selectOption('#sellChar', String(CHAR.id));
+    await sRole.page.waitForFunction(() =>
+      /net of Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
+    const storedRoles = await sRole.page.evaluate(
+      () => JSON.parse(localStorage.getItem('eveHelper.mine.v1')).roles);
+    check('both roles persist in the stored state',
+      storedRoles && storedRoles.repro === CHAR2.id && storedRoles.seller === CHAR.id,
+      JSON.stringify(storedRoles));
+    await sRole.page.reload();
+    await sRole.page.waitForFunction(
+      () => /per-ore refine from Nakiri Ayame/.test(document.body.textContent));
+    await sRole.page.waitForFunction(() =>
+      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+    eq('the reprocessor select restores', await sRole.page.$eval('#reproChar', el => el.value), String(CHAR2.id));
+    eq('the seller select restores', await sRole.page.$eval('#sellChar', el => el.value), String(CHAR.id));
+    await waitSettled(sRole.page);
+    raw = await rawRows(sRole.page);
+    near('...and the values re-render net of the persisted seller over the persisted reprocessor',
+      raw[0].ref, REF_VELD2 * (1 - TAX1 / 100), 1e-9);
+    eq('the active character is still untouched after all of it',
+      await sRole.page.evaluate(() => EveAuth.active()), CHAR.id);
+    await sRole.close();
+
+    /* ================= role fallbacks when characters log out ================= */
+    section('role fallbacks: the chosen characters logged out');
+    const sFall = await openMine(browser, server, {
+      books: BOOKS, label: 'fallback',
+      storage: [['eveHelper.mine.v1', {
+        mode: 'fleet',
+        fleetText: 'Veldspar\t10,000\t1,000 m3',
+        roles: { repro: CHAR2.id, seller: CHAR2.id },
+      }]],
+    });
+    await waitSkillsNote(sFall.page);   // Nakiri is gone — Miquel is the only login
+    await waitSettled(sFall.page);
+    const reproWarn = await sFall.page.$eval('#reproWarn', el => ({ hidden: el.hidden, text: el.textContent }));
+    eq('the reprocessor warning is visible', reproWarn.hidden, false);
+    eq('...naming the fallback (industry.html precedent)',
+      reproWarn.text, 'reprocessor character logged out — using Miquel Dreamer');
+    eq('...and the select shows the fallback',
+      await sFall.page.$eval('#reproChar', el => el.value), String(CHAR.id));
+    const sellWarn = await sFall.page.$eval('#sellWarn', el => ({ hidden: el.hidden, text: el.textContent }));
+    eq('the seller warning is visible too', sellWarn.hidden, false);
+    eq('...naming its fallback', sellWarn.text, 'seller character logged out — using Miquel Dreamer');
+    await sFall.page.waitForFunction(() =>
+      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+    check('...with the note carrying the fallback seller’s tax', true);
+    raw = await rawRows(sFall.page);
+    near('values use the fallback character on both roles: Miquel’s refine net of Miquel’s tax',
+      raw[0].ref, EXP.refVeld * (1 - TAX1 / 100), 1e-9);
+    await sFall.close();
+
+    section('fully logged out: flat refine, gross values, disabled role selects');
+    const sOut = await openMine(browser, server, {
+      login: false, books: BOOKS, label: 'roles-out',
+      storage: [['eveHelper.mine.v1', {
+        mode: 'fleet',
+        fleetText: 'Veldspar\t10,000\t1,000 m3',
+        roles: { repro: CHAR2.id, seller: CHAR2.id },
+      }]],
+    });
+    await waitSettled(sOut.page);
+    eq('the reprocessor select is a disabled "log in…"',
+      await sOut.page.$eval('#reproChar', el => el.disabled ? el.options[0].textContent : 'enabled'), 'log in…');
+    eq('the seller select is disabled at gross',
+      await sOut.page.$eval('#sellChar', el => el.disabled && el.value === ''), true);
+    eq('...the note says gross', await sOut.page.$eval('#fleetSellNote', el => el.textContent),
+      'gross — no seller selected');
+    check('no stale logged-out warnings with nobody to fall back to',
+      await sOut.page.evaluate(() =>
+        document.getElementById('reproWarn').hidden && document.getElementById('sellWarn').hidden));
+    raw = await rawRows(sOut.page);
+    near('values are the flat-refine gross ones: 400×5 × 75% ÷ 10',
+      raw[0].ref, 2000 * 0.75 / 10, 1e-9);
+    await sOut.close();
 
     /* ================= transient price-fetch failures ================= */
     section('failed price fetches: flagged honestly, never persisted, retried on reload');
