@@ -396,7 +396,9 @@
   <p class="hint" style="margin:8px 0 0">Refined ISK/m³ prices each variant's exact reprocessing outputs
     (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
     compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
-    per m³ of raw rock — ore compresses 100:1 by units, ice 1:1. Ice is unit-harvested and only ranks
+    per m³ of raw rock — compression is 1:1 by units (one compressed unit per ore unit; only the volume
+    shrinks, ~100:1 for ore and ~10:1 for ice), with the per-type unit ratio derived from CCP's own
+    reprocessing data rather than assumed. Ice is unit-harvested and only ranks
     against other ice. With a <em>sold by</em> character chosen, both value columns and everything
     derived from them are net of that character's sales tax (tax only — fleet loot valuation assumes
     instant-style disposal, so no broker fee); the note by the selector says which basis is showing.
@@ -1593,6 +1595,31 @@ function fleetRefineFor(o){
   return refineWithSkill(o.s != null ? (oreDB.types[o.s] || 'type ' + o.s) : null, o.s);
 }
 
+/* ore units represented by ONE compressed unit — DERIVED from the SDE's own
+   reprocessing outputs, never hardcoded: CCP reworked compression in 2023 to be 1:1
+   by units (only the VOLUME shrinks, ~100× for ore, ~10× for ice), and hardcoding
+   the pre-2023 100:1 unit ratio made every compressed value ~100× too low. The
+   compressed types are ordinary asteroid-category entries in ores.json, so
+   ratio = (outputs per compressed unit) ÷ (outputs per ore unit), checked for
+   consistency across the shared materials (warn + assume 1:1 on disagreement). */
+function compressRatio(o){
+  const c = o.c != null ? oreDB.ores[o.c] : null;
+  if (!c || !(c.m || []).length || !(o.m || []).length) return 1;
+  const orePer = new Map(o.m.map(([t, q]) => [t, q / o.p]));
+  let ratio = null;
+  for (const [t, q] of c.m){
+    const per = orePer.get(t);
+    if (!per) continue;                  // material only on one side — no ratio from it
+    const r = (q / c.p) / per;
+    if (ratio == null) ratio = r;
+    else if (Math.abs(r - ratio) > ratio * 0.001){
+      console.warn(`mine: inconsistent compression ratio for ${o.n} (${ratio} vs ${r} across materials) — assuming 1:1`);
+      return 1;
+    }
+  }
+  return ratio != null ? ratio : 1;
+}
+
 /* survey-scan parser: "<Ore Type> <qty> <volume m³> [<est. value ISK>] <distance>" rows,
    tab or multi-space separated (a single-space fallback peels trailing numbers off the
    name); EU/US numbers via parseNum; header lines and blanks skipped; the Est. Value
@@ -1738,7 +1765,9 @@ async function runFleetFetch(){
 
 /* the value model — the two formulas of fleet mode:
    refined ISK/m³    = Σ(qtyPerPortion × materialPrice) × (refinePct/100) / (portionSize × unitVol)
-   compressed ISK/m³ = compressedUnitPrice / (ratio × unitVol), ratio 100 for ore, 1 for ice;
+   compressed ISK/m³ = compressedUnitPrice / (unitVol × ratio), where ratio = ore units per
+   compressed unit, derived per type from the SDE reprocessing outputs (compressRatio —
+   1 for everything since the 2023 compression rework: units are 1:1, only volume shrinks);
    no compressed variant or no book on the basis side → raw ore price / unitVol, tagged 'raw' */
 function fleetCompute(rows){
   const need = new Set();
@@ -1776,7 +1805,7 @@ function fleetCompute(rows){
     else if (pending) refState = 'pending';
     else if (matVal > 0){ ref = matVal * (r.pct / 100) / (o.p * o.v); if (unpriced.length || failed.length) refState = 'partial'; }
     else refState = failed.length ? 'failed' : 'unpriced';
-    const ratio = o.ice ? 1 : 100;
+    const ratio = compressRatio(o);   // ore units per compressed unit — from the data
     let comp = null, compTag = null, compState = 'ok';
     if (o.c != null){
       const cp = fleetTidPrice(o.c);
@@ -1793,11 +1822,13 @@ function fleetCompute(rows){
           : `compressed type has no Jita ${state.priceBasis} book — raw ore price`;
       } else compState = (fleetTidErr(row.tid) || (o.c != null && fleetTidErr(o.c))) ? 'failed' : 'unpriced';
     }
-    const cvExpect = o.ice ? o.v / 10 : o.v / 100;   // the SDE's own pattern for the assumed ratios
+    // the usual VOLUME shrink pattern (ore ~1/100, ice ~1/10) — a deviation only flags
+    // the row for an in-game double-check; the value math never assumes it
+    const cvExpect = o.ice ? o.v / 10 : o.v / 100;
     const cvOdd = o.cv != null && cvExpect > 0 && Math.abs(o.cv - cvExpect) > cvExpect * 0.01;
     if (ref != null) ref *= net;
     if (comp != null) comp *= net;
-    out.push({ ...row, r, ref, refState, unpriced, failed, comp, compTag, compState, cvOdd,
+    out.push({ ...row, r, ref, refState, unpriced, failed, comp, compTag, compState, cvOdd, cratio: ratio,
       ice: !!o.ice, merc: /mercoxit/i.test(o.b || '') || /mercoxit/i.test(o.g || '') });
   }
   return { rows: out, need, usedPlaceholder };
@@ -2021,7 +2052,8 @@ function renderFleet(){
     const td = numTd(v, fmt.format(Math.round(v * 100) / 100),
       (side === 'ref'
         ? 'refine outputs × ' + (Math.round(r.r.pct * 10) / 10) + '% ÷ (portion × m³/unit) · ' + r.r.detail
-        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (' + (r.ice ? 1 : 100) + ' × unit m³)'))) + netSuffix);
+        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (unit m³ × ' + r.cratio
+          + ') — ' + r.cratio + ' ore unit' + (r.cratio === 1 ? '' : 's') + ' per compressed unit, derived from CCP’s reprocessing data'))) + netSuffix);
     if (side === 'ref' && r.refState === 'partial'){
       if (r.unpriced.length)
         td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
@@ -2032,8 +2064,8 @@ function renderFleet(){
     }
     if (side === 'comp' && r.compTag) td.appendChild(fleetFlag('raw', true, r.compTag));
     if (side === 'comp' && r.cvOdd)
-      td.appendChild(fleetFlag('ratio?', true,
-        'the compressed type’s volume does not match the usual pattern — verify the ' + (r.ice ? '1:1' : '100:1') + ' compression ratio in game'));
+      td.appendChild(fleetFlag('volume?', true,
+        'the compressed type’s m³ does not follow the usual volume shrink (ore ~1/100, ice ~1/10 of the raw m³) — double-check this type in game'));
     return td;
   };
 

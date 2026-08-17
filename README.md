@@ -259,9 +259,13 @@ densities, side by side:
   the mining plan uses. Ice products (isotopes, heavy water…) aren't in the section-2
   grid, so their prices fetch on demand by type id.
 - **compressed ISK/m³** — the matching "Compressed …" type's live Jita price (fetched on
-  demand, honoring the sell/buy basis selector) per m³ of raw rock, at 100 ore units per
-  compressed unit (ice compresses 1:1). Types with no compressed variant or no order book
-  fall back to the raw ore's own price with a visible `raw` tag.
+  demand, honoring the sell/buy basis selector) per m³ of raw rock. Compression is **1:1
+  by units** — one compressed unit per ore unit, only the *volume* shrinks (~100× for
+  ore, ~10× for ice) — and the per-type unit ratio is derived from the SDE's own
+  reprocessing outputs rather than assumed (CCP changed this mechanic in 2023; the
+  pre-2023 100:1 unit ratio would price compressed rock ~100× too low). Types with no
+  compressed variant or no order book fall back to the raw ore's own price with a
+  visible `raw` tag.
 
 The table sorts by any column; the %-of-best column follows whichever value column you
 sorted on, the best rock is highlighted, and a totals row values the whole field. Ice is

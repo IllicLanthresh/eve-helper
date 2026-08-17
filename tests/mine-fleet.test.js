@@ -1,6 +1,7 @@
 /* The Mine page against exact SDE ore data: the two page modes (plan production vs
    fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³
-   with real (mocked) skills and a picked facility, the 100:1 compression model, ISK/h
+   with real (mocked) skills and a picked facility, the data-derived 1:1-by-units
+   compression model (volume, not units, is what shrinks ~100×), ISK/h
    math, the shopping-list planner (ranks + mining plan) on the same exact numbers,
    the data-derived skills panel, and persistence — all against a hand-written
    data/ores.json fixture.
@@ -38,6 +39,22 @@ const ORES_FIXTURE = {
     46280: { n: 'Brimful Zeolites', v: 10, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 9200], [36, 460], [16634, 75]], c: 62464, cv: 0.1, ice: 0, s: 46152 },
     16262: { n: 'Clear Icicle', v: 1000, p: 1, g: 'Ice', b: 'Clear Icicle', m: [[16272, 69], [16273, 35], [16274, 414], [16275, 1]], c: 28434, cv: 100, ice: 1, s: 18025 },
     28617: { n: 'Banidine', v: 0.1, p: 1, g: 'Veldspar', b: 'Banidine', m: [], c: null, cv: null, ice: 0, s: 60377 },
+    // compressed counterparts (verbatim SDE entries): same reprocessing outputs per
+    // portion as the raw type — that identity IS the post-2023 1:1 unit ratio the page
+    // must DERIVE (compressRatio), never assume
+    62516: { n: 'Compressed Veldspar', v: 0.001, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 400]], c: null, cv: null, ice: 0, s: 60377 },
+    62517: { n: 'Compressed Concentrated Veldspar', v: 0.001, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 420]], c: null, cv: null, ice: 0, s: 60377 },
+    62518: { n: 'Compressed Dense Veldspar', v: 0.001, p: 100, g: 'Veldspar', b: 'Veldspar', m: [[34, 440]], c: null, cv: null, ice: 0, s: 60377 },
+    62538: { n: 'Compressed Fiery Kernite', v: 0.012, p: 100, g: 'Kernite', b: 'Kernite', m: [[36, 66], [37, 132]], c: null, cv: null, ice: 0, s: 60378 },
+    62542: { n: 'Compressed Pristine Jaspet', v: 0.02, p: 100, g: 'Jaspet', b: 'Jaspet', m: [[36, 165], [38, 55]], c: null, cv: null, ice: 0, s: 60378 },
+    62565: { n: 'Compressed Triclinic Bistot', v: 0.16, p: 100, g: 'Bistot', b: 'Bistot', m: [[35, 3360], [36, 1260], [39, 168]], c: null, cv: null, ice: 0, s: 60380 },
+    62464: { n: 'Compressed Brimful Zeolites', v: 0.1, p: 100, g: 'Ubiquitous Moon Asteroids', b: 'Zeolites', m: [[35, 9200], [36, 460], [16634, 75]], c: null, cv: null, ice: 0, s: 46152 },
+    28434: { n: 'Compressed Clear Icicle', v: 100, p: 1, g: 'Ice', b: 'Clear Icicle', m: [[16272, 69], [16273, 35], [16274, 414], [16275, 1]], c: null, cv: null, ice: 1, s: 18025 },
+    // SYNTHETIC pair (NOT SDE data): the compressed variant contradicts itself across
+    // materials (1× Tritanium but 2× Pyerite per unit) — exercises compressRatio's
+    // consistency check: console.warn + fall back to the 1:1 assumption
+    99001: { n: 'Testolite', v: 2, p: 100, g: 'Veldspar', b: 'Testolite', m: [[34, 100], [35, 100]], c: 99002, cv: 0.02, ice: 0, s: 60377 },
+    99002: { n: 'Compressed Testolite', v: 0.02, p: 100, g: 'Veldspar', b: 'Testolite', m: [[34, 100], [35, 200]], c: null, cv: null, ice: 0, s: 60377 },
     // the moon ores of the real 5-column survey scan (group headers + Est. Value column)
     45494: { n: 'Cobaltite', v: 10, p: 100, g: 'Common Moon Asteroids', b: 'Cobaltite', m: [[16640, 40]], c: 62474, cv: 0.1, ice: 0, s: 46153 },
     46288: { n: 'Copious Cobaltite', v: 10, p: 100, g: 'Common Moon Asteroids', b: 'Cobaltite', m: [[16640, 46]], c: 62475, cv: 0.1, ice: 0, s: 46153 },
@@ -53,6 +70,11 @@ const ORES_FIXTURE = {
     'banidine': 28617,
     'cobaltite': 45494, 'copious cobaltite': 46288, 'chromite': 45501,
     'cinnabar': 45506, 'replete cinnabar': 46310,
+    'compressed veldspar': 62516, 'compressed concentrated veldspar': 62517,
+    'compressed dense veldspar': 62518, 'compressed fiery kernite': 62538,
+    'compressed pristine jaspet': 62542, 'compressed triclinic bistot': 62565,
+    'compressed brimful zeolites': 62464, 'compressed clear icicle': 28434,
+    'testolite': 99001, 'compressed testolite': 99002,
   },
   types: {
     34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen', 38: 'Nocxium',
@@ -93,18 +115,21 @@ const MARKET_TIDS = {
   'Dense Veldspar': 17471,
 };
 
-/* Jita books for the compressed / extra types. Deliberate gaps:
+/* Jita books for the compressed / extra types. REALISTIC relative prices: compression
+   is 1:1 by units, so a compressed unit trades near the value of ONE ore unit (the old
+   fixture priced them ~100 ore units' worth — self-consistent with the hardcoded 100:1
+   bug it was validating). Deliberate gaps:
    - Compressed Fiery Kernite has no book -> falls back to the RAW Fiery Kernite price
    - Banidine has no compressed variant  -> falls back to its own raw price
    - Compressed Magma Mercoxit AND raw Magma Mercoxit have no book -> comp is unpriced
    - Strontium Clathrates has no book    -> Clear Icicle refines "partial" */
 const BOOKS = {
-  'Compressed Veldspar': { buys: [], sells: [{ p: 2000, v: 1e6 }] },
-  'Compressed Concentrated Veldspar': { buys: [], sells: [{ p: 1500, v: 1e6 }] },
-  'Compressed Dense Veldspar': { buys: [], sells: [{ p: 900, v: 1e6 }] },
-  'Compressed Pristine Jaspet': { buys: [], sells: [{ p: 5000, v: 1e6 }] },
-  'Compressed Triclinic Bistot': { buys: [], sells: [{ p: 250000, v: 1e6 }] },
-  'Compressed Brimful Zeolites': { buys: [], sells: [{ p: 120000, v: 1e6 }] },
+  'Compressed Veldspar': { buys: [], sells: [{ p: 15, v: 1e6 }] },
+  'Compressed Concentrated Veldspar': { buys: [], sells: [{ p: 14, v: 1e6 }] },
+  'Compressed Dense Veldspar': { buys: [], sells: [{ p: 9, v: 1e6 }] },
+  'Compressed Pristine Jaspet': { buys: [], sells: [{ p: 50, v: 1e6 }] },
+  'Compressed Triclinic Bistot': { buys: [], sells: [{ p: 2500, v: 1e6 }] },
+  'Compressed Brimful Zeolites': { buys: [], sells: [{ p: 1200, v: 1e6 }] },
   'Compressed Clear Icicle': { buys: [], sells: [{ p: 160000, v: 1e6 }] },
   'Fiery Kernite': { buys: [], sells: [{ p: 60, v: 1e6 }] },
   'Banidine': { buys: [], sells: [{ p: 40, v: 1e6 }] },
@@ -160,13 +185,15 @@ const EXP = {
   refBrim: REF([[9200, 14], [460, 80], [75, 900]], P_UBIQ, 100, 10),     // ~156.34
   refMag: REF([[147, 190]], P_MERC, 100, 40),                            // ~4.51
   refIce: REF([[69, 15], [35, 90], [414, 850]], P_ICE, 1, 1000),         // ~234.38 (Strontium excluded)
-  compVeld: 2000 / (100 * 0.1),      // 200 — the 100:1 ore compression ratio
-  compConc: 1500 / (100 * 0.1),      // 150
-  compDense: 900 / (100 * 0.1),      // 90
-  compJasp: 5000 / (100 * 2),        // 25
-  compTri: 250000 / (100 * 16),      // 156.25
-  compBrim: 120000 / (100 * 10),     // 120
-  compIce: 160000 / (1 * 1000),      // 160 — ice compresses 1:1 by units
+  // compressed ISK/m³ = price ÷ (unitVol × ratio); ratio DERIVED from the fixture's
+  // compressed reprocessing outputs = 1 ore unit per compressed unit for everything
+  compVeld: 15 / (0.1 * 1),          // 150
+  compConc: 14 / (0.1 * 1),          // 140
+  compDense: 9 / (0.1 * 1),          // 90
+  compJasp: 50 / (2 * 1),            // 25
+  compTri: 2500 / (16 * 1),          // 156.25
+  compBrim: 1200 / (10 * 1),         // 120
+  compIce: 160000 / (1000 * 1),      // 160 — identical before and after the ratio rework
   compFieryRaw: 60 / 1.2,            // 50 — raw-ore fallback (compressed has no book)
   compBanRaw: 40 / 0.1,              // 400 — raw-ore fallback (no compressed variant)
 };
@@ -736,14 +763,50 @@ H.run('mine-fleet', async () => {
     eq('Banidine (no refine outputs in the SDE) has state none', R('Banidine').refState, 'none');
     eq('...and ref null, not zero', R('Banidine').ref, null);
 
-    section('compressed ISK/m³ and the 100:1 ratio');
-    near('Compressed Veldspar 2,000 ISK ÷ (100 × 0.1 m³) = 200', R('Veldspar').comp, EXP.compVeld, 1e-9);
-    near('Compressed Dense Veldspar 900 ÷ 10 = 90', R('Dense Veldspar').comp, EXP.compDense, 1e-9);
-    near('Compressed Triclinic Bistot 250,000 ÷ (100 × 16)', R('Triclinic Bistot').comp, EXP.compTri, 1e-9);
-    near('Compressed Brimful Zeolites 120,000 ÷ (100 × 10)', R('Brimful Zeolites').comp, EXP.compBrim, 1e-9);
-    near('ice compresses 1:1 — Compressed Clear Icicle 160,000 ÷ (1 × 1,000 m³)',
+    section('compressed ISK/m³ and the derived 1:1 unit ratio');
+    // ratio derivation straight off the data — 1 ore unit per compressed unit everywhere
+    // since the 2023 compression rework (the fixture's compressed entries are verbatim SDE)
+    const ratios = await s.page.evaluate(() => ({
+      veld: compressRatio(oreDB.ores[1230]),
+      dense: compressRatio(oreDB.ores[17471]),
+      brim: compressRatio(oreDB.ores[46280]),
+      ice: compressRatio(oreDB.ores[16262]),
+      noCompressed: compressRatio(oreDB.ores[28617]),
+      noEntry: compressRatio(oreDB.ores[74521]),
+    }));
+    eq('Veldspar derives 1 ore unit per compressed unit', ratios.veld, 1);
+    eq('...Dense Veldspar too', ratios.dense, 1);
+    eq('...a moon ore too (Brimful Zeolites)', ratios.brim, 1);
+    eq('...and ice (100/1 m³ per unit, same outputs)', ratios.ice, 1);
+    eq('a type with no compressed variant assumes 1', ratios.noCompressed, 1);
+    eq('...as does one whose compressed entry is not in the data', ratios.noEntry, 1);
+    const incons = await s.page.evaluate(() => {
+      const warns = [];
+      const orig = console.warn;
+      console.warn = (...a) => { warns.push(a.join(' ')); orig.apply(console, a); };
+      const r = compressRatio(oreDB.ores[99001]);
+      console.warn = orig;
+      return { r, warns };
+    });
+    eq('self-contradicting compressed data falls back to 1:1', incons.r, 1);
+    check('...with a console warning naming the type',
+      incons.warns.some(w => /inconsistent compression ratio for Testolite/.test(w)),
+      JSON.stringify(incons.warns));
+    near('Compressed Veldspar 15 ISK ÷ (0.1 m³ × ratio 1) = 150', R('Veldspar').comp, EXP.compVeld, 1e-9);
+    near('Compressed Dense Veldspar 9 ÷ 0.1 = 90', R('Dense Veldspar').comp, EXP.compDense, 1e-9);
+    near('Compressed Triclinic Bistot 2,500 ÷ 16', R('Triclinic Bistot').comp, EXP.compTri, 1e-9);
+    near('Compressed Brimful Zeolites 1,200 ÷ 10', R('Brimful Zeolites').comp, EXP.compBrim, 1e-9);
+    near('ice is UNCHANGED by the ratio rework (it was already 1:1): 160,000 ÷ 1,000 m³ = 160',
       R('Clear Icicle').comp, EXP.compIce, 1e-9);
-    check('Veldspar: compressed (200) beats refined (136.62)',
+    // ORDER-OF-MAGNITUDE INVARIANT: with realistic prices (a compressed unit trades near
+    // ONE ore unit's worth), compressed ISK/m³ must land within an order of magnitude of
+    // refined ISK/m³. This single check would have caught the ×100 compression bug — the
+    // old hardcoded pre-2023 100:1 unit ratio put compressed rock at 1/100th of reality,
+    // and the old fixture's inflated prices were built to the same wrong assumption.
+    for (const rr of raw.filter(x => x.ref != null && x.comp != null))
+      check(`sanity: ${rr.name} compressed within 10× of refined`,
+        rr.comp / rr.ref > 0.1 && rr.comp / rr.ref < 10, rr.comp + ' vs ' + rr.ref);
+    check('Veldspar: compressed (150) beats refined (136.62)',
       R('Veldspar').comp > R('Veldspar').ref,
       R('Veldspar').comp + ' vs ' + R('Veldspar').ref);
     check('Dense Veldspar: refined (150.28) beats compressed (90)',
@@ -764,8 +827,10 @@ H.run('mine-fleet', async () => {
     const T = n => tbl.rows.find(r => r.name === n) || { copy: {}, text: {}, title: {}, flags: [] };
     eq('default sort is refined ISK/m³ descending — Clear Icicle first', tbl.rows[0].name, 'Clear Icicle');
     near('the Veldspar cell carries its raw value in data-copy', cp(T('Veldspar').copy.ref), EXP.refVeld, 0.006);
-    check('...and its tooltip explains the compression divisor on the compressed side',
-      /100 × unit m³/.test(T('Veldspar').title.comp), T('Veldspar').title.comp);
+    check('...and its compressed tooltip carries the DERIVED unit ratio, not an assumption',
+      /÷ \(unit m³ × 1\)/.test(T('Veldspar').title.comp)
+      && /derived from CCP’s reprocessing data/.test(T('Veldspar').title.comp),
+      T('Veldspar').title.comp);
     check('Brimful Zeolites is the best ORE (ice excluded from that contest)', T('Brimful Zeolites').best);
     eq('...at 100% of best', T('Brimful Zeolites').copy.pct, '100');
     check('Clear Icicle out-refines every ore (234 > 156) yet only wins the ICE pool',
@@ -788,8 +853,8 @@ H.run('mine-fleet', async () => {
     check('Clear Icicle refined is flagged with the excluded output',
       T('Clear Icicle').flags.some(f => f === 'excl. Strontium Clathrates'),
       JSON.stringify(T('Clear Icicle').flags));
-    check('no compression-ratio warning fires on SDE-consistent volumes',
-      tbl.rows.every(r => !r.flags.includes('ratio?')));
+    check('no compressed-volume-pattern warning fires on SDE-consistent volumes',
+      tbl.rows.every(r => !r.flags.includes('volume?')));
     note = await s.page.$eval('#fleetNote', el => el.textContent);
     check('the summary counts 10 ore types · 10 rocks', /10 ore types · 10 rocks/.test(note), note);
     check('...with no flat-refine disclaimer while logged in', !/flat \d+% refine/.test(note), note);
@@ -873,7 +938,7 @@ H.run('mine-fleet', async () => {
     check('...the % column baseline follows to compressed',
       tbl.headers.some(h => /% of best \(compressed\)/.test(h)), JSON.stringify(tbl.headers));
     check('...and Banidine is now the best ore row', tbl.rows[0].best);
-    near('Veldspar sits at 200 ÷ 400 = 50% of best',
+    near('Veldspar sits at 150 ÷ 400 = 37.5% of best',
       cp(tbl.rows.find(r => r.name === 'Veldspar').copy.pct), EXP.compVeld / EXP.compBanRaw * 100, 0.006);
     eq('ice still only competes with ice',
       tbl.rows.find(r => r.name === 'Clear Icicle').copy.pct, '100');
@@ -1012,8 +1077,14 @@ H.run('mine-fleet', async () => {
     await sRole.page.fill('#fleetRate', '60000');
     await sRole.page.waitForFunction(() => state.fleet.rate === 60000);
     tbl = await tableData(sRole.page);
-    near('ISK/h derives from the NET value',
+    // ONCE-ONLY NETTING: every derived figure must carry exactly one (1 − tax) factor —
+    // the netted density × the gross rate, never a netted density × a netted rate or a
+    // second netting at render time. The hand-computed expectations below contain the
+    // factor exactly once, so equality proves once-only application.
+    near('refined ISK/h = net ISK/m³ × rate — the (1 − tax) factor appears exactly once',
       cp(tbl.rows[0].copy.refh), REF_VELD2 * (1 - TAX1 / 100) * 60000, 0.02);
+    near('compressed ISK/h likewise nets exactly once',
+      cp(tbl.rows[0].copy.comph), EXP.compVeld * (1 - TAX1 / 100) * 60000, 0.02);
     await sRole.page.click('#fleetHrOff');
 
     await sRole.page.selectOption('#sellChar', String(CHAR2.id));
