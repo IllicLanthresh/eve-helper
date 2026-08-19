@@ -270,7 +270,15 @@ densities, side by side:
 The same paste box also plans **ahead of a moon pop**: paste your alliance's Auth
 **"Extraction details"** copy (the upcoming extraction's m³ per ore) and it is
 auto-detected — reusing the exact parsers of production mode's *Your moons* section, no
-second dialect — and flows through the very same pipeline: quantity = m³ ÷ unit volume,
+second dialect. The aa-moonmining **ore-table modal** (icon / Ore Type / Rarity /
+Est. Unit Price / Volume / Est. Total Price + a Total footer) is understood too: the
+header row **anchors the column indices** so the Volume cell is read by position — never
+"the first number after the name", which once misread the unit-price column as the m³ —
+with headerless copies identified by the R-tier tag after the ore name, `?` unit prices
+inert, EU and US number locales both fine, the Total row used as a checksum (a
+disagreement with the summed ore rows earns a status note, never an error), and Auth's
+rarity tags cross-checked against the SDE tier (the data wins, mismatches noted). Either
+way it flows through the very same pipeline: quantity = m³ ÷ unit volume,
 refined vs compressed ISK/m³, seller netting, ISK/h and time-to-clear (which at your
 fleet's yield is precisely *how long the chunk takes to chew*). The rocks column shows
 `—` (it's a chunk forecast, not scanned rocks), the status names what was detected

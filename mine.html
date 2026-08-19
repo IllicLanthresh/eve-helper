@@ -953,7 +953,11 @@ function parseNeeds(text){
 // moon-ore names for the parser (MOON_ORE_RX / MOON_ORE_LOWER) come from ores.json —
 // see the shared data block above; parsing waits for the data like everything else
 const PCT_RX = /(?<![\w.,])(\d{1,3}(?:[.,]\d+)?)\s*%/;
-const SKIP_RX = /^(location|labels|refinery|corporation|est\.?\s*value|last\s+updated|chunk\s+arrival|total)\b/i;
+// Auth info-block lines (both modals' headers): key–value rows that are never ore data.
+// Company/Status/Started/Auto Fracture/Duration come from the extraction modal's full
+// Ctrl+A copy — skipping them (instead of misreading them as moon-name rows) keeps the
+// Moon: name attached to the block the ores land in.
+const SKIP_RX = /^(location|labels|refinery|corporation|company|est\.?\s*value|last\s+updated|chunk\s+arrival|auto\s+fracture|status|started|duration|total)\b/i;
 const VALUEISH_RX = /^[\d.,\s]+\s*(%|b|m|k|isk)?$/i;   // "1.9b", "32%", bare numbers — never a moon name
 
 // candidate plain numbers on a line, ignoring %-values, "ISK per unit" prices and b/m/k abbreviations
@@ -969,10 +973,28 @@ function lineCandidates(line){
   return out;
 }
 
-// one ore line → {ore, frac} | {ore, m3} | null (details format: % arrives on a following line)
-function parseOreLine(line, ore){
+// one ore line → {ore, frac} | {ore, m3} | null (details format: % arrives on a following
+// line). hdr = header-anchored column indices when the paste carried an Auth ore-table
+// header — then the VOLUME cell is read by position, never "a number near the name"
+// (this table's Est. Unit Price column was once misread as the volume).
+function parseOreLine(line, ore, hdr){
   const cells = line.split('\t').map(c => c.trim());
+  while (cells.length && !cells[cells.length - 1]) cells.pop();
   const oi = cells.findIndex(c => c.toLowerCase() === ore.toLowerCase());
+  const RTAG_RX = /^R(4|8|16|32|64)$/i;
+  if (hdr && oi === hdr.name && hdr.vol < cells.length){
+    const v = parseNum(cells[hdr.vol]);
+    const rtag = hdr.rarity >= 0 && hdr.rarity < cells.length && RTAG_RX.test(cells[hdr.rarity])
+      ? cells[hdr.rarity].toUpperCase() : null;
+    if (v > 0) return { ore, m3: v, rtag, auth: 1 };
+  }
+  // headerless rows of the same Auth table: the R-tier tag right after the name marks
+  // the dialect, and the volume is the second-to-last cell (the last is the b/m-suffixed
+  // Est. Total Price, the cell before the volume the per-unit price — both ignored)
+  if (oi >= 0 && cells[oi + 1] && RTAG_RX.test(cells[oi + 1])){
+    const v = parseNum(cells[cells.length - 2]);
+    if (v >= 10000) return { ore, m3: v, rtag: cells[oi + 1].toUpperCase(), auth: 1 };
+  }
   if (oi >= 0)
     for (let j = oi + 1; j < cells.length; j++){        // survey scan: pure-number cell in (0, 1]
       if (!/^\d*\.?\d+$/.test(cells[j])) continue;
@@ -996,7 +1018,7 @@ function parseOreLine(line, ore){
 
 function parseMoonPaste(text){
   const blocks = [];
-  let cur = null;
+  let cur = null, hdr = null;   // hdr = Auth ore-table header columns, once seen
   const newBlock = name => { cur = { name: name || null, ores: [], pending: null }; blocks.push(cur); };
   for (const raw of String(text || '').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n').split('\n')){
     const line = raw.replace(/\s+$/, '');
@@ -1013,14 +1035,38 @@ function parseMoonPaste(text){
       continue;
     }
     if (/^(extraction|moon)$/i.test(t)){ newBlock(null); continue; }   // bare Auth headings
-    if (SKIP_RX.test(t) && !MOON_ORE_RX.test(t)) continue;   // Labels / Refinery / Est. Value / Total…
+
+    // the Auth ore-table modal header (Ore Type / Rarity / Est. Unit Price / Volume /
+    // Est. Total Price): anchor the column indices so every row below reads its VOLUME
+    // cell by position. The survey scanner's own header carries Quantity/Distance —
+    // that is a different table and must never anchor.
+    const hcells = line.split('\t').map(c => c.trim());
+    if (hcells.some(c => /^ore(\s*type)?$/i.test(c)) && hcells.some(c => /^volume$/i.test(c))
+        && !hcells.some(c => /^(quantity|distance)$/i.test(c))){
+      hdr = { name: hcells.findIndex(c => /^ore(\s*type)?$/i.test(c)),
+        vol: hcells.findIndex(c => /^volume$/i.test(c)),
+        rarity: hcells.findIndex(c => /^rarity$/i.test(c)) };
+      continue;
+    }
+    // the Auth Total row: a checksum, never an ore — keep its m³ so callers can compare
+    // it against the summed ore rows (the b/m-suffixed Est. Total Price never parses)
+    if (/^total\b/i.test(t) && !MOON_ORE_RX.test(t)){
+      let v = hdr && hdr.vol < hcells.length ? parseNum(hcells[hdr.vol]) : NaN;
+      if (!(v > 0)){
+        const cand = lineCandidates(line).filter(x => x >= 10000);
+        if (cand.length) v = Math.max(...cand);
+      }
+      if (cur && v > 0) cur.totalM3 = v;
+      continue;
+    }
+    if (SKIP_RX.test(t) && !MOON_ORE_RX.test(t)) continue;   // Labels / Refinery / Est. Value…
 
     const oreM = MOON_ORE_RX.exec(t);
     if (oreM){
       const ore = MOON_ORE_LOWER.get(oreM[1].toLowerCase());
       if (!cur) newBlock(null);
       cur.pending = null;
-      const parsed = parseOreLine(line, ore);
+      const parsed = parseOreLine(line, ore, hdr);
       if (parsed) cur.ores.push(parsed);
       else cur.pending = ore;                           // await "NN%" on a following line
       continue;
@@ -1706,26 +1752,47 @@ function parseSurvey(text){
    - "Extraction details" (m³ per ore = the upcoming chunk) → the same ranking pipeline
      as a survey scan, with quantity = m³ ÷ unit volume and no rock counts. Several
      moons' extractions in one paste rank COMBINED (the status says so).
+   - the aa-moonmining ore-table modal (icon / Ore Type / Rarity / Est. Unit Price /
+     Volume / Est. Total Price + a Total footer): the header row anchors the column
+     indices so the VOLUME cell is read by position — the unit-price column was once
+     misread as the m³; headerless copies are identified by the R-tier tag after the
+     name. The Total row is a checksum, "?" unit prices are inert, and Auth's rarity
+     tags are cross-checked against the SDE tier (data wins, mismatches noted).
    - "Moon details" (percentages only) carries no absolute quantities → an honest
      rejection pointing at the Extraction copy / the production-mode moons section.
-   Detection: explicit Auth structure (Name:/Moon:/Refinery:/Chunk arrival/…) wins;
-   otherwise the format that parses more data rows wins, and a tie keeps the survey
-   interpretation — the box's primary format stays rock solid. */
+   Detection: explicit Auth structure (Name:/Moon:/Refinery:/Chunk arrival/…) or
+   Auth-only row shapes (header-anchored / R-tagged rows) win; otherwise the format
+   that parses more data rows wins, and a tie keeps the survey interpretation — the
+   box's primary format stays rock solid. */
 const AUTH_MARK_RX = /^(name|moon|refinery|labels|corporation|est\.?\s*value|chunk\s+arrival)\s*[:\t]|^(extraction|moon)\s*$/im;
 function extractionRows(blocks){
   const rows = new Map();
-  for (const b of blocks)
-    for (const e of b.ores){                       // chunk mode: { ore, m3 }
+  const tagOff = [], checkOff = [];
+  for (const b of blocks){
+    let sum = 0;
+    for (const e of b.ores){                       // chunk mode: { ore, m3, rtag? }
       const tid = oreDB.names[e.ore.toLowerCase()];
       const t = tid != null ? oreDB.ores[tid] : null;
       if (!t) continue;                            // cannot happen: the moon parser only
                                                    // matches names from this very data
+      sum += e.m3;
+      // Auth's rarity tag vs the ore's actual SDE tier: the DATA wins, the paste's tag
+      // only earns a parse-status note when they disagree
+      const tier = MOON_TIER_BY_GROUP[t.g] || null;
+      if (e.rtag && tier && e.rtag !== tier && !tagOff.includes(`${e.ore} tagged ${e.rtag}, data says ${tier}`))
+        tagOff.push(`${e.ore} tagged ${e.rtag}, data says ${tier}`);
       const r = rows.get(tid) || { tid, o: t, rocks: null, units: 0, m3: 0 };
       r.units += t.v > 0 ? e.m3 / t.v : 0;         // quantity = m³ ÷ unit volume
       r.m3 += e.m3;
       rows.set(tid, r);
     }
-  return [...rows.values()];
+    // the Auth Total row as a checksum — a small tolerance absorbs Auth's own rounding
+    // (real copies run 1 m³ off); a real disagreement earns a note, never an error
+    if (b.totalM3 != null && Math.abs(b.totalM3 - sum) > Math.max(2, b.totalM3 * 0.005))
+      checkOff.push(`${b.name && b.name !== 'Unnamed moon' ? b.name + ': ' : ''}the Auth Total row says `
+        + `${fmt.format(Math.round(b.totalM3))} m³ but the ore rows sum to ${fmt.format(Math.round(sum))} m³`);
+  }
+  return { rows: [...rows.values()], tagOff, checkOff };
 }
 function parseProfitPaste(text){
   const survey = parseSurvey(text);
@@ -1738,9 +1805,16 @@ function parseProfitPaste(text){
   const fracOres = blocks.reduce((s, b) => s + (b.mode === 'frac' ? b.ores.length : 0), 0);
   const surveyLines = survey.rows.reduce((s, r) => s + r.rocks, 0);
   const authMark = AUTH_MARK_RX.test(String(text || ''));
-  if (chunkOres && (authMark || chunkOres > surveyLines))
-    return { kind: 'extraction', moons: chunk.length, rows: extractionRows(chunk),
+  // rows that only the Auth ore-table shape produces (header-anchored volume column, or
+  // an R-tier tag after the name) are Auth evidence in themselves — a survey scan never
+  // makes one, so they break the row-count tie the modal paste otherwise ends in
+  const authRows = chunk.reduce((s, b) => s + b.ores.filter(e => e.auth).length, 0);
+  if (chunkOres && (authMark || authRows || chunkOres > surveyLines)){
+    const ex = extractionRows(chunk);
+    return { kind: 'extraction', moons: chunk.length, rows: ex.rows,
+      tagOff: ex.tagOff, checkOff: ex.checkOff,
       unknown: new Map(), numberless: 0, volFixed: 0, headers: 0 };
+  }
   if (fracOres && !chunkOres && !survey.rows.length)
     return { kind: 'details', moons: blocks.filter(b => b.mode === 'frac').length,
       rows: [], unknown: new Map(), numberless: 0, volFixed: 0, headers: 0 };
@@ -1997,6 +2071,9 @@ function renderFleet(){
     ? `Auth extraction paste — expected chunk contents (${rows.length} ore${rows.length > 1 ? 's' : ''}, `
       + `${fmtBig(totM3)} m³ total${parsed.moons > 1 ? ` · ${parsed.moons} moons combined` : ''})`
     : `${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
+  if (parsed.tagOff && parsed.tagOff.length)
+    bits.push('Auth rarity tags disagree with the ore data (data wins): ' + parsed.tagOff.join('; '));
+  if (parsed.checkOff && parsed.checkOff.length) bits.push(parsed.checkOff.join('; '));
   if (parsed.headers) bits.push(`${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} ignored`);
   if (parsed.numberless) bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped`);
   if (parsed.volFixed) bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)`);

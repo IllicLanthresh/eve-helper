@@ -66,6 +66,8 @@ const ORES_FIXTURE = {
     // the moon ores of the Auth "Extraction details" demo (GMLH-K VIII - 4)
     45511: { n: 'Monazite', v: 10, p: 100, g: 'Exceptional Moon Asteroids', b: 'Monazite', m: [[16635, 20], [16637, 20], [16641, 10], [16651, 22]], c: 62507, cv: 0.1, ice: 0, s: 46156 },
     45498: { n: 'Otavite', v: 10, p: 100, g: 'Uncommon Moon Asteroids', b: 'Otavite', m: [[16634, 10], [16643, 40]], c: 62483, cv: 0.1, ice: 0, s: 46154 },
+    // ...and of the user's aa-moonmining ore-table modal paste
+    45512: { n: 'Loparite', v: 10, p: 100, g: 'Exceptional Moon Asteroids', b: 'Loparite', m: [[16633, 20], [16639, 20], [16644, 10], [16652, 22]], c: 62504, cv: 0.1, ice: 0, s: 46156 },
   },
   names: {
     'veldspar': 1230, 'scordite': 1228, 'concentrated veldspar': 17470, 'dense veldspar': 17471,
@@ -80,7 +82,7 @@ const ORES_FIXTURE = {
     'compressed pristine jaspet': 62542, 'compressed triclinic bistot': 62565,
     'compressed brimful zeolites': 62464, 'compressed clear icicle': 28434,
     'testolite': 99001, 'compressed testolite': 99002,
-    'monazite': 45511, 'otavite': 45498,
+    'monazite': 45511, 'otavite': 45498, 'loparite': 45512,
   },
   types: {
     34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen', 38: 'Nocxium',
@@ -88,6 +90,7 @@ const ORES_FIXTURE = {
     16633: 'Hydrocarbons', 16635: 'Evaporite Deposits', 16637: 'Tungsten',
     16640: 'Cobalt', 16641: 'Chromium', 16646: 'Mercury',
     16643: 'Cadmium', 16651: 'Neodymium',
+    16639: 'Scandium', 16644: 'Platinum', 16652: 'Promethium',
     16272: 'Heavy Water', 16273: 'Liquid Ozone', 16274: 'Helium Isotopes', 16275: 'Strontium Clathrates',
     12189: 'Mercoxit Ore Processing', 18025: 'Ice Processing',
     46152: 'Ubiquitous Moon Ore Processing', 46153: 'Common Moon Ore Processing',
@@ -321,6 +324,73 @@ const DETAILS_PASTE = [
   'Otavite\tR16\t1,764 ISK per unit',
   '28%',
 ].join('\n');
+/* the user's aa-moonmining ore-table modal paste, VERBATIM (extraction_details_products
+   .html of aa-moonmining 3.1.0): a leading icon column — empty first cell in the header
+   AND in every data row — then Ore Type / Rarity / Est. Unit Price / Volume / Est. Total
+   Price, plus a Total footer. The live bug read the Est. Unit Price as the m³. */
+const MODAL_PASTE = [
+  ' \tOre Type \tRarity \tEst. Unit Price \tVolume \tEst. Total Price',
+  '\tCobaltite \tR8 \t236 \t8,489,640 \t0.2b',
+  '\tLoparite \tR64 \t12,472 \t9,285,110 \t11.6b',
+  '\tOtavite \tR16 \t2,316 \t7,424,284 \t1.7b',
+  '\tTotal \t\t\t25,199,033 \t13.5b',
+].join('\n');
+const MODAL_HEADERLESS = MODAL_PASTE.split('\n').slice(1).join('\n');
+/* the same table from an EU-locale Auth (Django intcomma follows the locale) */
+const MODAL_EU = [
+  ' \tOre Type \tRarity \tEst. Unit Price \tVolume \tEst. Total Price',
+  '\tCobaltite \tR8 \t236 \t8.489.640 \t0,2b',
+  '\tLoparite \tR64 \t12.472 \t9.285.110 \t11,6b',
+  '\tOtavite \tR16 \t2.316 \t7.424.284 \t1,7b',
+  '\tTotal \t\t\t25.199.033 \t13,5b',
+].join('\n');
+/* the aa-moonmining "Moon details" modal is NOT a table (moon_details_products.html):
+   per ore a name + rarity tag + "N ISK per unit" joined by NBSPs, a percentage progress
+   bar, and a "b" total — its copy carries percentages only */
+const DETAILS_MODAL_COPY = [
+  'Chromite\u00a0R16\u00a02,072 ISK per unit', '32%', '1.9b',
+  'Monazite\u00a0R64\u00a014,641 ISK per unit', '41%', '17.3b',
+  'Otavite\u00a0R16\u00a01,764 ISK per unit', '28%', '1.4b',
+  'Last updated at 2026-Feb-25 02:19 by Somebody',
+].join('\n');
+
+/* a FULL Ctrl+A copy of the extraction modal (user-verified against their live Auth):
+   the info block above the table — real values — then the same three-ore table. Every
+   info line must skip gracefully, while Refinery:/Moon:/Chunk arrival keep doubling as
+   Auth-detection signals. */
+const FULL_MODAL_PASTE = [
+  'Refinery: F9E-KX - ALPHA Private',
+  'Company: Sensible People [5IGMA]',
+  'Moon: F9E-KX IX - 6',
+  'Location: F9E-KX -0.3 / UX3-N2 / Catch',
+  'Labels: R64',
+  'Status: started',
+  'Started: 2026-Jul-17 19:02 by Zac Tsero',
+  'Chunk arrival: 2026-Aug-21 19:01',
+  'Auto Fracture: 2026-Aug-21 22:01',
+  'Duration: 35.0 days',
+  ' \tOre Type \tRarity \tEst. Unit Price \tVolume \tEst. Total Price',
+  '\tCobaltite \tR8 \t236 \t8,489,640 \t0.2b',
+  '\tLoparite \tR64 \t12,472 \t9,285,110 \t11.6b',
+  '\tOtavite \tR16 \t2,316 \t7,424,284 \t1.7b',
+  '\tTotal \t\t\t25,199,033 \t13.5b',
+].join('\n');
+/* the real Moon-details modal copy per the user's screenshot: info block (including the
+   bare "Athanor" structure-type line), NBSP-joined ore lines with percentages, footer */
+const DETAILS_FULL_COPY = [
+  'Name: F9E-KX IX - 6',
+  'Location: F9E-KX -0.3 / UX3-N2 / Catch',
+  'Labels: R64',
+  'Refinery: F9E-KX - ALPHA Private',
+  'Athanor',
+  'Corporation: Sensible People [5IGMA]',
+  'Est. Value: 15.6b',
+  'Cobaltite\u00a0R8\u00a0236 ISK per unit', '34%', '0.2b',
+  'Loparite\u00a0R64\u00a012,472 ISK per unit', '39%', '11.6b',
+  'Otavite\u00a0R16\u00a02,316 ISK per unit', '27%', '1.7b',
+  'Last updated at 2026-Aug-02 11:40 by Zac Tsero',
+].join('\n');
+
 /* Chromite valued at the section-2 placeholders (Hydrocarbons 300, Chromium 3,500) with
    Miquel's skills — Uncommon Moon Ore Processing is unseeded, so level 0 */
 const P_UNC0 = PCT(50, 5, 4, 0, 0);                               // 62.1
@@ -1328,6 +1398,106 @@ H.run('mine-fleet', async () => {
       /percentages, not quantities/.test(note), note);
     check('...pointing at the Extraction copy', /Extraction details/.test(note), note);
     check('...and at the production-mode moons section', /Your moons/.test(note), note);
+
+    /* ===== the aa-moonmining ore-table modal (third Auth dialect) ===== */
+    section('Auth ore-table modal: the volume column by header anchor, never the unit price');
+    await sExt.page.fill('#fleetScan', MODAL_PASTE);
+    await waitSettled(sExt.page);
+    rp = await rawProfit(sExt.page);
+    eq('the five-column modal (leading icon column included) is an Auth chunk paste', rp.kind, 'extraction');
+    eq('...with exactly its three ores — the Total footer never ranks', rp.rows.length, 3);
+    const lop = rp.rows.find(r => r.name === 'Loparite') || {};
+    near('Loparite reads the VOLUME column: 9,285,110 m³ — NOT the 12,472 Est. Unit Price',
+      lop.m3, 9285110, 1e-9);
+    near('...units = m³ ÷ 10', lop.units, 928511, 1e-9);
+    near('Cobaltite 8,489,640 m³', (rp.rows.find(r => r.name === 'Cobaltite') || {}).m3, 8489640, 1e-9);
+    near('Otavite 7,424,284 m³', (rp.rows.find(r => r.name === 'Otavite') || {}).m3, 7424284, 1e-9);
+    note = await sExt.page.$eval('#fleetNote', el => el.textContent);
+    eq('the status is the clean chunk summary — Auth’s Total being 1 m³ off (its own rounding) earns no checksum note',
+      note, 'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+    tbl = await tableData(sExt.page);
+    near('the ranked total m³ is the ore-row sum', cp(tbl.rows.find(r => r.total).copy.m3), 25199034, 0.006);
+    // REGRESSION anchor: the live bug read the Est. Unit Price (12,472) as Loparite's
+    // volume — at 100,000 m³/h the rock "cleared in ~7.5 minutes". The real 9,285,110 m³
+    // chunk takes 92.9 HOURS.
+    eq('Loparite time-to-clear at 100,000 m³/h is 92.9 h — hours, not minutes',
+      (tbl.rows.find(r => r.name === 'Loparite') || { text: {} }).text.ttc, '92.9 h');
+
+    section('modal variants: headerless, "?" prices, EU locale, checksum, rarity tags');
+    await sExt.page.fill('#fleetScan', MODAL_HEADERLESS);
+    rp = await rawProfit(sExt.page);
+    eq('without the header row the R-tier tags identify the dialect', rp.kind, 'extraction');
+    near('...the volume from the second-to-last cell: the same 9,285,110 m³',
+      (rp.rows.find(r => r.name === 'Loparite') || {}).m3, 9285110, 1e-9);
+    await sExt.page.fill('#fleetScan', MODAL_PASTE.replace('12,472', '?'));
+    rp = await rawProfit(sExt.page);
+    near('a "?" Est. Unit Price (Auth without a price) is inert — the volume still reads by column',
+      (rp.rows.find(r => r.name === 'Loparite') || {}).m3, 9285110, 1e-9);
+    await sExt.page.fill('#fleetScan', MODAL_EU);
+    rp = await rawProfit(sExt.page);
+    eq('the same table from an EU-locale Auth still detects', rp.kind, 'extraction');
+    near('...Cobaltite 8.489.640 → 8,489,640 m³', (rp.rows.find(r => r.name === 'Cobaltite') || {}).m3, 8489640, 1e-9);
+    near('...Loparite 9.285.110 → 9,285,110 m³', (rp.rows.find(r => r.name === 'Loparite') || {}).m3, 9285110, 1e-9);
+
+    await sExt.page.fill('#fleetScan', MODAL_PASTE.replace('25,199,033', '30,000,000'));
+    await sExt.page.waitForFunction(
+      () => /Total row says/.test(document.getElementById('fleetNote').textContent));
+    note = await sExt.page.$eval('#fleetNote', el => el.textContent);
+    check('a Total row disagreeing with its ore rows earns a status note — never an error',
+      /the Auth Total row says 30,000,000 m³ but the ore rows sum to 25,199,034 m³/.test(note), note);
+    tbl = await tableData(sExt.page);
+    eq('...while the three ores still rank', tbl.rows.filter(r => !r.total).length, 3);
+
+    await sExt.page.fill('#fleetScan', MODAL_PASTE.replace('R64', 'R32'));
+    await sExt.page.waitForFunction(
+      () => /data wins/.test(document.getElementById('fleetNote').textContent));
+    note = await sExt.page.$eval('#fleetNote', el => el.textContent);
+    check('an Auth rarity tag disagreeing with the SDE tier is noted, the data winning',
+      /Auth rarity tags disagree with the ore data \(data wins\): Loparite tagged R32, data says R64/.test(note), note);
+    rp = await rawProfit(sExt.page);
+    near('...with the volume untouched by the bad tag',
+      (rp.rows.find(r => r.name === 'Loparite') || {}).m3, 9285110, 1e-9);
+
+    // the aa-moonmining "Moon details" modal is NOT a table — name + rarity tag +
+    // "N ISK per unit" joined by NBSPs, a percentage bar per ore; its markerless copy
+    // must reach the honest decline, not the generic unrecognized note
+    await sExt.page.fill('#fleetScan', DETAILS_MODAL_COPY);
+    await sExt.page.waitForFunction(
+      () => /percentages only/.test(document.getElementById('fleetNote').textContent));
+    check('the details-modal copy shape reaches the decline too',
+      /percentages, not quantities/.test(await sExt.page.$eval('#fleetTable', el => el.textContent)),
+      await sExt.page.$eval('#fleetTable', el => el.textContent));
+    eq('...with no unrecognized-note noise', await sExt.page.$eval('#fleetUnknown', el => el.hidden), true);
+
+    /* ===== full Ctrl+A modal copies (user-verified against their live Auth) ===== */
+    section('full modal copies: info block above the table, real Moon-details shape');
+    await sExt.page.fill('#fleetScan', FULL_MODAL_PASTE);
+    await waitSettled(sExt.page);
+    rp = await rawProfit(sExt.page);
+    eq('the full extraction-modal copy (Refinery/Company/Moon/Status/… block) detects', rp.kind, 'extraction');
+    eq('...as one moon', rp.moons, 1);
+    check('...with results identical to the bare table',
+      JSON.stringify(rp.rows.map(r => [r.name, r.m3]))
+        === JSON.stringify([['Cobaltite', 8489640], ['Loparite', 9285110], ['Otavite', 7424284]]),
+      JSON.stringify(rp.rows.map(r => [r.name, r.m3])));
+    eq('...and a clean status — every info line skipped gracefully',
+      await sExt.page.$eval('#fleetNote', el => el.textContent),
+      'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+    await sExt.page.fill('#fleetScan', FULL_MODAL_PASTE.replace('Status: started', 'Status: completed'));
+    rp = await rawProfit(sExt.page);
+    check('a completed-status (past) extraction is the same layout and parses identically',
+      rp.kind === 'extraction' && (rp.rows.find(r => r.name === 'Loparite') || {}).m3 === 9285110,
+      JSON.stringify(rp.rows.map(r => [r.name, r.m3])));
+
+    await sExt.page.fill('#fleetScan', DETAILS_FULL_COPY);
+    await sExt.page.waitForFunction(
+      () => /percentages only/.test(document.getElementById('fleetNote').textContent));
+    check('the real Moon-details copy (info block, bare "Athanor" line, NBSP rows, footer) reaches the decline',
+      /percentages, not quantities/.test(await sExt.page.$eval('#fleetTable', el => el.textContent)),
+      await sExt.page.$eval('#fleetTable', el => el.textContent));
+    check('...pointing at the Extraction copy',
+      /Extraction details/.test(await sExt.page.$eval('#fleetTable', el => el.textContent)));
+    eq('...never the generic unrecognized note', await sExt.page.$eval('#fleetUnknown', el => el.hidden), true);
 
     // survey detection stays rock solid: the sample scan and the real 46-rock scan both
     // still classify as survey (ambiguity resolves by parsed-row count, ties to survey)
