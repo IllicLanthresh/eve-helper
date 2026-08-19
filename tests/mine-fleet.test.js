@@ -1,5 +1,7 @@
 /* The Mine page against exact SDE ore data: the two page modes (plan production vs
-   fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³
+   PROFIT mode — internal ids/state keep the original 'fleet' naming for persistence
+   compat) over one shared DOM, survey-scan + Auth-extraction parsing, refined vs
+   compressed ISK/m³
    with real (mocked) skills and a picked facility, the data-derived 1:1-by-units
    compression model (volume, not units, is what shrinks ~100×), ISK/h
    math, the shopping-list planner (ranks + mining plan) on the same exact numbers,
@@ -61,6 +63,9 @@ const ORES_FIXTURE = {
     45501: { n: 'Chromite', v: 10, p: 100, g: 'Uncommon Moon Asteroids', b: 'Chromite', m: [[16633, 10], [16641, 40]], c: 62480, cv: 0.1, ice: 0, s: 46154 },
     45506: { n: 'Cinnabar', v: 10, p: 100, g: 'Rare Moon Asteroids', b: 'Cinnabar', m: [[16635, 15], [16637, 10], [16646, 50]], c: 62495, cv: 0.1, ice: 0, s: 46155 },
     46310: { n: 'Replete Cinnabar', v: 10, p: 100, g: 'Rare Moon Asteroids', b: 'Cinnabar', m: [[16635, 17], [16637, 12], [16646, 58]], c: 62496, cv: 0.1, ice: 0, s: 46155 },
+    // the moon ores of the Auth "Extraction details" demo (GMLH-K VIII - 4)
+    45511: { n: 'Monazite', v: 10, p: 100, g: 'Exceptional Moon Asteroids', b: 'Monazite', m: [[16635, 20], [16637, 20], [16641, 10], [16651, 22]], c: 62507, cv: 0.1, ice: 0, s: 46156 },
+    45498: { n: 'Otavite', v: 10, p: 100, g: 'Uncommon Moon Asteroids', b: 'Otavite', m: [[16634, 10], [16643, 40]], c: 62483, cv: 0.1, ice: 0, s: 46154 },
   },
   names: {
     'veldspar': 1230, 'scordite': 1228, 'concentrated veldspar': 17470, 'dense veldspar': 17471,
@@ -75,16 +80,19 @@ const ORES_FIXTURE = {
     'compressed pristine jaspet': 62542, 'compressed triclinic bistot': 62565,
     'compressed brimful zeolites': 62464, 'compressed clear icicle': 28434,
     'testolite': 99001, 'compressed testolite': 99002,
+    'monazite': 45511, 'otavite': 45498,
   },
   types: {
     34: 'Tritanium', 35: 'Pyerite', 36: 'Mexallon', 37: 'Isogen', 38: 'Nocxium',
     39: 'Zydrine', 11399: 'Morphite', 16634: 'Atmospheric Gases',
     16633: 'Hydrocarbons', 16635: 'Evaporite Deposits', 16637: 'Tungsten',
     16640: 'Cobalt', 16641: 'Chromium', 16646: 'Mercury',
+    16643: 'Cadmium', 16651: 'Neodymium',
     16272: 'Heavy Water', 16273: 'Liquid Ozone', 16274: 'Helium Isotopes', 16275: 'Strontium Clathrates',
     12189: 'Mercoxit Ore Processing', 18025: 'Ice Processing',
     46152: 'Ubiquitous Moon Ore Processing', 46153: 'Common Moon Ore Processing',
     46154: 'Uncommon Moon Ore Processing', 46155: 'Rare Moon Ore Processing',
+    46156: 'Exceptional Moon Ore Processing',
     60377: 'Simple Ore Processing',
     60378: 'Coherent Ore Processing', 60379: 'Variegated Ore Processing',
     60380: 'Complex Ore Processing',
@@ -113,6 +121,7 @@ const MARKET_TIDS = {
   'Strontium Clathrates': 16275,
   'Fiery Kernite': 17453, 'Magma Mercoxit': 17869, 'Banidine': 28617,
   'Dense Veldspar': 17471,
+  'Compressed Chromite': 62480,
 };
 
 /* Jita books for the compressed / extra types. REALISTIC relative prices: compression
@@ -277,6 +286,50 @@ const REF_VELD2 = REF([[400, 5]], P_SIMPLE2, 100, 0.1);   // 123.4688
 const TAX1 = 3.375;   // Miquel, Accounting 5: 7.5 × (1 − 0.11×5), on the formula's 3-decimal grid
 const TAX2 = 7.5;     // Nakiri, Accounting 0
 
+/* the Alliance Auth "Extraction details" copy (the moons-section demo, GMLH-K VIII - 4):
+   m³ per ore of the UPCOMING chunk — profit mode must auto-detect it (reusing the moons
+   parsers) and plan the pop through the very same value pipeline */
+const EXTRACTION_PASTE = [
+  'Extraction',
+  'Refinery:\tGMLH-K - ALPHA private',
+  'Moon:\tGMLH-K VIII - 4',
+  'Chunk arrival:\t2026-Jul-22 01:01',
+  'Chromite\tR16\t2,072\t7,954,858\t1.6b',
+  'Monazite\tR64\t14,641\t10,208,139\t14.9b',
+  'Otavite\tR16\t1,764\t7,010,769\t1.2b',
+  'Total\t\t25,173,767\t17.8b',
+].join('\n');
+const EXT_TOT_M3 = 7954858 + 10208139 + 7010769;          // 25,173,766
+/* a second moon's extraction appended — several moons rank COMBINED */
+const EXTRACTION_PASTE_2MOONS = EXTRACTION_PASTE + '\n' + [
+  'Extraction',
+  'Refinery:\tGMLH-K - BETA private',
+  'Moon:\tGMLH-K VIII - 5',
+  'Chunk arrival:\t2026-Jul-29 14:00',
+  'Chromite\tR16\t2,072\t1,000,000\t0.2b',
+  'Total\t\t1,000,000\t0.2b',
+].join('\n');
+/* the %-only Auth "Moon details" copy — no absolute quantities, must be declined honestly */
+const DETAILS_PASTE = [
+  'Moon',
+  'Name:\tGMLH-K VIII - 4',
+  'Labels:\tR64',
+  'Chromite\tR16\t2,072 ISK per unit',
+  '32%',
+  'Monazite\tR64\t14,641 ISK per unit',
+  '41%',
+  'Otavite\tR16\t1,764 ISK per unit',
+  '28%',
+].join('\n');
+/* Chromite valued at the section-2 placeholders (Hydrocarbons 300, Chromium 3,500) with
+   Miquel's skills — Uncommon Moon Ore Processing is unseeded, so level 0 */
+const P_UNC0 = PCT(50, 5, 4, 0, 0);                               // 62.1
+const REF_CHROMITE = REF([[10, 300], [40, 3500]], P_UNC0, 100, 10);   // 88.803
+const COMP_CHROMITE = 900 / (10 * 1);                             // 90 — 1:1 by units
+const EXT_BOOKS = Object.assign({}, BOOKS, {
+  'Compressed Chromite': { buys: [], sells: [{ p: 900, v: 1e6 }] },
+});
+
 /* ---------- shared plumbing ---------- */
 
 /* mocked /characters/<id>/skills payload — helper.js's shape, but per character */
@@ -391,6 +444,15 @@ const rawRows = page => page.evaluate(() => {
   }));
 });
 
+/* like rawRows, but through the profit-paste auto-detection (survey OR Auth formats) */
+const rawProfit = page => page.evaluate(() => {
+  const p = parseProfitPaste(document.getElementById('fleetScan').value);
+  const { rows } = fleetCompute(p.rows);
+  return { kind: p.kind, moons: p.moons || 0, rows: rows.map(r => ({
+    name: r.o.n, rocks: r.rocks, units: r.units, m3: r.m3, ref: r.ref, comp: r.comp,
+    refState: r.refState, compState: r.compState })) };
+});
+
 const cp = v => v == null ? null : parseFloat(v);   // data-copy attr -> number
 
 H.run('mine-fleet', async () => {
@@ -423,11 +485,23 @@ H.run('mine-fleet', async () => {
     check('the production intro line is the shopping-list one',
       /production line needs/.test(await visibleIntro(sParse.page)), await visibleIntro(sParse.page));
 
-    // switch: an instant view swap into the paste-first fleet flow
+    // switch: an instant view swap into the paste-first profit flow. The USER-FACING
+    // name is "Profit mode" — only internal ids/state keep the old 'fleet' naming
+    eq('the mode switcher button reads Profit mode',
+      await sParse.page.$eval('#modeFleet', el => el.textContent), 'Profit mode');
     await sParse.page.click('#modeFleet');
     await sParse.page.waitForFunction(() => document.body.dataset.mode === 'fleet');
+    const fleetWords = await sParse.page.evaluate(() => ({
+      vis: /fleet/i.test(document.body.innerText),
+      titles: [...document.querySelectorAll('[title]')]
+        .filter(e => /fleet/i.test(e.title)).map(e => e.title.slice(0, 60)),
+    }));
+    check('nothing user-visible says "fleet" any more (Fleet mode → Profit mode)',
+      !fleetWords.vis, 'visible text still mentions fleet');
+    check('...including every tooltip on the page', !fleetWords.titles.length,
+      JSON.stringify(fleetWords.titles));
     secs = await visibleSections(sParse.page);
-    check('fleet mode is paste-first: survey scan → refine & prices → what to shoot',
+    check('profit mode is paste-first: survey scan → refine & prices → what to shoot',
       JSON.stringify(secs.map(x => x.id)) === '["secScan","secPrices","secShoot"]',
       JSON.stringify(secs));
     check('...numbered 1 / 2 / 3 for its own flow',
@@ -1175,6 +1249,108 @@ H.run('mine-fleet', async () => {
       raw[0].ref, 2000 * 0.75 / 10, 1e-9);
     await sOut.close();
 
+    /* ================= profit mode: Auth extraction pastes ================= */
+    section('Auth extraction paste: plan the chunk before the pop');
+    const sExt = await openMine(browser, server, { books: EXT_BOOKS, label: 'extraction' });
+    await waitSkillsNote(sExt.page);
+    await sExt.page.click('#modeFleet');
+    await waitOreDB(sExt.page);
+    await sExt.page.fill('#fleetScan', EXTRACTION_PASTE);
+    await waitSettled(sExt.page);
+    let rp = await rawProfit(sExt.page);
+    eq('the Auth Extraction copy is auto-detected', rp.kind, 'extraction');
+    eq('...as one moon', rp.moons, 1);
+    eq('...with its three ores', rp.rows.length, 3);
+    const chro = rp.rows.find(r => r.name === 'Chromite') || {};
+    near('quantity = m³ ÷ unit volume, exactly: Chromite 7,954,858 ÷ 10',
+      chro.units, 7954858 / 10, 1e-9);
+    near('...carrying the pasted m³', chro.m3, 7954858, 1e-9);
+    eq('...and no rock count — a forecast, not a scan', chro.rocks, null);
+    near('the SAME pipeline refines it: (10×300 + 40×3,500) × 62.1% ÷ (100 × 10 m³)',
+      chro.ref, REF_CHROMITE, 1e-9);
+    near('...where 62.1% is Rep 5 / Eff 4 / Uncommon Moon 0', REF_CHROMITE, 88.803, 1e-9);
+    near('...and prices it compressed at the derived 1:1 ratio: 900 ÷ 10', chro.comp, COMP_CHROMITE, 1e-9);
+    eq('the parse status names the detection and the chunk',
+      await sExt.page.$eval('#fleetNote', el => el.textContent),
+      'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+    tbl = await tableData(sExt.page);
+    check('every rocks cell shows — (no scanned rocks in a forecast)',
+      tbl.rows.filter(r => !r.total).every(r => r.text.rocks === '—'),
+      JSON.stringify(tbl.rows.map(r => r.text.rocks)));
+    const extTot = tbl.rows.find(r => r.total);
+    eq('...the totals row too', extTot.text.rocks, '—');
+    eq('...and the totals row is labeled a chunk value', extTot.name, 'chunk value');
+    near('...totalling the full expected chunk', cp(extTot.copy.m3), EXT_TOT_M3, 0.006);
+
+    // time-to-clear IS the plan-ahead number: how long the fleet chews the chunk
+    await sExt.page.click('#fleetHrOn');
+    await sExt.page.fill('#fleetRate', '100000');
+    await sExt.page.waitForFunction(() => state.fleet.rate === 100000);
+    tbl = await tableData(sExt.page);
+    eq('time-to-clear per ore at 100,000 m³/h: Chromite 7,954,858 m³ → 79.5 h',
+      (tbl.rows.find(r => r.name === 'Chromite') || { text: {} }).text.ttc, '79.5 h');
+    eq('...and the whole chunk: 25,173,766 m³ → 251.7 h',
+      tbl.rows.find(r => r.total).text.ttc, '251.7 h');
+
+    // seller netting still applies exactly once on the extraction path
+    await sExt.page.selectOption('#sellChar', String(CHAR.id));
+    await sExt.page.waitForFunction(() =>
+      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+    rp = await rawProfit(sExt.page);
+    const chroNet = rp.rows.find(r => r.name === 'Chromite') || {};
+    near('refined nets by exactly (1 − 3.375%), once', chroNet.ref, REF_CHROMITE * (1 - TAX1 / 100), 1e-9);
+    near('...compressed too', chroNet.comp, COMP_CHROMITE * (1 - TAX1 / 100), 1e-9);
+    tbl = await tableData(sExt.page);
+    near('...and refined ISK/h = net density × rate, the factor appearing exactly once',
+      cp((tbl.rows.find(r => r.name === 'Chromite') || { copy: {} }).copy.refh),
+      REF_CHROMITE * (1 - TAX1 / 100) * 100000, 0.01);
+    await sExt.page.selectOption('#sellChar', '');
+    await sExt.page.waitForFunction(() =>
+      document.getElementById('fleetSellNote').textContent === 'gross — no seller selected');
+
+    section('Auth pastes: several moons, %-only copies, survey detection intact');
+    await sExt.page.fill('#fleetScan', EXTRACTION_PASTE_2MOONS);
+    await waitSettled(sExt.page);
+    rp = await rawProfit(sExt.page);
+    eq('two extraction blocks rank COMBINED', rp.moons, 2);
+    near('...Chromite aggregating across the moons: 7,954,858 + 1,000,000',
+      (rp.rows.find(r => r.name === 'Chromite') || {}).m3, 8954858, 1e-9);
+    note = await sExt.page.$eval('#fleetNote', el => el.textContent);
+    check('...and the status says so', /· 2 moons combined\)$/.test(note), note);
+    check('...still as one chunk-contents summary', /^Auth extraction paste — expected chunk contents \(3 ores, /.test(note), note);
+
+    // the %-only "Moon details" copy carries no quantities — honest decline (choice (a))
+    await sExt.page.fill('#fleetScan', DETAILS_PASTE);
+    await sExt.page.waitForFunction(
+      () => /percentages only/.test(document.getElementById('fleetNote').textContent));
+    note = await sExt.page.$eval('#fleetTable', el => el.textContent);
+    check('a Moon-details paste is declined with the reason',
+      /percentages, not quantities/.test(note), note);
+    check('...pointing at the Extraction copy', /Extraction details/.test(note), note);
+    check('...and at the production-mode moons section', /Your moons/.test(note), note);
+
+    // survey detection stays rock solid: the sample scan and the real 46-rock scan both
+    // still classify as survey (ambiguity resolves by parsed-row count, ties to survey)
+    await sExt.page.click('#btnFleetSample');
+    await waitSettled(sExt.page);
+    note = await sExt.page.$eval('#fleetNote', el => el.textContent);
+    check('the sample survey scan parses exactly as before', /8 ore types · 9 rocks/.test(note), note);
+    const kinds = await sExt.page.evaluate(t => ({
+      sample: parseProfitPaste(document.getElementById('fleetScan').value).kind,
+      real: parseProfitPaste(t).kind,
+    }), REAL_SCAN);
+    eq('...detected as a survey scan', kinds.sample, 'survey');
+    eq('...and so is the real 46-rock scan with its moon-ore names', kinds.real, 'survey');
+    // renamed UI, fully rendered table with hourly columns: still no "fleet" anywhere
+    const fleetWords2 = await sExt.page.evaluate(() => ({
+      vis: /fleet/i.test(document.body.innerText),
+      titles: [...document.querySelectorAll('[title]')]
+        .filter(e => /fleet/i.test(e.title)).map(e => e.title.slice(0, 60)),
+    }));
+    check('the rendered table and its tooltips are fleet-free too',
+      !fleetWords2.vis && !fleetWords2.titles.length, JSON.stringify(fleetWords2.titles));
+    await sExt.close();
+
     /* ================= transient price-fetch failures ================= */
     section('failed price fetches: flagged honestly, never persisted, retried on reload');
     // Compressed Veldspar and Helium Isotopes fail while this set is populated; a 400
@@ -1210,7 +1386,7 @@ H.run('mine-fleet', async () => {
       return f ? f.title : null;
     });
     check('...whose tooltip names the error and the retry path',
-      /network\/ESI error/.test(failTitle || '') && /refresh fleet prices/.test(failTitle || ''), failTitle);
+      /network\/ESI error/.test(failTitle || '') && /refresh profit-mode prices/.test(failTitle || ''), failTitle);
     check('the ice refined cell names exactly the failed output',
       iceRow2.flags.some(f => f === 'fetch failed: Helium Isotopes'), JSON.stringify(iceRow2.flags));
     check('...separately from the bookless one', iceRow2.flags.some(f => f === 'excl. Strontium Clathrates'),

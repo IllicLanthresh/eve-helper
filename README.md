@@ -7,7 +7,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | Tool | Page | What it does |
 | --- | --- | --- |
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
-| **Mine** | `mine.html` | Two modes over one page. **Plan production**: paste the materials you need → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). **Fleet mode**: paste a survey scan at the belt and rank the field by refined vs compressed ISK/m³. Live Jita prices. |
+| **Mine** | `mine.html` | Two modes over one page. **Plan production**: paste the materials you need → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). **Profit mode**: paste a survey scan at the belt — or an Alliance Auth extraction copy, to plan a moon pop ahead — and rank the contents by refined vs compressed ISK/m³. Live Jita prices. |
 | **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
 
 ## EVE login (optional)
@@ -32,7 +32,7 @@ lets you pick a different character). A selector — in the top bar, and next to
 it drives ("fees from" on Sell) — chooses the **active** character; **log out** removes
 the active one. The Mine tool no longer moves that site-wide switch: like Industry's
 buyer/seller/manufacturer roles it has two page-local, persisted **role selectors**
-instead — **reprocessed by** in the shared refine section and **sold by** in fleet mode —
+instead — **reprocessed by** in the shared refine section and **sold by** in profit mode —
 so the topbar character stays untouched. Handy when one alt trades and another one mines;
 a chosen role character that logs out falls back to a logged-in one with an inline
 warning.
@@ -217,7 +217,7 @@ One page, two peer modes, switched by a segmented control under the page title (
 persists; production planning is the default). **Plan production** is the shopping-list
 workflow described above under *EVE login*: paste the materials a production line needs
 (1), set prices & refine (2), see what to mine — ranking, mining plan and sov-array
-deposits (3), and check which of your alliance moons cover the list (4). **Fleet mode** is
+deposits (3), and check which of your alliance moons cover the list (4). **Profit mode** is
 a different entry point, not a step of that flow — no shopping list, you're sitting in a
 belt with a survey scanner: paste the scan (1), the same refine-&-prices section production
 uses (2 — one shared section, not a copy), and see what to shoot (3). Switching is an
@@ -239,10 +239,10 @@ game-world spawn info that no CCP export provides (EVE University Wiki). Without
 `data/ores.json` the affected sections show an explicit "exact ore data unavailable"
 state with a retry; nothing ever falls back to approximations.
 
-## Fleet mode (survey scan)
+## Profit mode (survey scan or Auth extraction)
 
 Mining in an alliance fleet with no shopping list — just a belt or a moon chunk and the
-question *what should I shoot for max value*? Fleet mode's paste-first section takes the
+question *what should I shoot for max value*? Profit mode's paste-first section takes the
 in-game **survey scanner** output pasted as-is: `Ore  Quantity  Volume  [Est. Value]
 Distance` rows, tab or multi-space separated, EU (`1.234.567`) and US (`1,234,567`)
 number formats both fine; header lines, the client's Est. Value column (ISK or `-`) and
@@ -267,6 +267,20 @@ densities, side by side:
   compressed variant or no order book fall back to the raw ore's own price with a
   visible `raw` tag.
 
+The same paste box also plans **ahead of a moon pop**: paste your alliance's Auth
+**"Extraction details"** copy (the upcoming extraction's m³ per ore) and it is
+auto-detected — reusing the exact parsers of production mode's *Your moons* section, no
+second dialect — and flows through the very same pipeline: quantity = m³ ÷ unit volume,
+refined vs compressed ISK/m³, seller netting, ISK/h and time-to-clear (which at your
+fleet's yield is precisely *how long the chunk takes to chew*). The rocks column shows
+`—` (it's a chunk forecast, not scanned rocks), the status names what was detected
+("Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)"), and a
+paste holding several moons' extractions ranks them combined, the status saying so. An
+Auth **"Moon details"** copy (percentages only) is detected and honestly declined —
+percentages carry no quantities — with a pointer at the Extraction copy and at the
+production-mode moons section. Ambiguous pastes pick the format that parses more data
+rows, ties keeping the survey interpretation.
+
 The table sorts by any column; the %-of-best column follows whichever value column you
 sorted on, the best rock is highlighted, and a totals row values the whole field. Ice is
 ranked only against other ice (unit-based harvesting), Mercoxit is flagged deep-core
@@ -274,7 +288,7 @@ ranked only against other ice (unit-based harvesting), Mercoxit is flagged deep-
 by** selector next to the ISK/h toggle picks whose **sales tax** nets the displayed
 values: with a seller chosen, both value columns and everything derived from them (ISK/h,
 field totals) are net of that character's `7.5% × (1 − 0.11 × Accounting)` tax — tax
-only, no broker fee, since fleet loot valuation assumes instant-style disposal — and a
+only, no broker fee, since the loot valuation assumes instant-style disposal — and a
 note says exactly which basis is showing ("net of X's 3.38% sales tax" / "gross — no
 seller selected", the logged-out default). Netting is a uniform scale, so the ranking
 order never changes — only the ISK becomes honest for a separate market alt. Toggle

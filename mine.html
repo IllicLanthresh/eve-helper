@@ -181,7 +181,9 @@
   .moonitem:last-child .moonbtn{border-bottom:0}
   .moonitem:last-child .moondetail{border-bottom:0;border-top:1px solid #1a2233}
 
-  /* the two page modes — plan production vs fleet mode. One shared DOM: sections carry
+  /* the two page modes — plan production vs profit mode (internally still 'fleet' —
+     ids, state keys and CSS hooks keep that name for persistence compat, every
+     user-visible string says Profit mode). One shared DOM: sections carry
      .prod-only / .fleet-only and the body's data-mode decides which flow is visible;
      the prices-&-refine section carries neither class and appears in both. */
   body[data-mode=fleet] .prod-only{display:none!important}
@@ -213,13 +215,14 @@
      of your alliance moons are worth opening. Prices pull live from Jita via ESI (no login).</p>
   <p class="fleet-only">Sitting in a belt with a survey scanner and no shopping list? Paste the scan, set your
      refine and price basis, and see which rocks to shoot for max value — refined vs compressed ISK per m³
-     (and per hour). Prices pull live from Jita via ESI (no login).</p>
+     (and per hour). Also takes an Alliance Auth extraction copy, to plan an upcoming moon pop before it
+     happens. Prices pull live from Jita via ESI (no login).</p>
   <div class="rowline" id="modeRow">
     <span class="seg">
       <button id="modeProd" type="button" aria-pressed="true"
         title="the shopping-list workflow: targets → prices &amp; refine → what to mine → your moons">Plan production</button>
       <button id="modeFleet" type="button" aria-pressed="false"
-        title="no shopping list: paste a survey scan → refine &amp; prices → what to shoot">Fleet mode</button>
+        title="no shopping list: paste a survey scan → refine &amp; prices → what to shoot">Profit mode</button>
     </span>
   </div>
 </header>
@@ -245,7 +248,8 @@
   <label for="fleetScan" style="margin-top:4px">Paste the in-game survey scanner results — rows of
     <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> (tab or multi-space separated; EU
     <code>1.234.567</code> and US <code>1,234,567</code> numbers both fine; the distance column is
-    ignored; header lines are skipped)</label>
+    ignored; header lines are skipped) — or an Alliance&nbsp;Auth <em>Extraction details</em> copy to
+    plan an upcoming moon chunk (auto-detected; several moons rank combined)</label>
   <textarea id="fleetScan" spellcheck="false" style="height:120px"
     placeholder="Concentrated Veldspar&#9;64,213&#9;6,421 m3&#9;7,431 m&#10;Magma Mercoxit&#9;402&#9;16,080 m3&#9;44 km"></textarea>
   <div class="rowline">
@@ -369,13 +373,13 @@
     </span>
     <label for="sellChar" style="margin:0">sold by</label>
     <select id="sellChar" style="width:150px" disabled
-      title="whose sales tax nets the refined and compressed values — tax only, 7.5% × (1 − 0.11 × Accounting); no broker fee: fleet loot valuation assumes instant-style disposal"></select>
+      title="whose sales tax nets the refined and compressed values — tax only, 7.5% × (1 − 0.11 × Accounting); no broker fee: the loot valuation assumes instant-style disposal"></select>
     <span id="sellWarn" class="flag warn" hidden></span>
     <span id="fleetSellNote" class="hint"></span>
     <span id="fleetPriceNote" class="hint"></span>
     <span class="sep"></span>
     <button id="btnFleetPrices" type="button" hidden
-      title="drop the cached compressed/extra Jita prices and fetch them again">refresh fleet prices</button>
+      title="drop the cached compressed/extra Jita prices and fetch them again">refresh profit-mode prices</button>
   </div>
   <div class="rowline" id="fleetYieldRow" hidden>
     <span class="hint">ship yield</span>
@@ -400,7 +404,7 @@
     shrinks, ~100:1 for ore and ~10:1 for ice), with the per-type unit ratio derived from CCP's own
     reprocessing data rather than assumed. Ice is unit-harvested and only ranks
     against other ice. With a <em>sold by</em> character chosen, both value columns and everything
-    derived from them are net of that character's sales tax (tax only — fleet loot valuation assumes
+    derived from them are net of that character's sales tax (tax only — the loot valuation assumes
     instant-style disposal, so no broker fee); the note by the selector says which basis is showing.
     Click any number to copy its raw value.</p>
 </section>
@@ -585,7 +589,8 @@ function loadOreDB(){
 
 /* ---------- state ---------- */
 const state = {
-  mode: 'prod',              // 'prod' (plan production) | 'fleet' — which flow the page shows;
+  mode: 'prod',              // 'prod' (plan production) | 'fleet' (UI name: PROFIT mode — the
+                             // stored key keeps 'fleet' for persistence compat);
                              // a pure view swap: every state below is shared between the modes
   targets: new Map(),        // material -> qty (integer) or null for a quantity-less target
   unknown: [],               // unparseable names from the needs paste (display only)
@@ -606,7 +611,8 @@ const state = {
   openDeposits: new Set(),
   moonOpen: new Set(),       // expanded moon keys (not persisted)
   esiRunning: false, esiToken: 0,
-  // fleet mode (survey-scan ranking): ISK/h toggle + ship-yield inputs, sort state,
+  // profit mode (UI name; internal keys keep the original 'fleet' naming so stored
+  // state stays compatible): ISK/h toggle + ship-yield inputs, sort state,
   // and an on-demand Jita price cache keyed by type id (compressed ores, raw ores,
   // refine outputs outside the section-2 material grid — e.g. ice products)
   fleet: {
@@ -695,7 +701,7 @@ function sellerCharId(){
   return chars.some(c => c.id === act) ? act : chars[0].id;
 }
 // sales tax — the verified formula the Industry tool uses: 7.5% × (1 − 0.11 × Accounting).
-// Tax ONLY, no broker fee: fleet loot valuation assumes instant-style disposal.
+// Tax ONLY, no broker fee: the loot valuation assumes instant-style disposal.
 const SALES_TAX_BASE_PCT = 7.5;
 const ACCOUNTING_REL_PER_LEVEL = 0.11;
 const sellerSkillsTried = new Set();   // one fetch attempt per character per session
@@ -1695,6 +1701,52 @@ function parseSurvey(text){
   return { rows: [...rows.values()], unknown, numberless, volFixed, headers };
 }
 
+/* profit mode also takes Alliance Auth pastes — REUSING the "Your moons" parsers
+   (parseMoonPaste, format auto-detected per block), no second dialect:
+   - "Extraction details" (m³ per ore = the upcoming chunk) → the same ranking pipeline
+     as a survey scan, with quantity = m³ ÷ unit volume and no rock counts. Several
+     moons' extractions in one paste rank COMBINED (the status says so).
+   - "Moon details" (percentages only) carries no absolute quantities → an honest
+     rejection pointing at the Extraction copy / the production-mode moons section.
+   Detection: explicit Auth structure (Name:/Moon:/Refinery:/Chunk arrival/…) wins;
+   otherwise the format that parses more data rows wins, and a tie keeps the survey
+   interpretation — the box's primary format stays rock solid. */
+const AUTH_MARK_RX = /^(name|moon|refinery|labels|corporation|est\.?\s*value|chunk\s+arrival)\s*[:\t]|^(extraction|moon)\s*$/im;
+function extractionRows(blocks){
+  const rows = new Map();
+  for (const b of blocks)
+    for (const e of b.ores){                       // chunk mode: { ore, m3 }
+      const tid = oreDB.names[e.ore.toLowerCase()];
+      const t = tid != null ? oreDB.ores[tid] : null;
+      if (!t) continue;                            // cannot happen: the moon parser only
+                                                   // matches names from this very data
+      const r = rows.get(tid) || { tid, o: t, rocks: null, units: 0, m3: 0 };
+      r.units += t.v > 0 ? e.m3 / t.v : 0;         // quantity = m³ ÷ unit volume
+      r.m3 += e.m3;
+      rows.set(tid, r);
+    }
+  return [...rows.values()];
+}
+function parseProfitPaste(text){
+  const survey = parseSurvey(text);
+  let blocks = [];
+  if (MOON_ORE_RX){
+    try{ blocks = parseMoonPaste(text); }catch(_e){ blocks = []; }
+  }
+  const chunk = blocks.filter(b => b.mode === 'chunk');
+  const chunkOres = chunk.reduce((s, b) => s + b.ores.length, 0);
+  const fracOres = blocks.reduce((s, b) => s + (b.mode === 'frac' ? b.ores.length : 0), 0);
+  const surveyLines = survey.rows.reduce((s, r) => s + r.rocks, 0);
+  const authMark = AUTH_MARK_RX.test(String(text || ''));
+  if (chunkOres && (authMark || chunkOres > surveyLines))
+    return { kind: 'extraction', moons: chunk.length, rows: extractionRows(chunk),
+      unknown: new Map(), numberless: 0, volFixed: 0, headers: 0 };
+  if (fracOres && !chunkOres && !survey.rows.length)
+    return { kind: 'details', moons: blocks.filter(b => b.mode === 'frac').length,
+      rows: [], unknown: new Map(), numberless: 0, volFixed: 0, headers: 0 };
+  return { kind: 'survey', ...survey };
+}
+
 /* on-demand Jita prices by type id (compressed ores, raw-ore fallbacks, extra refine
    outputs) — same esiFetch/fetchJita machinery and error-limit handling as section 2 */
 const fleetFetchQ = new Set();
@@ -1715,7 +1767,7 @@ function fleetMatName(tid){
 function queueFleetPrices(tids){
   // an err entry counts as "has an entry" here on purpose: within a session a failure is
   // not auto-retried on every render (no ESI retry storm) — it is skipped by persist(),
-  // so the next page load fetches it again, and "refresh fleet prices" retries on demand
+  // so the next page load fetches it again, and "refresh profit-mode prices" retries on demand
   for (const t of tids)
     if (t != null && !state.fleet.prices[t]) fleetFetchQ.add(t);
   if (fleetFetchQ.size) runFleetFetch();   // no-op while a run is already draining the queue
@@ -1818,7 +1870,7 @@ function fleetCompute(rows){
       else if (rp != null){
         comp = rp / o.v;
         compTag = o.c == null ? 'no compressed variant — raw ore price'
-          : fleetTidErr(o.c) ? 'the compressed type’s price fetch failed — raw ore price (refresh fleet prices to retry)'
+          : fleetTidErr(o.c) ? 'the compressed type’s price fetch failed — raw ore price (refresh profit-mode prices to retry)'
           : `compressed type has no Jita ${state.priceBasis} book — raw ore price`;
       } else compState = (fleetTidErr(row.tid) || (o.c != null && fleetTidErr(o.c))) ? 'failed' : 'unpriced';
     }
@@ -1891,7 +1943,7 @@ function renderFleet(){
     const nFail = Object.values(state.fleet.prices).filter(p => p && p.err).length;
     $('fleetPriceNote').textContent = state.fleet.fetchedAt
       ? 'compressed/extra prices fetched ' + new Date(state.fleet.fetchedAt).toLocaleTimeString()
-        + (nFail ? ` — ${nFail} price fetch${nFail > 1 ? 'es' : ''} failed (refresh fleet prices to retry)` : '')
+        + (nFail ? ` — ${nFail} price fetch${nFail > 1 ? 'es' : ''} failed (refresh profit-mode prices to retry)` : '')
       : '';
   }
   const text = $('fleetScan').value;
@@ -1906,7 +1958,7 @@ function renderFleet(){
     if (oreDBErr){
       dn.className = 'hint warn';
       dn.textContent = 'ore data unavailable (' + oreDBErr + ') — data/ores.json is generated at deploy '
-        + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally to use fleet mode. ';
+        + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally to use profit mode. ';
       const retry = el('button', null, 'retry');
       retry.type = 'button';
       retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderFleet(); });
@@ -1918,7 +1970,16 @@ function renderFleet(){
     }
     return;
   }
-  const parsed = parseSurvey(text);
+  const parsed = parseProfitPaste(text);
+  if (parsed.kind === 'details'){
+    // percentages carry no absolute quantities — be honest instead of inventing a chunk
+    $('fleetNote').textContent = 'Auth “Moon details” paste — percentages only';
+    box.appendChild(el('div', 'hint',
+      'this Auth copy lists ore percentages, not quantities — there is nothing to value here. '
+      + 'Paste the Auth “Extraction details” copy instead (m³ per ore — the expected chunk contents), '
+      + 'or rank the moon by value density in production mode’s “Your moons” section.'));
+    return;
+  }
   if (parsed.unknown.size){
     // no SDE claim here — an unrecognized name only means THIS page's data did not
     // resolve it (a stale ores.json build once made that assertion factually wrong)
@@ -1928,10 +1989,14 @@ function renderFleet(){
   }
   const { rows, need, usedPlaceholder } = fleetCompute(parsed.rows);
   if (need.size) queueFleetPrices([...need]);
-  const totRocks = rows.reduce((s, r) => s + r.rocks, 0);
+  const totRocks = rows.reduce((s, r) => s + (r.rocks || 0), 0);
   const totM3 = rows.reduce((s, r) => s + r.m3, 0);
   const bits = [];
-  if (rows.length) bits.push(`${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
+  if (rows.length) bits.push(parsed.kind === 'extraction'
+    // a chunk forecast, not scanned rocks — say what was detected and what it holds
+    ? `Auth extraction paste — expected chunk contents (${rows.length} ore${rows.length > 1 ? 's' : ''}, `
+      + `${fmtBig(totM3)} m³ total${parsed.moons > 1 ? ` · ${parsed.moons} moons combined` : ''})`
+    : `${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
   if (parsed.headers) bits.push(`${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} ignored`);
   if (parsed.numberless) bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped`);
   if (parsed.volFixed) bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)`);
@@ -1974,7 +2039,7 @@ function renderFleet(){
   const sv = (r, k) => {
     switch (k){
       case 'name': return r.o.n;
-      case 'rocks': return r.rocks;
+      case 'rocks': return r.rocks || 0;
       case 'm3': case 'ttc': return r.m3;
       case 'ref': case 'refh': return r.ref == null ? -Infinity : r.ref;
       case 'comp': case 'comph': return r.comp == null ? -Infinity : r.comp;
@@ -2034,7 +2099,7 @@ function renderFleet(){
       // 'failed' is a network/ESI error, not a market fact — it must not claim "no book"
       td.appendChild(st === 'failed'
         ? fleetFlag('fetch failed', true,
-          'the Jita price fetch failed (network/ESI error) — “refresh fleet prices” retries now; failures are not kept across reloads')
+          'the Jita price fetch failed (network/ESI error) — “refresh profit-mode prices” retries now; failures are not kept across reloads')
         : fleetFlag(st === 'none' ? 'no refine outputs' : 'unpriced', false,
           side === 'comp' ? 'neither the compressed type nor the raw ore has a Jita ' + state.priceBasis + ' book'
             : 'none of this ore’s refine outputs could be priced'));
@@ -2060,7 +2125,7 @@ function renderFleet(){
           'these refine outputs have no Jita ' + state.priceBasis + ' book — the value shown excludes them'));
       if (r.failed.length)
         td.appendChild(fleetFlag('fetch failed: ' + r.failed.join(', '), true,
-          'the price fetch for these refine outputs failed (network/ESI error) — the value shown excludes them; “refresh fleet prices” retries now'));
+          'the price fetch for these refine outputs failed (network/ESI error) — the value shown excludes them; “refresh profit-mode prices” retries now'));
     }
     if (side === 'comp' && r.compTag) td.appendChild(fleetFlag('raw', true, r.compTag));
     if (side === 'comp' && r.cvOdd)
@@ -2080,7 +2145,8 @@ function renderFleet(){
     if (r.ice) tdn.appendChild(fleetFlag('ice — unit-based harvesting, compare only against other ice', true,
       'ice harvesters cycle per unit, not per m³ — the %-of-best column ranks ice against other ice only'));
     tr.appendChild(tdn);
-    tr.appendChild(numTd(r.rocks, String(r.rocks)));
+    tr.appendChild(r.rocks != null ? numTd(r.rocks, String(r.rocks))
+      : numTd(null, '—', 'an expected chunk forecast — no scanned rocks'));
     tr.appendChild(numTd(r.m3, fmt.format(Math.round(r.m3)) + ' m³',
       fmt.format(Math.round(r.units)) + ' units of ' + r.o.n));
     tr.appendChild(iskCell(r, 'ref', false));
@@ -2111,8 +2177,10 @@ function renderFleet(){
   const excl = mineM3 < totM3 ? ' — ice/Mercoxit rows excluded (your ore yield does not mine them)' : '';
   const totH = (rate && mineM3 > 0) ? mineM3 / rate : null;
   const trt = el('tr', 'total');
-  trt.appendChild(el('td', null, 'field value'));
-  trt.appendChild(numTd(totRocks, String(totRocks)));
+  trt.appendChild(el('td', null, parsed.kind === 'extraction' ? 'chunk value' : 'field value'));
+  trt.appendChild(parsed.kind === 'extraction'
+    ? numTd(null, '—', 'an expected chunk forecast — no scanned rocks')
+    : numTd(totRocks, String(totRocks)));
   trt.appendChild(numTd(totM3, fmt.format(Math.round(totM3)) + ' m³'));
   trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)' + netSuffix));
   if (on) trt.appendChild(totH ? numTd(mineRefIsk / totH, fmtBig(mineRefIsk / totH), 'field average, refined' + excl + netSuffix) : numTd(null, '—'));
