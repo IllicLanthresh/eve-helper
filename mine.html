@@ -199,6 +199,7 @@
   #fleetTable td .flag{display:block;margin-top:2px;font-weight:400;white-space:normal}
   .famtag{display:inline-block;font-size:11px;padding:0 8px;border-radius:10px;color:var(--dim);
     border:1px solid var(--line);white-space:nowrap;margin-left:6px}
+  .plan .pctag{color:var(--dim);font-family:var(--mono);font-size:10px;margin-left:5px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -397,16 +398,19 @@
     <span id="fleetRateNote" class="hint"></span>
   </div>
   <div id="fleetTable" style="margin-top:4px"></div>
-  <p class="hint" style="margin:8px 0 0">Refined ISK/m³ prices each variant's exact reprocessing outputs
-    (SDE data) at the section-2 prices and <em>your</em> per-ore refine yield from the facility row above;
-    compressed ISK/m³ prices the “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis)
-    per m³ of raw rock — compression is 1:1 by units (one compressed unit per ore unit; only the volume
-    shrinks, ~100:1 for ore and ~10:1 for ice), with the per-type unit ratio derived from CCP's own
-    reprocessing data rather than assumed. Ice is unit-harvested and only ranks
-    against other ice. With a <em>sold by</em> character chosen, both value columns and everything
-    derived from them are net of that character's sales tax (tax only — the loot valuation assumes
-    instant-style disposal, so no broker fee); the note by the selector says which basis is showing.
-    Click any number to copy its raw value.</p>
+  <p class="hint" style="margin:8px 0 0">Three price bases, side by side. <em>Refined</em> ISK/m³ prices
+    each variant's exact reprocessing outputs (SDE data) at the section-2 prices and <em>your</em> per-ore
+    refine yield from the facility row above; <em>compressed</em> ISK/m³ prices the “Compressed …” type at
+    Jita (fetched on demand, section-2 sell/buy basis) per m³ of raw rock — compression is 1:1 by units
+    (one compressed unit per ore unit; only the volume shrinks, ~100:1 for ore and ~10:1 for ice), with the
+    per-type unit ratio derived from CCP's own reprocessing data rather than assumed; <em>raw</em> ISK/m³
+    prices the untouched ore itself at its own Jita book. The small percentage in each value cell is that
+    row's share of the best row <em>on that basis</em>; toggling ISK/h swaps the per-m³ columns for hourly
+    ones (same ranking, scaled by your yield). Compressed m³ is the haul volume after compression. Ice is
+    unit-harvested and only ranks against other ice. With a <em>sold by</em> character chosen, every value
+    column and everything derived from them is net of that character's sales tax (tax only — the loot
+    valuation assumes instant-style disposal, so no broker fee); the note by the selector says which basis
+    is showing. Click any number to copy its raw value.</p>
 </section>
 
 <section id="secMoons" class="prod-only">
@@ -1889,12 +1893,15 @@ async function runFleetFetch(){
   }
 }
 
-/* the value model — the two formulas of fleet mode:
+/* the value model — the three price bases of profit mode, plus the haul volume:
    refined ISK/m³    = Σ(qtyPerPortion × materialPrice) × (refinePct/100) / (portionSize × unitVol)
    compressed ISK/m³ = compressedUnitPrice / (unitVol × ratio), where ratio = ore units per
    compressed unit, derived per type from the SDE reprocessing outputs (compressRatio —
    1 for everything since the 2023 compression rework: units are 1:1, only volume shrinks);
-   no compressed variant or no book on the basis side → raw ore price / unitVol, tagged 'raw' */
+   no compressed variant or no book → the unpriced flag (the raw column IS the fallback story)
+   raw ISK/m³        = the ore type's OWN Jita price / unitVol — no ratio, it IS the ore
+   compressed m³     = (units ÷ ratio) × compressed unit volume — the haul size after
+                       compression (no compressed variant → none; price-independent) */
 function fleetCompute(rows){
   const need = new Set();
   const out = [];
@@ -1932,29 +1939,33 @@ function fleetCompute(rows){
     else if (matVal > 0){ ref = matVal * (r.pct / 100) / (o.p * o.v); if (unpriced.length || failed.length) refState = 'partial'; }
     else refState = failed.length ? 'failed' : 'unpriced';
     const ratio = compressRatio(o);   // ore units per compressed unit — from the data
-    let comp = null, compTag = null, compState = 'ok';
-    if (o.c != null){
+    // compressed: strictly the compressed type's own book — with a real raw column
+    // beside it, a silent raw-price fallback would just be the same number twice
+    let comp = null, compState = 'ok';
+    if (o.c == null) compState = 'none';
+    else {
       const cp = fleetTidPrice(o.c);
       if (cp === undefined){ compState = 'pending'; need.add(o.c); }
       else if (cp != null) comp = cp / (ratio * o.v);
+      else compState = fleetTidErr(o.c) ? 'failed' : 'unpriced';
     }
-    if (comp == null && compState !== 'pending'){
-      const rp = fleetTidPrice(row.tid);
-      if (rp === undefined){ compState = 'pending'; need.add(row.tid); }
-      else if (rp != null){
-        comp = rp / o.v;
-        compTag = o.c == null ? 'no compressed variant — raw ore price'
-          : fleetTidErr(o.c) ? 'the compressed type’s price fetch failed — raw ore price (refresh profit-mode prices to retry)'
-          : `compressed type has no Jita ${state.priceBasis} book — raw ore price`;
-      } else compState = (fleetTidErr(row.tid) || (o.c != null && fleetTidErr(o.c))) ? 'failed' : 'unpriced';
-    }
+    // raw: the ore's own book, always fetched — selling the rock untouched
+    let raw = null, rawState = 'ok';
+    const rp = fleetTidPrice(row.tid);
+    if (rp === undefined){ rawState = 'pending'; need.add(row.tid); }
+    else if (rp != null) raw = rp / o.v;
+    else rawState = fleetTidErr(row.tid) ? 'failed' : 'unpriced';
+    // the haul volume after compression — data-only, no prices involved
+    const cm3 = o.c != null && o.cv != null && ratio > 0 ? (row.units / ratio) * o.cv : null;
     // the usual VOLUME shrink pattern (ore ~1/100, ice ~1/10) — a deviation only flags
     // the row for an in-game double-check; the value math never assumes it
     const cvExpect = o.ice ? o.v / 10 : o.v / 100;
     const cvOdd = o.cv != null && cvExpect > 0 && Math.abs(o.cv - cvExpect) > cvExpect * 0.01;
     if (ref != null) ref *= net;
     if (comp != null) comp *= net;
-    out.push({ ...row, r, ref, refState, unpriced, failed, comp, compTag, compState, cvOdd, cratio: ratio,
+    if (raw != null) raw *= net;
+    out.push({ ...row, r, ref, refState, unpriced, failed, comp, compState, raw, rawState,
+      cm3, cvOdd, cratio: ratio,
       ice: !!o.ice, merc: /mercoxit/i.test(o.b || '') || /mercoxit/i.test(o.g || '') });
   }
   return { rows: out, need, usedPlaceholder };
@@ -2097,20 +2108,27 @@ function renderFleet(){
       + 'some refine outputs are priced from section-2 placeholders — hit “Fetch Jita prices” there for live refined values';
   }
 
-  // % of best per the current value column; ice only ever competes with ice
+  // per-basis % of best: every ISK/m³ cell carries its own share of THAT basis's best
+  // row (within each basis, ice competes only against other ice), so all three rankings
+  // read at a glance; the SORTED value column still drives the best-row highlight
+  const BASES = ['ref', 'comp', 'raw'];
+  const best = {};   // best[basis] = { ore, ice }
+  for (const b of BASES){
+    best[b] = { ore: null, ice: null };
+    for (const r of rows){
+      const v = r[b];
+      if (v == null) continue;
+      const slot = r.ice ? 'ice' : 'ore';
+      if (!best[b][slot] || v > best[b][slot][b]) best[b][slot] = r;
+    }
+  }
+  for (const r of rows)
+    for (const b of BASES){
+      const v = r[b], bb = best[b][r.ice ? 'ice' : 'ore'];
+      r[b + 'Pct'] = (v != null && bb && bb[b] > 0) ? v / bb[b] * 100 : null;
+    }
   const vc = state.fleet.valueCol;
-  const val = r => vc === 'comp' ? r.comp : r.ref;
-  let bestOre = null, bestIce = null;
-  for (const r of rows){
-    const v = val(r);
-    if (v == null) continue;
-    if (r.ice){ if (!bestIce || v > val(bestIce)) bestIce = r; }
-    else if (!bestOre || v > val(bestOre)) bestOre = r;
-  }
-  for (const r of rows){
-    const v = val(r), b = r.ice ? bestIce : bestOre;
-    r.pct = (v != null && b && val(b) > 0) ? v / val(b) * 100 : null;
-  }
+  const bestOre = best[vc].ore, bestIce = best[vc].ice;
 
   const rate = fleetRate();
   const sv = (r, k) => {
@@ -2118,17 +2136,22 @@ function renderFleet(){
       case 'name': return r.o.n;
       case 'rocks': return r.rocks || 0;
       case 'm3': case 'ttc': return r.m3;
+      case 'cm3': return r.cm3 == null ? -Infinity : r.cm3;
       case 'ref': case 'refh': return r.ref == null ? -Infinity : r.ref;
       case 'comp': case 'comph': return r.comp == null ? -Infinity : r.comp;
-      case 'pct': return r.pct == null ? -Infinity : r.pct;
+      case 'raw': case 'rawh': return r.raw == null ? -Infinity : r.raw;
       default: return 0;
     }
   };
   const on = state.fleet.iskh;
-  // a hidden hourly column must never stay the sort key (the ▲/▼ arrow would sit on no
-  // visible header) — each one remaps to its visible twin, which orders identically
-  if (!on && ['refh', 'comph', 'ttc'].includes(state.fleet.sortKey))
-    state.fleet.sortKey = { refh: 'ref', comph: 'comp', ttc: 'm3' }[state.fleet.sortKey];
+  // the hourly view REPLACES the per-m³ columns (same ranking scaled by the rate —
+  // both at once is clutter), so a persisted sort on a now-hidden column remaps to its
+  // visible twin in EITHER direction; the twins order identically. Clear time and
+  // compressed m³ stay visible in both states.
+  if (!on && ['refh', 'comph', 'rawh'].includes(state.fleet.sortKey))
+    state.fleet.sortKey = { refh: 'ref', comph: 'comp', rawh: 'raw' }[state.fleet.sortKey];
+  if (on && ['ref', 'comp', 'raw'].includes(state.fleet.sortKey))
+    state.fleet.sortKey = { ref: 'refh', comp: 'comph', raw: 'rawh' }[state.fleet.sortKey];
   const k = state.fleet.sortKey, dir = state.fleet.sortDir;
   rows.sort((a, b) => {
     const x = sv(a, k), y = sv(b, k);
@@ -2140,12 +2163,11 @@ function renderFleet(){
     { k: 'name', h: 'ore' },
     { k: 'rocks', h: 'rocks' },
     { k: 'm3', h: 'total m³' },
-    { k: 'ref', h: 'refined ISK/m³' },
-    ...(on ? [{ k: 'refh', h: 'refined ISK/h' }] : []),
-    { k: 'comp', h: 'compressed ISK/m³' },
-    ...(on ? [{ k: 'comph', h: 'compressed ISK/h' }] : []),
-    { k: 'pct', h: '% of best (' + (vc === 'comp' ? 'compressed' : 'refined') + ')' },
-    ...(on ? [{ k: 'ttc', h: 'clear time' }] : []),
+    { k: 'cm3', h: 'compressed m³' },
+    ...(on
+      ? [{ k: 'refh', h: 'refined ISK/h' }, { k: 'comph', h: 'compressed ISK/h' }, { k: 'rawh', h: 'raw ISK/h' }]
+      : [{ k: 'ref', h: 'refined ISK/m³' }, { k: 'comp', h: 'compressed ISK/m³' }, { k: 'raw', h: 'raw ISK/m³' }]),
+    { k: 'ttc', h: 'clear time' },
   ];
   const tbl = el('table', 'plan');
   const thead = el('thead'), trh = el('tr');
@@ -2166,9 +2188,20 @@ function renderFleet(){
     if (title) td.title = title;
     return td;
   };
-  const iskCell = (r, side, perHour) => {   // side: 'ref' | 'comp'
-    const v = side === 'ref' ? r.ref : r.comp;
-    const st = side === 'ref' ? r.refState : r.compState;
+  const iskCell = (r, side, perHour) => {   // side: 'ref' | 'comp' | 'raw'
+    const v = r[side];
+    const st = side === 'ref' ? r.refState : side === 'comp' ? r.compState : r.rawState;
+    const basisName = side === 'ref' ? 'refined' : side === 'comp' ? 'compressed' : 'raw';
+    // the inline per-basis share of THAT basis's best row — rate-independent, so it
+    // rides on whichever cell (per-m³ or hourly) the toggle is showing
+    const pctTag = td => {
+      const p = r[side + 'Pct'];
+      if (p == null) return;
+      const sp = el('span', 'pctag', '· ' + fmt.format(Math.round(p)) + '%');
+      sp.title = 'share of the best ' + basisName + ' row'
+        + (r.ice ? ' among ice — ice only ever ranks against other ice' : '');
+      td.appendChild(sp);
+    };
     if (st === 'pending') return el('td', 'num hint', '…');
     if (v == null){
       const td = el('td', 'num');
@@ -2177,25 +2210,46 @@ function renderFleet(){
       td.appendChild(st === 'failed'
         ? fleetFlag('fetch failed', true,
           'the Jita price fetch failed (network/ESI error) — “refresh profit-mode prices” retries now; failures are not kept across reloads')
-        : fleetFlag(st === 'none' ? 'no refine outputs' : 'unpriced', false,
-          side === 'comp' ? 'neither the compressed type nor the raw ore has a Jita ' + state.priceBasis + ' book'
-            : 'none of this ore’s refine outputs could be priced'));
+        : fleetFlag(st === 'none' ? (side === 'comp' ? 'no compressed variant' : 'no refine outputs') : 'unpriced', false,
+          side === 'comp'
+            ? (st === 'none' ? 'this ore has no “Compressed …” type — sell it raw or refined instead'
+              : 'the compressed type has no Jita ' + state.priceBasis + ' book')
+            : side === 'raw'
+              ? 'the ore itself has no Jita ' + state.priceBasis + ' book'
+              : 'none of this ore’s refine outputs could be priced'));
       return td;
     }
     if (perHour){
       // the entered rate is an ORE m³/h — ice harvests fixed units per cycle and Mercoxit
-      // mines at its own deep-core yield, so an hourly figure from that rate would be wrong
-      if (r.ice || r.merc) return numTd(null, '—', r.ice
-        ? 'ice harvesters cycle per unit, not per m³ — your ore yield does not apply'
-        : 'Mercoxit mines at its own deep-core yield — your ore yield does not apply');
-      if (!rate) return numTd(null, '—', 'enter your ship’s yield in the row above');
-      return numTd(v * rate, fmtBig(v * rate), fmt.format(Math.round(v * rate)) + ' ISK/h at ' + fmt.format(Math.round(rate)) + ' m³/h');
+      // mines at its own deep-core yield, so an hourly figure from that rate would be
+      // wrong; those rows keep their per-m³ value (greyed) so the per-basis % stays visible
+      if (r.ice || r.merc){
+        const td = numTd(v, fmt.format(Math.round(v * 100) / 100),
+          basisName + ' ISK/m³ shown — ' + (r.ice
+            ? 'ice harvesters cycle per unit, not per m³, so your ore yield gives no hourly figure'
+            : 'Mercoxit mines at its own deep-core yield, so your ore yield gives no hourly figure'));
+        td.className = 'num hint';
+        pctTag(td);
+        return td;
+      }
+      if (!rate){
+        const td = numTd(null, '—', 'enter your ship’s yield in the row above');
+        pctTag(td);
+        return td;
+      }
+      const td = numTd(v * rate, fmtBig(v * rate),
+        fmt.format(Math.round(v * rate)) + ' ISK/h at ' + fmt.format(Math.round(rate)) + ' m³/h (' + basisName + ')' + netSuffix);
+      pctTag(td);
+      return td;
     }
     const td = numTd(v, fmt.format(Math.round(v * 100) / 100),
       (side === 'ref'
         ? 'refine outputs × ' + (Math.round(r.r.pct * 10) / 10) + '% ÷ (portion × m³/unit) · ' + r.r.detail
-        : (r.compTag || ('compressed Jita ' + state.priceBasis + ' ÷ (unit m³ × ' + r.cratio
-          + ') — ' + r.cratio + ' ore unit' + (r.cratio === 1 ? '' : 's') + ' per compressed unit, derived from CCP’s reprocessing data'))) + netSuffix);
+        : side === 'comp'
+          ? 'compressed Jita ' + state.priceBasis + ' ÷ (unit m³ × ' + r.cratio
+            + ') — ' + r.cratio + ' ore unit' + (r.cratio === 1 ? '' : 's') + ' per compressed unit, derived from CCP’s reprocessing data'
+          : 'the ore’s own Jita ' + state.priceBasis + ' ÷ unit m³ — sold raw, uncompressed and unrefined') + netSuffix);
+    pctTag(td);
     if (side === 'ref' && r.refState === 'partial'){
       if (r.unpriced.length)
         td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
@@ -2204,7 +2258,6 @@ function renderFleet(){
         td.appendChild(fleetFlag('fetch failed: ' + r.failed.join(', '), true,
           'the price fetch for these refine outputs failed (network/ESI error) — the value shown excludes them; “refresh profit-mode prices” retries now'));
     }
-    if (side === 'comp' && r.compTag) td.appendChild(fleetFlag('raw', true, r.compTag));
     if (side === 'comp' && r.cvOdd)
       td.appendChild(fleetFlag('volume?', true,
         'the compressed type’s m³ does not follow the usual volume shrink (ore ~1/100, ice ~1/10 of the raw m³) — double-check this type in game'));
@@ -2220,24 +2273,29 @@ function renderFleet(){
     if (r.merc) tdn.appendChild(fleetFlag('deep-core — needs Mercoxit crystals, separate yield', true,
       'Mercoxit takes deep-core mining crystals and mines at its own (lower) yield — ISK/h and clear time from your normal yield do not apply'));
     if (r.ice) tdn.appendChild(fleetFlag('ice — unit-based harvesting, compare only against other ice', true,
-      'ice harvesters cycle per unit, not per m³ — the %-of-best column ranks ice against other ice only'));
+      'ice harvesters cycle per unit, not per m³ — the per-basis % ranks ice against other ice only'));
     tr.appendChild(tdn);
     tr.appendChild(r.rocks != null ? numTd(r.rocks, String(r.rocks))
       : numTd(null, '—', 'an expected chunk forecast — no scanned rocks'));
     tr.appendChild(numTd(r.m3, fmt.format(Math.round(r.m3)) + ' m³',
       fmt.format(Math.round(r.units)) + ' units of ' + r.o.n));
-    tr.appendChild(iskCell(r, 'ref', false));
-    if (on) tr.appendChild(iskCell(r, 'ref', true));
-    tr.appendChild(iskCell(r, 'comp', false));
-    if (on) tr.appendChild(iskCell(r, 'comp', true));
-    tr.appendChild(r.pct == null ? el('td', 'num hint', '—')
-      : numTd(r.pct, fmt.format(Math.round(r.pct * 10) / 10) + '%'));
-    if (on) tr.appendChild((r.ice || r.merc)
+    tr.appendChild(r.cm3 != null
+      ? numTd(r.cm3, fmt.format(Math.round(r.cm3)) + ' m³',
+        fmt.format(Math.round(r.units)) + ' units ÷ ' + r.cratio + ' × ' + r.o.cv
+        + ' m³ per compressed unit — the haul volume after compression')
+      : numTd(null, '—', 'no compressed variant — this ore hauls at its raw volume'));
+    // the value columns: per-m³ with the hourly view off, per-hour with it on — the
+    // hourly numbers carry the same ranking scaled by the rate, so both would be clutter
+    tr.appendChild(iskCell(r, 'ref', on));
+    tr.appendChild(iskCell(r, 'comp', on));
+    tr.appendChild(iskCell(r, 'raw', on));
+    tr.appendChild((r.ice || r.merc)
       ? numTd(null, '—', r.ice
         ? 'ice harvesters cycle per unit, not per m³ — a clear time from your ore yield does not apply'
         : 'Mercoxit mines at its own deep-core yield — a clear time from your ore yield does not apply')
       : rate ? numTd(r.m3 / rate, hFmt(r.m3 / rate),
-        fmt.format(Math.round(r.m3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h') : numTd(null, '—'));
+        fmt.format(Math.round(r.m3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h')
+      : numTd(null, '—', 'enter your ship’s yield (toggle ISK/h on) for clear times'));
     tb.appendChild(tr);
   }
 
@@ -2247,10 +2305,14 @@ function renderFleet(){
   // clear time and the per-hour averages are not driven by rocks the rate cannot touch
   const refIsk = rows.reduce((s, r) => s + (r.ref != null ? r.ref * r.m3 : 0), 0);
   const compIsk = rows.reduce((s, r) => s + (r.comp != null ? r.comp * r.m3 : 0), 0);
+  const rawIsk = rows.reduce((s, r) => s + (r.raw != null ? r.raw * r.m3 : 0), 0);
+  const totCm3 = rows.reduce((s, r) => s + (r.cm3 != null ? r.cm3 : 0), 0);
+  const allCm3 = rows.every(r => r.cm3 != null);
   const mine = rows.filter(r => !r.ice && !r.merc);
   const mineM3 = mine.reduce((s, r) => s + r.m3, 0);
   const mineRefIsk = mine.reduce((s, r) => s + (r.ref != null ? r.ref * r.m3 : 0), 0);
   const mineCompIsk = mine.reduce((s, r) => s + (r.comp != null ? r.comp * r.m3 : 0), 0);
+  const mineRawIsk = mine.reduce((s, r) => s + (r.raw != null ? r.raw * r.m3 : 0), 0);
   const excl = mineM3 < totM3 ? ' — ice/Mercoxit rows excluded (your ore yield does not mine them)' : '';
   const totH = (rate && mineM3 > 0) ? mineM3 / rate : null;
   const trt = el('tr', 'total');
@@ -2259,12 +2321,27 @@ function renderFleet(){
     ? numTd(null, '—', 'an expected chunk forecast — no scanned rocks')
     : numTd(totRocks, String(totRocks)));
   trt.appendChild(numTd(totM3, fmt.format(Math.round(totM3)) + ' m³'));
-  trt.appendChild(numTd(refIsk, fmtBig(refIsk) + ' ISK', 'the whole field, refined at your yields (priced rows only)' + netSuffix));
-  if (on) trt.appendChild(totH ? numTd(mineRefIsk / totH, fmtBig(mineRefIsk / totH), 'field average, refined' + excl + netSuffix) : numTd(null, '—'));
-  trt.appendChild(numTd(compIsk, fmtBig(compIsk) + ' ISK', 'the whole field, compressed (priced rows only)' + netSuffix));
-  if (on) trt.appendChild(totH ? numTd(mineCompIsk / totH, fmtBig(mineCompIsk / totH), 'field average, compressed' + excl + netSuffix) : numTd(null, '—'));
-  trt.appendChild(el('td'));
-  if (on) trt.appendChild(totH ? numTd(totH, hFmt(totH),
+  trt.appendChild(rows.some(r => r.cm3 != null)
+    ? numTd(totCm3, fmt.format(Math.round(totCm3)) + ' m³',
+      'the haul volume after compressing everything compressible'
+      + (allCm3 ? '' : ' — rows with no compressed variant excluded (they haul at raw volume)'))
+    : numTd(null, '—', 'nothing here has a compressed variant'));
+  // one totals cell per basis: the field VALUE is the number; with the hourly view on,
+  // the field-average ISK/h rides along as a muted suffix (mineable subset only)
+  const totCell = (fieldIsk, mineIsk, label) => {
+    const td = numTd(fieldIsk, fmtBig(fieldIsk) + ' ISK',
+      'the whole field, ' + label + ' (priced rows only)' + netSuffix);
+    if (on && totH){
+      const sp = el('span', 'pctag', '· ' + fmtBig(mineIsk / totH) + '/h');
+      sp.title = 'field average, ' + label + excl + netSuffix;
+      td.appendChild(sp);
+    }
+    return td;
+  };
+  trt.appendChild(totCell(refIsk, mineRefIsk, 'refined at your yields'));
+  trt.appendChild(totCell(compIsk, mineCompIsk, 'compressed'));
+  trt.appendChild(totCell(rawIsk, mineRawIsk, 'sold raw'));
+  trt.appendChild(totH ? numTd(totH, hFmt(totH),
     fmt.format(Math.round(mineM3)) + ' m³ ÷ ' + fmt.format(Math.round(rate)) + ' m³/h' + excl) : numTd(null, '—'));
   tb.appendChild(trt);
   tbl.appendChild(tb);
@@ -2342,9 +2419,10 @@ $('fleetTable').addEventListener('click', e => {
     const key = th.dataset.sort;
     if (state.fleet.sortKey === key) state.fleet.sortDir = -state.fleet.sortDir;
     else { state.fleet.sortKey = key; state.fleet.sortDir = key === 'name' ? 1 : -1; }
-    // the %-of-best baseline follows the value column being sorted on
+    // the best-row highlight follows the value column being sorted on
     if (key === 'ref' || key === 'refh') state.fleet.valueCol = 'ref';
     else if (key === 'comp' || key === 'comph') state.fleet.valueCol = 'comp';
+    else if (key === 'raw' || key === 'rawh') state.fleet.valueCol = 'raw';
     renderFleet(); persist();
     return;
   }
@@ -2571,10 +2649,11 @@ function restore(){
     state.fleet.rate = numOrNull(f.rate);
     state.fleet.cycM3 = numOrNull(f.cycM3);
     state.fleet.cycSec = numOrNull(f.cycSec);
-    if (['name', 'rocks', 'm3', 'ref', 'refh', 'comp', 'comph', 'pct', 'ttc'].includes(f.sortKey))
-      state.fleet.sortKey = f.sortKey;
+    if (['name', 'rocks', 'm3', 'cm3', 'ref', 'refh', 'comp', 'comph', 'raw', 'rawh', 'ttc'].includes(f.sortKey))
+      state.fleet.sortKey = f.sortKey;   // pre-raw storage may say 'pct' — that column is
+                                         // gone, so it falls back to the default sort
     state.fleet.sortDir = f.sortDir === 1 ? 1 : -1;
-    if (f.valueCol === 'ref' || f.valueCol === 'comp') state.fleet.valueCol = f.valueCol;
+    if (['ref', 'comp', 'raw'].includes(f.valueCol)) state.fleet.valueCol = f.valueCol;
     if (f.prices && typeof f.prices === 'object')
       for (const [t, p] of Object.entries(f.prices)){
         // err entries were never real prices — skip them (also cleans up storage written

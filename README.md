@@ -263,9 +263,22 @@ densities, side by side:
   by units** — one compressed unit per ore unit, only the *volume* shrinks (~100× for
   ore, ~10× for ice) — and the per-type unit ratio is derived from the SDE's own
   reprocessing outputs rather than assumed (CCP changed this mechanic in 2023; the
-  pre-2023 100:1 unit ratio would price compressed rock ~100× too low). Types with no
-  compressed variant or no order book fall back to the raw ore's own price with a
-  visible `raw` tag.
+  pre-2023 100:1 unit ratio would price compressed rock ~100× too low). No compressed
+  variant or no order book shows the honest unpriced flag — the raw column beside it is
+  the fallback story now.
+- **raw ISK/m³** — the untouched ore itself at its **own** Jita book (each variant
+  prices from its own type id, not the base family's) divided by its unit volume. No
+  ratio, no refining — selling the rocks exactly as they came out of the belt.
+
+A **compressed m³** column shows the haul volume after compression — units ÷ the derived
+unit ratio × the compressed type's own m³ (ores shrink ~100×, ice ~10×); a type with no
+compressed variant hauls at raw volume and is excluded from the totals-row figure, the
+haul-planning number for the whole field or chunk. Every value cell carries a small
+muted percentage: that row's share of the **best row on that same basis**, so all three
+rankings read at a glance (the old single "% of best" column is gone). Toggling
+**ISK/h** swaps the three per-m³ columns for hourly ones — the same ranking scaled by
+your yield, percentages riding along; ice/Mercoxit rows keep their greyed per-m³ value
+there, since an ore-yield hourly figure would be wrong for them.
 
 The same paste box also plans **ahead of a moon pop**: paste your alliance's Auth
 **"Extraction details"** copy (the upcoming extraction's m³ per ore) and it is
@@ -279,7 +292,7 @@ inert, EU and US number locales both fine, the Total row used as a checksum (a
 disagreement with the summed ore rows earns a status note, never an error), and Auth's
 rarity tags cross-checked against the SDE tier (the data wins, mismatches noted). Either
 way it flows through the very same pipeline: quantity = m³ ÷ unit volume,
-refined vs compressed ISK/m³, seller netting, ISK/h and time-to-clear (which at your
+refined vs compressed vs raw ISK/m³, seller netting, ISK/h and time-to-clear (which at your
 fleet's yield is precisely *how long the chunk takes to chew*). The rocks column shows
 `—` (it's a chunk forecast, not scanned rocks), the status names what was detected
 ("Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)"), and a
@@ -289,8 +302,9 @@ percentages carry no quantities — with a pointer at the Extraction copy and at
 production-mode moons section. Ambiguous pastes pick the format that parses more data
 rows, ties keeping the survey interpretation.
 
-The table sorts by any column; the %-of-best column follows whichever value column you
-sorted on, the best rock is highlighted, and a totals row values the whole field. Ice is
+The table sorts by any column, the best rock on the sorted basis is highlighted, and a
+totals row values the whole field on all three bases (plus a muted field-average ISK/h
+per basis when the hourly view is on). Ice is
 ranked only against other ice (unit-based harvesting), Mercoxit is flagged deep-core
 (own crystals, own yield), and unpriced types show a flag — never a fake zero. A **sold
 by** selector next to the ISK/h toggle picks whose **sales tax** nets the displayed

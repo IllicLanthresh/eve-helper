@@ -123,7 +123,7 @@ const MARKET_TIDS = {
   'Heavy Water': 16272, 'Liquid Ozone': 16273, 'Helium Isotopes': 16274,
   'Strontium Clathrates': 16275,
   'Fiery Kernite': 17453, 'Magma Mercoxit': 17869, 'Banidine': 28617,
-  'Dense Veldspar': 17471,
+  'Dense Veldspar': 17471, 'Veldspar': 1230,
   'Compressed Chromite': 62480,
 };
 
@@ -145,6 +145,8 @@ const BOOKS = {
   'Compressed Clear Icicle': { buys: [], sells: [{ p: 160000, v: 1e6 }] },
   'Fiery Kernite': { buys: [], sells: [{ p: 60, v: 1e6 }] },
   'Banidine': { buys: [], sells: [{ p: 40, v: 1e6 }] },
+  'Veldspar': { buys: [], sells: [{ p: 12, v: 1e6 }] },
+  'Dense Veldspar': { buys: [], sells: [{ p: 25, v: 1e6 }] },
   'Heavy Water': { buys: [], sells: [{ p: 15, v: 1e6 }] },
   'Liquid Ozone': { buys: [], sells: [{ p: 90, v: 1e6 }] },
   'Helium Isotopes': { buys: [], sells: [{ p: 850, v: 1e6 }] },
@@ -206,8 +208,11 @@ const EXP = {
   compTri: 2500 / (16 * 1),          // 156.25
   compBrim: 1200 / (10 * 1),         // 120
   compIce: 160000 / (1000 * 1),      // 160 — identical before and after the ratio rework
-  compFieryRaw: 60 / 1.2,            // 50 — raw-ore fallback (compressed has no book)
-  compBanRaw: 40 / 0.1,              // 400 — raw-ore fallback (no compressed variant)
+  // raw ISK/m³ = the ore's OWN book ÷ its unit volume — no ratio, it IS the ore
+  rawVeld: 12 / 0.1,                 // 120
+  rawDense: 25 / 0.1,                // 250 — the VARIANT's own book, not the base's
+  rawFiery: 60 / 1.2,                // 50
+  rawBan: 40 / 0.1,                  // 400
 };
 
 /* the 10-line scan pasted in the skills scenario — EU and US numbers, a header line */
@@ -508,8 +513,9 @@ const rawRows = page => page.evaluate(() => {
   const p = parseSurvey(document.getElementById('fleetScan').value);
   const { rows } = fleetCompute(p.rows);
   return rows.map(r => ({
-    name: r.o.n, ref: r.ref, comp: r.comp, refState: r.refState, compState: r.compState,
-    compTag: r.compTag, ice: r.ice, merc: r.merc, rocks: r.rocks, units: r.units,
+    name: r.o.n, ref: r.ref, comp: r.comp, raw: r.raw, cm3: r.cm3,
+    refState: r.refState, compState: r.compState, rawState: r.rawState,
+    ice: r.ice, merc: r.merc, rocks: r.rocks, units: r.units,
     m3: r.m3, unpriced: r.unpriced, refPct: r.r.pct, detail: r.r.detail,
   }));
 });
@@ -520,7 +526,7 @@ const rawProfit = page => page.evaluate(() => {
   const { rows } = fleetCompute(p.rows);
   return { kind: p.kind, moons: p.moons || 0, rows: rows.map(r => ({
     name: r.o.n, rocks: r.rocks, units: r.units, m3: r.m3, ref: r.ref, comp: r.comp,
-    refState: r.refState, compState: r.compState })) };
+    raw: r.raw, cm3: r.cm3, refState: r.refState, compState: r.compState, rawState: r.rawState })) };
 });
 
 const cp = v => v == null ? null : parseFloat(v);   // data-copy attr -> number
@@ -956,17 +962,41 @@ H.run('mine-fleet', async () => {
     check('Dense Veldspar: refined (150.28) beats compressed (90)',
       R('Dense Veldspar').ref > R('Dense Veldspar').comp,
       R('Dense Veldspar').ref + ' vs ' + R('Dense Veldspar').comp);
-    near('a compressed type with no book falls back to the RAW ore price: Fiery Kernite 60 ÷ 1.2',
-      R('Fiery Kernite').comp, EXP.compFieryRaw, 1e-9);
-    check('...and says so', /no Jita sell book — raw ore price/.test(R('Fiery Kernite').compTag),
-      R('Fiery Kernite').compTag);
-    near('an ore with no compressed variant prices raw too: Banidine 40 ÷ 0.1',
-      R('Banidine').comp, EXP.compBanRaw, 1e-9);
-    check('...tagged as such', /no compressed variant/.test(R('Banidine').compTag), R('Banidine').compTag);
-    eq('Magma Mercoxit (neither compressed nor raw book) is unpriced', R('Magma Mercoxit').compState, 'unpriced');
+    // with a REAL raw column beside it, compressed no longer falls back to the raw
+    // price — a missing compressed book is honestly unpriced, the raw column carries
+    // the raw story (the old silent fallback would have shown the same number twice)
+    eq('a compressed type with no book is unpriced — no more raw-price fallback',
+      R('Fiery Kernite').compState, 'unpriced');
+    eq('...comp null', R('Fiery Kernite').comp, null);
+    eq('an ore with no compressed variant reports exactly that', R('Banidine').compState, 'none');
+    eq('...comp null too', R('Banidine').comp, null);
+    eq('Magma Mercoxit (compressed type bookless) is unpriced', R('Magma Mercoxit').compState, 'unpriced');
     eq('...comp null, not zero', R('Magma Mercoxit').comp, null);
 
-    section('the rendered table: flags, best rows, % of best');
+    section('raw ISK/m³: the ore’s own book — the third value basis');
+    near('Veldspar sells raw at ITS book: 12 ISK ÷ 0.1 m³ = 120', R('Veldspar').raw, EXP.rawVeld, 1e-9);
+    near('Dense Veldspar prices from ITS OWN tid, not the base family’s: 25 ÷ 0.1 = 250',
+      R('Dense Veldspar').raw, EXP.rawDense, 1e-9);
+    check('...a different number than plain Veldspar’s raw',
+      Math.abs(EXP.rawDense - EXP.rawVeld) > 1, EXP.rawDense + ' vs ' + EXP.rawVeld);
+    near('Fiery Kernite raw (its compressed column is unpriced): 60 ÷ 1.2',
+      R('Fiery Kernite').raw, EXP.rawFiery, 1e-9);
+    near('Banidine raw (it has no compressed variant at all): 40 ÷ 0.1',
+      R('Banidine').raw, EXP.rawBan, 1e-9);
+    eq('an ore with no book of its own is honestly unpriced raw',
+      R('Brimful Zeolites').rawState, 'unpriced');
+    eq('...raw null, not zero', R('Brimful Zeolites').raw, null);
+    eq('...ice included (no Clear Icicle book here)', R('Clear Icicle').rawState, 'unpriced');
+
+    section('compressed m³: the haul volume after compression');
+    near('Veldspar: 100,000 units × 0.001 m³ per compressed unit = 100 m³ (was 10,000 raw)',
+      R('Veldspar').cm3, 100, 1e-9);
+    near('Triclinic Bistot: 1,412 × 0.16', R('Triclinic Bistot').cm3, 225.92, 1e-9);
+    near('ice compresses ~10:1 by volume: Clear Icicle 1,204 units × 100 m³ = 120,400 (was 1,204,000)',
+      R('Clear Icicle').cm3, 120400, 1e-9);
+    eq('no compressed variant → no compressed volume (Banidine hauls raw)', R('Banidine').cm3, null);
+
+    section('the rendered table: flags, best rows, per-basis %');
     tbl = await tableData(s.page);
     const T = n => tbl.rows.find(r => r.name === n) || { copy: {}, text: {}, title: {}, flags: [] };
     eq('default sort is refined ISK/m³ descending — Clear Icicle first', tbl.rows[0].name, 'Clear Icicle');
@@ -976,24 +1006,58 @@ H.run('mine-fleet', async () => {
       && /derived from CCP’s reprocessing data/.test(T('Veldspar').title.comp),
       T('Veldspar').title.comp);
     check('Brimful Zeolites is the best ORE (ice excluded from that contest)', T('Brimful Zeolites').best);
-    eq('...at 100% of best', T('Brimful Zeolites').copy.pct, '100');
+    // the standalone "% of best" column is RETIRED — each value cell carries its own
+    // muted share of THAT basis's best row instead, so all three rankings read at once
+    check('no standalone % column exists any more', !tbl.keys.includes('pct'), JSON.stringify(tbl.keys));
+    check('...Brimful’s refined cell says 100% inline', /· 100%/.test(T('Brimful Zeolites').text.ref),
+      T('Brimful Zeolites').text.ref);
+    check('...while its data-copy stays the pure ISK value',
+      Math.abs(cp(T('Brimful Zeolites').copy.ref) - EXP.refBrim) < 0.006, T('Brimful Zeolites').copy.ref);
+    // the three bases crown three DIFFERENT best rows in this fixture — each cell's %
+    // is computed against its own basis's champion
+    check('refined best is Brimful; Veldspar’s refined % says so',
+      new RegExp('· ' + Math.round(EXP.refVeld / EXP.refBrim * 100) + '%').test(T('Veldspar').text.ref),
+      T('Veldspar').text.ref);
+    check('compressed best is Triclinic Bistot (156.25): its compressed cell reads 100%',
+      /· 100%/.test(T('Triclinic Bistot').text.comp), T('Triclinic Bistot').text.comp);
+    check('...Veldspar’s compressed % is 150 ÷ 156.25 = 96%',
+      /· 96%/.test(T('Veldspar').text.comp), T('Veldspar').text.comp);
+    check('...and Brimful’s is 120 ÷ 156.25 = 77%',
+      /· 77%/.test(T('Brimful Zeolites').text.comp), T('Brimful Zeolites').text.comp);
+    check('raw best is Banidine (400): its raw cell reads 100%',
+      /· 100%/.test(T('Banidine').text.raw), T('Banidine').text.raw);
+    check('...Dense Veldspar’s raw % is 250 ÷ 400 = 63%',
+      /· 63%/.test(T('Dense Veldspar').text.raw), T('Dense Veldspar').text.raw);
     check('Clear Icicle out-refines every ore (234 > 156) yet only wins the ICE pool',
       EXP.refIce > EXP.refBrim && T('Clear Icicle').best);
-    eq('...also shown as 100% — of the ice pool', T('Clear Icicle').copy.pct, '100');
+    check('...its refined cell reads 100% of the ice pool', /· 100%/.test(T('Clear Icicle').text.ref),
+      T('Clear Icicle').text.ref);
+    check('...its compressed cell too — per-basis ice baselines are independent',
+      /· 100%/.test(T('Clear Icicle').text.comp), T('Clear Icicle').text.comp);
+    check('...while its unpriced raw cell carries no %', !/%/.test(T('Clear Icicle').text.raw),
+      T('Clear Icicle').text.raw);
     check('...and carries the ice flag', T('Clear Icicle').flags.some(f => /^ice — unit-based/.test(f)),
       JSON.stringify(T('Clear Icicle').flags));
-    near('Dense Veldspar % of best = dense ÷ Brimful', cp(T('Dense Veldspar').copy.pct),
-      EXP.refDense / EXP.refBrim * 100, 0.006);
+    check('Dense Veldspar’s refined % = dense ÷ Brimful',
+      new RegExp('· ' + Math.round(EXP.refDense / EXP.refBrim * 100) + '%').test(T('Dense Veldspar').text.ref),
+      T('Dense Veldspar').text.ref);
     check('Magma Mercoxit carries the deep-core flag',
       T('Magma Mercoxit').flags.some(f => /deep-core/.test(f)), JSON.stringify(T('Magma Mercoxit').flags));
     check('...its compressed cell shows — with an unpriced flag, not 0',
       /—/.test(T('Magma Mercoxit').text.comp) && T('Magma Mercoxit').flags.includes('unpriced'),
       JSON.stringify({ text: T('Magma Mercoxit').text.comp, flags: T('Magma Mercoxit').flags }));
     near('...while its refined cell is still priced', cp(T('Magma Mercoxit').copy.ref), EXP.refMag, 0.006);
-    check('Fiery Kernite compressed is flagged raw',
-      T('Fiery Kernite').flags.includes('raw'), JSON.stringify(T('Fiery Kernite').flags));
+    check('Fiery Kernite’s compressed cell is flagged unpriced — the old raw-fallback tag is gone',
+      T('Fiery Kernite').flags.includes('unpriced') && !T('Fiery Kernite').flags.includes('raw'),
+      JSON.stringify(T('Fiery Kernite').flags));
+    near('...its raw column carries the raw story instead', cp(T('Fiery Kernite').copy.raw), EXP.rawFiery, 0.006);
     check('Banidine refined is flagged "no refine outputs"',
       T('Banidine').flags.includes('no refine outputs'), JSON.stringify(T('Banidine').flags));
+    check('...and its compressed cell "no compressed variant"',
+      T('Banidine').flags.includes('no compressed variant'), JSON.stringify(T('Banidine').flags));
+    near('the compressed m³ cell carries the haul volume (Clear Icicle 120,400)',
+      cp(T('Clear Icicle').copy.cm3), 120400, 0.006);
+    eq('...and Banidine’s shows —', T('Banidine').text.cm3, '—');
     check('Clear Icicle refined is flagged with the excluded output',
       T('Clear Icicle').flags.some(f => f === 'excl. Strontium Clathrates'),
       JSON.stringify(T('Clear Icicle').flags));
@@ -1007,30 +1071,49 @@ H.run('mine-fleet', async () => {
       /section-2 placeholders/.test(await s.page.$eval('#fleetPriceNote', el => el.textContent)),
       await s.page.$eval('#fleetPriceNote', el => el.textContent));
 
-    // field totals: Σ value × m³ over priced rows only
+    // field totals: Σ value × m³ over priced rows only, per basis
     const totalRow = tbl.rows.find(r => r.total);
     const expRefIsk = EXP.refIce * M3.ice + EXP.refBrim * M3.brim + EXP.refDense * M3.dense
       + EXP.refConc * M3.conc + EXP.refVeld * M3.veld + EXP.refTri * M3.tri
       + EXP.refFiery * M3.fiery + EXP.refJasp * M3.jasp + EXP.refMag * M3.mag;
-    const expCompIsk = EXP.compBanRaw * M3.ban + EXP.compVeld * M3.veld + EXP.compIce * M3.ice
+    // no raw-price fallback in the compressed totals any more: only real compressed books
+    const expCompIsk = EXP.compVeld * M3.veld + EXP.compIce * M3.ice
       + EXP.compTri * M3.tri + EXP.compConc * M3.conc + EXP.compBrim * M3.brim
-      + EXP.compDense * M3.dense + EXP.compFieryRaw * M3.fiery + EXP.compJasp * M3.jasp;
+      + EXP.compDense * M3.dense + EXP.compJasp * M3.jasp;
+    const expRawIsk = EXP.rawVeld * M3.veld + EXP.rawDense * M3.dense
+      + EXP.rawFiery * M3.fiery + EXP.rawBan * M3.ban;
+    // the haul volume: units × cv per compressible type (ratio 1), Banidine excluded
+    const expCm3 = 100000 * 0.001 + 64213 * 0.001 + 41500 * 0.001 + 8014 * 0.012
+      + 3205 * 0.02 + 1412 * 0.16 + 402 * 0.4 + 61240 * 0.1 + 1204 * 100;
     check('a field-value totals row renders', !!totalRow);
     near('total m³ over the field', cp(totalRow.copy.m3), TOT_M3, 0.006);
     near('field refined ISK = Σ ref × m³, unpriced rows excluded (Banidine adds nothing)',
       cp(totalRow.copy.ref), expRefIsk, 0.02);
-    near('field compressed ISK = Σ comp × m³, Magma Mercoxit excluded',
+    near('field compressed ISK = Σ comp × m³ over REAL compressed books only',
       cp(totalRow.copy.comp), expCompIsk, 0.02);
+    near('field raw ISK = Σ raw × m³ over the four own-book ores',
+      cp(totalRow.copy.raw), expRawIsk, 0.02);
+    near('field compressed m³ = the haul volume, non-compressible Banidine excluded',
+      cp(totalRow.copy.cm3), expCm3, 0.02);
+    check('...saying so in its tooltip', /no compressed variant excluded/.test(totalRow.title.cm3),
+      totalRow.title.cm3);
 
     /* ================= ISK/h toggle ================= */
-    section('ISK/h toggle: m³/h, per-cycle, time-to-clear');
-    eq('with ISK/h off the table has 6 columns', tbl.keys.length, 6);
+    section('ISK/h toggle: hourly columns REPLACE the per-m³ ones');
+    check('with ISK/h off the table shows the three per-m³ bases + compressed m³ + clear time',
+      JSON.stringify(tbl.keys) === JSON.stringify(['name', 'rocks', 'm3', 'cm3', 'ref', 'comp', 'raw', 'ttc']),
+      JSON.stringify(tbl.keys));
     await s.page.click('#fleetHrOn');
     await s.page.waitForFunction(() => !document.getElementById('fleetYieldRow').hidden);
     tbl = await tableData(s.page);
-    eq('turning it on adds refined ISK/h, compressed ISK/h and clear time', tbl.keys.length, 9);
-    check('...with no yield entered, the per-hour cells show —',
-      tbl.rows.filter(r => !r.total && r.copy.ref != null).every(r => r.text.refh === '—'));
+    check('turning it on swaps them for the three hourly bases — same ranking scaled by rate',
+      JSON.stringify(tbl.keys) === JSON.stringify(['name', 'rocks', 'm3', 'cm3', 'refh', 'comph', 'rawh', 'ttc']),
+      JSON.stringify(tbl.keys));
+    check('...with no yield entered, mineable rows show — (the per-basis % still rides along)',
+      /^—/.test(tbl.rows.find(r => r.name === 'Veldspar').text.refh)
+      && /^—.*· 63%/.test(tbl.rows.find(r => r.name === 'Dense Veldspar').text.rawh),
+      JSON.stringify([tbl.rows.find(r => r.name === 'Veldspar').text.refh,
+        tbl.rows.find(r => r.name === 'Dense Veldspar').text.rawh]));
     check("...and the row asks for the ship's yield",
       /enter your ship/.test(await s.page.$eval('#fleetRateNote', el => el.textContent)));
 
@@ -1041,27 +1124,39 @@ H.run('mine-fleet', async () => {
     near('refined ISK/h = ISK/m³ × 60,000 m³/h (Veldspar)',
       cp(T2('Veldspar').copy.refh), EXP.refVeld * 60000, 0.006);
     near('compressed ISK/h likewise', cp(T2('Veldspar').copy.comph), EXP.compVeld * 60000, 0.006);
+    near('raw ISK/h too', cp(T2('Veldspar').copy.rawh), EXP.rawVeld * 60000, 0.006);
+    check('...each hourly cell keeps its per-basis % inline (Veldspar comp 96%, Dense raw 63%)',
+      /· 96%/.test(T2('Veldspar').text.comph)
+      && new RegExp('· ' + Math.round(EXP.rawDense / EXP.rawBan * 100) + '%').test(T2('Dense Veldspar').text.rawh),
+      JSON.stringify([T2('Veldspar').text.comph, T2('Dense Veldspar').text.rawh]));
     near('clear time = m³ ÷ rate (Veldspar 10,000 ÷ 60,000 h)', cp(T2('Veldspar').copy.ttc), 10000 / 60000, 0.006);
     eq('...printed in minutes under an hour', T2('Veldspar').text.ttc, '10 min');
     eq('...and in hours above one (Brimful 612,400 m³)', T2('Brimful Zeolites').text.ttc, '10.2 h');
 
     // the entered rate is an ORE yield — it cannot mine ice (unit-based) or Mercoxit
-    // (deep-core), so no hourly figure may be derived from it for those rows
+    // (deep-core); those rows keep their greyed per-m³ value so the % stays readable
     const MINE_M3 = TOT_M3 - M3.ice - M3.mag;
-    eq('Mercoxit gets no ISK/h from the ore yield', T2('Magma Mercoxit').text.refh, '—');
-    check('...its tooltip says why', /deep-core/.test(T2('Magma Mercoxit').title.refh),
+    near('Mercoxit gets no ISK/h from the ore yield — its hourly cell keeps the per-m³ value, greyed',
+      cp(T2('Magma Mercoxit').copy.refh), EXP.refMag, 0.006);
+    check('...its tooltip says why', /ISK\/m³ shown.*deep-core/.test(T2('Magma Mercoxit').title.refh),
       T2('Magma Mercoxit').title.refh);
-    eq('...nor a clear time', T2('Magma Mercoxit').text.ttc, '—');
-    eq('ice gets no ISK/h from the ore yield either', T2('Clear Icicle').text.comph, '—');
-    eq('...nor a clear time', T2('Clear Icicle').text.ttc, '—');
+    eq('...and it gets no clear time', T2('Magma Mercoxit').text.ttc, '—');
+    near('ice likewise keeps its per-m³ value in the hourly cell',
+      cp(T2('Clear Icicle').copy.comph), EXP.compIce, 0.006);
+    check('...tooltip naming the unit-cycle reason', /ISK\/m³ shown.*cycle per unit/.test(T2('Clear Icicle').title.comph),
+      T2('Clear Icicle').title.comph);
+    eq('...nor a clear time for ice', T2('Clear Icicle').text.ttc, '—');
     near('the totals clear time covers mineable rows only — ice and Mercoxit excluded',
       cp(tbl.rows.find(r => r.total).copy.ttc), MINE_M3 / 60000, 0.006);
     check('...and its tooltip declares the exclusion',
       /ice\/Mercoxit rows excluded/.test(tbl.rows.find(r => r.total).title.ttc),
       tbl.rows.find(r => r.total).title.ttc);
-    const mineRefIsk = expRefIsk - EXP.refIce * M3.ice - EXP.refMag * M3.mag;
-    near('the field-average refined ISK/h uses the same mineable subset on both sides of the ÷',
-      cp(tbl.rows.find(r => r.total).copy.refh), mineRefIsk / (MINE_M3 / 60000), 0.02);
+    // the totals hourly cell keeps the FIELD VALUE as its number, with the mineable-
+    // subset field average riding along as the muted suffix
+    near('the totals refined cell still copies the field VALUE with the hourly view on',
+      cp(tbl.rows.find(r => r.total).copy.refh), expRefIsk, 0.02);
+    check('...with the field-average ISK/h as its muted suffix',
+      /· .+\/h$/.test(tbl.rows.find(r => r.total).text.refh), tbl.rows.find(r => r.total).text.refh);
 
     await s.page.click('#fleetYCycle');
     await s.page.fill('#fleetCycM3', '750');
@@ -1073,37 +1168,52 @@ H.run('mine-fleet', async () => {
     near('...and the ISK/h column follows the derived rate',
       cp(tbl.rows.find(r => r.name === 'Veldspar').copy.refh), EXP.refVeld * (750 * 3600 / 60), 0.05);
 
-    /* ================= sorting and the % of best baseline ================= */
-    section('sorting and the % of best baseline');
+    /* ================= sorting and the best-row highlight ================= */
+    section('sorting: any basis, both views, highlight follows the sorted basis');
+    await s.page.click('#fleetHrOff');
+    await s.page.waitForFunction(() => !state.fleet.iskh);
     await s.page.click('#fleetTable th[data-sort="comp"]');
     await s.page.waitForFunction(() => state.fleet.sortKey === 'comp' && state.fleet.sortDir === -1);
     tbl = await tableData(s.page);
-    eq('sorting by compressed puts raw-priced Banidine (400) first', tbl.rows[0].name, 'Banidine');
-    check('...the % column baseline follows to compressed',
-      tbl.headers.some(h => /% of best \(compressed\)/.test(h)), JSON.stringify(tbl.headers));
-    check('...and Banidine is now the best ore row', tbl.rows[0].best);
-    near('Veldspar sits at 150 ÷ 400 = 37.5% of best',
-      cp(tbl.rows.find(r => r.name === 'Veldspar').copy.pct), EXP.compVeld / EXP.compBanRaw * 100, 0.006);
-    eq('ice still only competes with ice',
-      tbl.rows.find(r => r.name === 'Clear Icicle').copy.pct, '100');
+    eq('sorting by compressed puts ice’s 160 first (ordering mixes pools, the % never does)',
+      tbl.rows[0].name, 'Clear Icicle');
+    check('...highlighted as the compressed ICE champion', tbl.rows[0].best);
+    check('...with Triclinic Bistot highlighted as the compressed ORE champion',
+      (tbl.rows.find(r => r.name === 'Triclinic Bistot') || {}).best, JSON.stringify(tbl.rows.map(r => r.name)));
     await s.page.click('#fleetTable th[data-sort="comp"]');
     await s.page.waitForFunction(() => state.fleet.sortDir === 1);
     tbl = await tableData(s.page);
-    eq('a second click flips the direction — unpriced Magma Mercoxit first', tbl.rows[0].name, 'Magma Mercoxit');
+    eq('a second click flips the direction — the compressed-less rows lead, by name',
+      tbl.rows[0].name, 'Banidine');
+    await s.page.click('#fleetTable th[data-sort="raw"]');
+    await s.page.waitForFunction(() => state.fleet.sortKey === 'raw' && state.fleet.sortDir === -1);
+    tbl = await tableData(s.page);
+    eq('sorting by raw puts Banidine (400) first', tbl.rows[0].name, 'Banidine');
+    check('...highlighted as the best raw row', tbl.rows[0].best);
+    eq('...the raw sort ignores the inline % and orders by value (Dense Veldspar second)',
+      tbl.rows[1].name, 'Dense Veldspar');
 
-    // hiding the hourly columns must never leave the sort on an invisible column
+    // flipping the hourly view must never leave the sort on a hidden column — the
+    // remap works in BOTH directions (per-m³ ↔ hourly twins order identically)
+    await s.page.click('#fleetHrOn');
+    await s.page.waitForFunction(() => state.fleet.iskh && state.fleet.sortKey === 'rawh');
+    tbl = await tableData(s.page);
+    check('a raw sort becomes a rawh sort when the hourly view replaces the columns',
+      tbl.headers.some(h => /raw ISK\/h[▲▼]/.test(h)), JSON.stringify(tbl.headers));
+    eq('...same ordering (Banidine still first)', tbl.rows[0].name, 'Banidine');
     await s.page.click('#fleetTable th[data-sort="comph"]');
     await s.page.waitForFunction(() => state.fleet.sortKey === 'comph' && state.fleet.sortDir === -1);
     await s.page.click('#fleetHrOff');
     await s.page.waitForFunction(() => !state.fleet.iskh && state.fleet.sortKey === 'comp');
     tbl = await tableData(s.page);
-    check('a comph sort remaps to comp when the hourly columns hide — the arrow stays visible',
+    check('...and a comph sort remaps back to comp when the hourly view goes away',
       tbl.headers.some(h => /compressed ISK\/m³[▲▼]/.test(h)), JSON.stringify(tbl.headers));
-    eq('...with the identical ordering (Banidine still first)', tbl.rows[0].name, 'Banidine');
-    // back to the state the persistence checks below expect: hourly on, comp ascending
-    await s.page.click('#fleetHrOn');
+    eq('...with the identical ordering (Clear Icicle first again)', tbl.rows[0].name, 'Clear Icicle');
+    // the state the persistence checks below expect: hourly on, compressed ascending
     await s.page.click('#fleetTable th[data-sort="comp"]');
-    await s.page.waitForFunction(() => state.fleet.iskh && state.fleet.sortDir === 1);
+    await s.page.waitForFunction(() => state.fleet.sortDir === 1);
+    await s.page.click('#fleetHrOn');
+    await s.page.waitForFunction(() => state.fleet.iskh && state.fleet.sortKey === 'comph');
 
     /* ================= persistence across reload ================= */
     section('persistence across reload');
@@ -1124,15 +1234,15 @@ H.run('mine-fleet', async () => {
     eq('...with the cycle volume', persisted.cycM3, 750);
     eq('...and the cycle time', persisted.cycSec, 60);
     eq('...and the direct rate kept for switching back', persisted.rate, 60000);
-    check('the sort key, direction and % baseline persist',
-      persisted.sortKey === 'comp' && persisted.sortDir === 1 && persisted.valueCol === 'comp',
+    check('the sort key, direction and highlight basis persist (comph — the hourly view is on)',
+      persisted.sortKey === 'comph' && persisted.sortDir === 1 && persisted.valueCol === 'comp',
       JSON.stringify(persisted));
     tbl = await tableData(s.page);
-    eq('...so the re-rendered table is still comp-ascending', tbl.rows[0].name, 'Magma Mercoxit');
+    eq('...so the re-rendered table is still compressed-ascending', tbl.rows[0].name, 'Banidine');
     eq('the price cache persists: zero market refetches after reload', s.counters.orders, ordersBefore);
     eq('...and zero name refetches', s.state.namesCalls, namesBefore);
-    near('...with the same exact refined value',
-      cp(tbl.rows.find(r => r.name === 'Veldspar').copy.ref), EXP.refVeld, 0.006);
+    near('...with the same exact refined value (× the persisted 45,000 m³/h cycle rate)',
+      cp(tbl.rows.find(r => r.name === 'Veldspar').copy.refh), EXP.refVeld * 45000, 0.05);
     await s.close();
 
     /* ================= role characters: reprocessor and seller ================= */
@@ -1208,6 +1318,8 @@ H.run('mine-fleet', async () => {
     near('refined ISK/m³ scales by exactly (1 − 3.375%) — Accounting 5',
       raw[0].ref, REF_VELD2 * (1 - TAX1 / 100), 1e-9);
     near('...and compressed ISK/m³ likewise', raw[0].comp, EXP.compVeld * (1 - TAX1 / 100), 1e-9);
+    near('...and raw ISK/m³ too — the third basis nets exactly once like the others',
+      raw[0].raw, EXP.rawVeld * (1 - TAX1 / 100), 1e-9);
     tbl = await tableData(sRole.page);
     near('the rendered refined cell is net', cp(tbl.rows[0].copy.ref), REF_VELD2 * (1 - TAX1 / 100), 0.006);
     const totNet = tbl.rows.find(r => r.total);
@@ -1229,6 +1341,7 @@ H.run('mine-fleet', async () => {
       cp(tbl.rows[0].copy.refh), REF_VELD2 * (1 - TAX1 / 100) * 60000, 0.02);
     near('compressed ISK/h likewise nets exactly once',
       cp(tbl.rows[0].copy.comph), EXP.compVeld * (1 - TAX1 / 100) * 60000, 0.02);
+    near('raw ISK/h too', cp(tbl.rows[0].copy.rawh), EXP.rawVeld * (1 - TAX1 / 100) * 60000, 0.02);
     await sRole.page.click('#fleetHrOff');
 
     await sRole.page.selectOption('#sellChar', String(CHAR2.id));
@@ -1241,6 +1354,7 @@ H.run('mine-fleet', async () => {
       document.getElementById('fleetSellNote').textContent === 'gross — no seller selected');
     raw = await rawRows(sRole.page);
     near('back to gross restores the un-netted value', raw[0].ref, REF_VELD2, 1e-9);
+    near('...raw included', raw[0].raw, EXP.rawVeld, 1e-9);
 
     section('role persistence across reload');
     await sRole.page.selectOption('#sellChar', String(CHAR.id));
@@ -1412,11 +1526,15 @@ H.run('mine-fleet', async () => {
     near('...units = m³ ÷ 10', lop.units, 928511, 1e-9);
     near('Cobaltite 8,489,640 m³', (rp.rows.find(r => r.name === 'Cobaltite') || {}).m3, 8489640, 1e-9);
     near('Otavite 7,424,284 m³', (rp.rows.find(r => r.name === 'Otavite') || {}).m3, 7424284, 1e-9);
+    near('the compressed m³ haul: Cobaltite 848,964 units × 0.1 = 84,896 m³ (vs 8.49M raw)',
+      (rp.rows.find(r => r.name === 'Cobaltite') || {}).cm3, 84896.4, 1e-9);
     note = await sExt.page.$eval('#fleetNote', el => el.textContent);
     eq('the status is the clean chunk summary — Auth’s Total being 1 m³ off (its own rounding) earns no checksum note',
       note, 'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
     tbl = await tableData(sExt.page);
     near('the ranked total m³ is the ore-row sum', cp(tbl.rows.find(r => r.total).copy.m3), 25199034, 0.006);
+    near('...and the totals compressed m³ is the chunk’s haul-planning number: 2,519,903.4 ÷ 10',
+      cp(tbl.rows.find(r => r.total).copy.cm3), (848964 + 928511 + 742428.4) * 0.1, 0.02);
     // REGRESSION anchor: the live bug read the Est. Unit Price (12,472) as Loparite's
     // volume — at 100,000 m³/h the rock "cleared in ~7.5 minutes". The real 9,285,110 m³
     // chunk takes 92.9 HOURS.
@@ -1541,7 +1659,7 @@ H.run('mine-fleet', async () => {
     raw = await rawRows(sErr.page);
     const veldE = raw.find(r => r.name === 'Veldspar') || {};
     const iceE = raw.find(r => r.name === 'Clear Icicle') || {};
-    eq('a failed compressed fetch (raw ore bookless) is state failed — NOT unpriced', veldE.compState, 'failed');
+    eq('a failed compressed fetch is state failed — NOT unpriced', veldE.compState, 'failed');
     eq('...comp null, not zero', veldE.comp, null);
     eq('a failed refine-output fetch leaves the ice row partial', iceE.refState, 'partial');
     near('...priced from the outputs that did fetch (Heavy Water + Liquid Ozone, 75% flat)',
