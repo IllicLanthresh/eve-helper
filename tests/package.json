@@ -10,7 +10,10 @@
     "test:industry": "node industry.test.js",
     "test:industry-ui": "node industry-ui.test.js",
     "test:mine-fleet": "node mine-fleet.test.js",
-    "test:structures": "node structures.test.js"
+    "test:structures": "node structures.test.js",
+    "test:structures-manager": "node structures-manager.test.js",
+    "test:equivalence": "node equivalence.test.js",
+    "test:permissions": "node permissions.test.js"
   },
   "devDependencies": {
     "playwright-core": "^1.62.1"

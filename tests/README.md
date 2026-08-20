@@ -24,8 +24,9 @@ anywhere but here.
 | `fees.test.js` | the fee model through the real Sell page: tax and broker from skills/standings, unmodified-standings proof, per-market observed-rate overrides | yes |
 | `sell.test.js` | the Sell tool: paste parsing, price ticks, plan selection, the 100 ISK order floor, import list, filters | yes |
 | `auth.test.js` | `auth.js`: PKCE callback, multi-character login, v1→v2 migration, logout, scope dropping, degraded standings | yes |
-| `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on all three pages | yes |
-| `structures.test.js` | the central structure store and the Structure Manager: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors (rates, rigs, activities, hull role bonuses), the moved rig-inference solver and its deep link, and the Industry page reading every structure fact off the record — read-only, with the removed-record and renamed-facility cases | yes |
+| `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on the Sell, Industry and Structure Manager pages (including the picker's "structure search is unavailable" branch, logged out and with the search scopes missing) | yes |
+| `structures.test.js` | the central structure store and the Structure Manager with **all three legacy sources present at once**: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors (rates, rigs, activities, hull role bonuses), the moved rig-inference solver and its deep link, and the Industry page reading every structure fact off the record — read-only, with the removed-record and renamed-facility cases | yes |
+| `structures-manager.test.js` | the same feature from the complementary angles: migration from **each legacy source on its own** (including the pre-v1 list inside the Sell blob, the coercion rules, the rig de-duplication and slot cap, and idempotency across a real reload), adding a record through the picker, editing every managed fact back out of `localStorage`, removing one while all three tools point at it, re-resolving the identity from ESI, the rig wizard driven through **its own UI** to the point of writing central rigs, and the Sell / Mine / Industry pages computing off the record — with one number per tool checked against the closed form of the legacy facts | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
 | `mine-fleet.test.js` | the Mine page: the two modes (plan production / fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
 | `equivalence.test.js` | value equivalence across the structure centralisation: the **pre-migration builds are checked out of git** and served next to the current one, all are handed the same legacy storage, and every Sell fee/plan, Mine yield/profit-mode column and Industry engine feed / table row / cost-and-time tree is compared exactly | yes |
@@ -45,10 +46,11 @@ anywhere but here.
 ## Fixtures
 
 `data/industry.json` is generated from the EVE SDE at deploy time and is gitignored, so
-it is usually absent. `industry-ui.test.js` and `structures.test.js` intercept the page's fetch of it with
+it is usually absent. `industry-ui.test.js`, `structures.test.js`,
+`structures-manager.test.js` and `permissions.test.js` intercept the page's fetch of it with
 `page.route` and serve a small hand-written fixture, so they never need the real file
-and never write into `data/`. The engine suite builds its data inline — it needs no
-fixture at all.
+and never write into `data/`. `data/ores.json` is handled the same way by the Mine suites.
+The engine suite builds its data inline — it needs no fixture at all.
 
 `equivalence.test.js` needs one thing the others don't: **git history**. It materializes
 each pre-migration build (`git show <commit>:index.html`, …) into a temp directory and

@@ -117,6 +117,21 @@ H.run('industry-ui', async () => {
     eq('the blueprint index is built', await page.evaluate(() => productToBp.size), 3);
     eq('...and only market-grouped products are offered', await page.evaluate(() => PRODUCTS.length), 3);
 
+    /* ---------- facility migration ----------
+       Structure facilities are references into the central store now, so a profile row
+       that never named a structure has nothing to reference. It carries all its own facts,
+       which is exactly what an NPC station is here — it must become one rather than lose
+       them, and every number below still has to come out of those facts. */
+    section('a self-contained legacy facility keeps its facts as an NPC station');
+    const fac0 = await page.evaluate(() => activeProfile().facilities[0]);
+    check('a facility that referenced no structure is marked NPC', fac0.npc === true, JSON.stringify(fac0));
+    eq('...keeping its own label', fac0.label, 'Test Raitaru');
+    eq('...its owner-set tax', fac0.tax, 1);
+    eq('...and its role bonuses', fac0.bonuses.me + '/' + fac0.bonuses.te + '/' + fac0.bonuses.cost, '1/15/3');
+    const fac0Eng = await page.evaluate(() => facilityToEngine(activeProfile().facilities[0]));
+    eq('the engine is fed that tax', fac0Eng.tax, 1);
+    eq('...and those bonuses', fac0Eng.bonuses.te, 15);
+
     /* ---------- compute ---------- */
     section('a profile computes the table');
     eq('the seeded profile is active', await page.evaluate(() => activeProfile().name), 'Test');

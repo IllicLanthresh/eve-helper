@@ -148,7 +148,10 @@
     r.groupId = t ? t.groupId : (Number.isFinite(r.groupId) ? r.groupId : null);
     r.marketBroker = num(r.marketBroker);
     r.facilityTax = num(r.facilityTax);
-    r.rigs = Array.isArray(r.rigs) ? [...new Set(r.rigs.map(Number).filter(Number.isFinite))] : [];
+    // a type id is always a positive integer — Number(null)/Number(false) are 0, which
+    // would otherwise be kept as a "rig type 0" that nothing can ever resolve
+    r.rigs = Array.isArray(r.rigs)
+      ? [...new Set(r.rigs.map(Number).filter(t => Number.isFinite(t) && t > 0))] : [];
     const slots = r.rigSlots || DEFAULT_RIG_SLOTS;
     if (r.rigs.length > slots) r.rigs = r.rigs.slice(0, slots);
     r.reproRig = REPRO_RIGS[r.reproRig] ? r.reproRig : 'none';
@@ -339,18 +342,24 @@
       mark.sell = 1;
     }
 
-    if (!mark.mine){
+    // the rig import and the "register the refinery itself" one are marked separately: a
+    // browser that already ran the first must still get the second
+    if (!mark.mine || !mark.mineStruct){
       const mine = readJson('eveHelper.mine.v1');
       const fac = mine && mine.fac && typeof mine.fac === 'object' ? mine.fac : null;
       const sid = fac && /^s:\d+$/.test(String(fac.struct)) ? String(fac.struct).slice(2) : null;
-      if (sid && REPRO_RIGS[fac.rig] && fac.rig !== 'none'){
+      if (sid){
+        // the refinery the Mine tool had selected belongs in the shared list even when no
+        // rig was ever recorded for it — otherwise that page's own "configure it in the
+        // structure manager" note points at a record the manager does not have
         const rec = ensureRecord(sid, fac.structInfo && fac.structInfo.id ? fac.structInfo : null);
-        if (rec.reproRig === 'none'){
+        if (!mark.mine && REPRO_RIGS[fac.rig] && fac.rig !== 'none' && rec.reproRig === 'none'){
           setFact(rec.id, 'reproRig', fac.rig);
           log.push(`Mine: ${fac.rig} reprocessing rig → ${rec.name}`);
         }
       }
       mark.mine = 1;
+      mark.mineStruct = 1;
     }
 
     // the rig/tax import and the later role-bonus one are marked separately: a browser

@@ -235,6 +235,26 @@ belt with a survey scanner: paste the scan (1), the same refine-&-prices section
 uses (2 — one shared section, not a copy), and see what to shoot (3). Switching is an
 instant view swap over shared state: prices, skills, facility and pastes all carry across.
 
+## Refining facility (a selector, not an editor)
+
+The refine section's facility row is either the **NPC station** (50% base) or one player
+structure chosen through the shared **structure picker** — the same modal, and the same
+shared saved list, the Sell and Industry pages use. What the row does with that choice:
+
+- the **refinery base** (Athanor 52% / Tatara 55%) comes from the structure's hull and the
+  **security band** from its system — both read off the record, neither hand-picked;
+- the **reprocessing rig** is *displayed*, never edited here. It is a fact about the
+  structure, so it lives on the record: the row shows the recorded tier next to a **manage
+  structure** link that deep-links to that record in the
+  [Structure Manager](#structure-manager-structureshtml). With nothing recorded the row says
+  *"no reprocessing rig set — configure it in the structure manager"* and the yield is
+  computed with **no rig bonus** rather than an invented one;
+- the **implant** stays a control on this page — it is the pilot's, not the structure's.
+
+Editing that record (here or in another tab) re-prices the page immediately: the store
+notifies every open tool. Structures picked here are saved centrally, so the same structure
+is one click away in the Sell market list and as an Industry facility.
+
 ## Exact SDE data
 
 Every per-ore number on the page comes straight from CCP's Static Data Export via
@@ -577,9 +597,11 @@ caches a compact copy so the Sell and Mine pages get sizes without fetching 2 MB
 On any page, `structures.js` imports the old per-tool copies **once** (a marker key makes
 it idempotent, so later hand edits are never clobbered) and logs a summary to the console:
 
-- Sell's `structBroker` map → `marketBroker`;
-- Mine's facility snapshot rig → `reproRig` (the structure is created from the snapshot if
-  it was never in the saved list);
+- Sell's `structBroker` map → `marketBroker` (a blank entry is *not known*, never 0%);
+- Mine's facility snapshot rig → `reproRig`. The refinery itself gets a record either way —
+  built from the snapshot when it was never in the saved list, and created even when no rig
+  was ever recorded, so the Mine page's *"configure it in the structure manager"* note
+  always has a record to point at;
 - every Industry profile's per-facility rigs and tax → `rigs` / `facilityTax`;
 - every Industry profile's hand-corrected role bonuses → `roleBonus` (bonuses left at the
   hull preset carry no information and are not imported), after which the facility keeps
@@ -589,3 +611,25 @@ When two profiles disagree about the same structure, the **most recently saved**
 read as: the active profile last, the rest in store order — and a **conflict note** naming
 both profiles and what was kept is stored on the record. The manager shows it on the card
 with a **dismiss** button. Nothing is ever dropped silently.
+
+---
+
+# Tests
+
+```sh
+cd tests && npm install && npm test
+```
+
+Plain Node scripts — no framework — driving the real pages in a headless browser with every
+ESI/SSO call intercepted; each prints one `PASS`/`FAIL` line per check. See
+[`tests/README.md`](tests/README.md) for the per-suite breakdown and the house rules (chief
+among them: **never wait on time, wait on a signal**).
+
+Three suites cover the structure centralisation from different angles, and all three have to
+stay green for it to count as working:
+
+| Suite | Angle |
+| --- | --- |
+| `structures.test.js` | the store and the manager with all three legacy sources present at once |
+| `structures-manager.test.js` | each legacy source **on its own**, adding/editing/removing a record, re-resolving its identity, the rig wizard through its own UI, and the Sell / Mine / Industry pages reading the record |
+| `equivalence.test.js` | the **pre-migration builds checked out of git** and run side by side with the current one on the same legacy storage, comparing every computed number exactly |

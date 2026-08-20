@@ -1,5 +1,6 @@
 /* The shared ESI-permissions layer: EveAuth.permissions(), the topbar indicator, the
-   permissions panel and the inline degradation notes on each page.
+   permissions panel and the inline degradation notes on each page — Sell, Industry and
+   the Structure Manager, whose only ESI-backed feature is the structure search.
 
    The point of this layer is that a missing capability is never silent, and that the
    three reasons a scope can be missing are never conflated: the character hasn't
@@ -138,6 +139,78 @@ H.run('permissions', async () => {
       return !!n && /can't be trusted/.test(n.textContent);
     }, null, { timeout: 15000 });
     check('the "only owned BPs" filter is flagged as untrustworthy', true);
+    await s.close();
+
+    /* ================= the Structure Manager ================= */
+    section('the Structure Manager degrades the same way every other page does');
+    {
+      const SEARCH_SCOPES = ['esi-search.search_structures.v1', 'esi-universe.read_structures.v1'];
+      s = await open(browser, server, {
+        path: '/structures.html',
+        industryFixture: FIXTURE,
+        storage: [['eveHelper.auth.v1',
+          H.authState([{ id: MAIN.id, name: MAIN.name, scopes: without(...SEARCH_SCOPES) }])]],
+      });
+      // the shared topbar box is injected by auth.js — wait for it before asserting on it
+      await s.page.waitForFunction(() => {
+        const box = document.getElementById('authBox');
+        return box && box.children.length > 0;
+      }, null, { timeout: 15000 });
+      eq('the manager gets the same topbar shortfall count',
+        await s.page.$eval('#authPermWarn', el => el.textContent), '⚠ 2 permissions');
+      rep = await report(s.page);
+      check('...naming the two structure scopes',
+        rep.chars[0].missing.map(m => m.scope).sort().join(',') === SEARCH_SCOPES.slice().sort().join(','),
+        JSON.stringify(rep.chars[0].missing.map(m => m.scope)));
+
+      await s.page.click('#btnAdd');
+      await s.page.waitForSelector('#structPicker #structMsg.err');
+      const msg = await s.page.$eval('#structPicker #structMsg', el => el.textContent);
+      check('adding a structure says the search is unavailable',
+        /structure search is unavailable/.test(msg), msg);
+      check('...naming both missing scopes',
+        SEARCH_SCOPES.every(sc => msg.includes(sc)), msg);
+      check('...and the search box is disabled rather than silently useless',
+        await s.page.$eval('#structSearch', el => el.disabled));
+      check('...with a link to the panel that fixes it',
+        await s.page.evaluate(() => !!document.querySelector('#structPicker .evePermLink')));
+      await s.page.click('#structPicker .evePermLink');
+      await s.page.waitForSelector('#evePerms');
+      check('...which closes the picker and opens the permissions panel',
+        await s.page.evaluate(() => !document.getElementById('structPicker')));
+      await s.page.keyboard.press('Escape');
+      await s.close();
+    }
+
+    section('...and a fully granted token leaves the manager clean');
+    s = await open(browser, server, {
+      path: '/structures.html',
+      industryFixture: FIXTURE,
+      storage: [['eveHelper.auth.v1', H.authState([MAIN])]],
+    });
+    await s.page.waitForFunction(() => {
+      const box = document.getElementById('authBox');
+      return box && box.children.length > 0;
+    }, null, { timeout: 15000 });
+    check('no topbar warning', await s.page.evaluate(() => !document.getElementById('authPermWarn')));
+    await s.page.click('#btnAdd');
+    await s.page.waitForSelector('#structSearch');
+    check('the structure search is enabled', await s.page.$eval('#structSearch', el => !el.disabled));
+    check('...and nothing is flagged in the picker',
+      await s.page.evaluate(() => !document.querySelector('#structPicker .evePermLink')));
+    await s.page.keyboard.press('Escape');
+    await s.close();
+
+    section('...and logged out it says to log in, rather than failing silently');
+    s = await open(browser, server, { path: '/structures.html', industryFixture: FIXTURE });
+    await s.page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+    await s.page.click('#btnAdd');
+    await s.page.waitForSelector('#structPicker #structMsg.err');
+    check('the picker asks for a login',
+      /log in with EVE first/.test(await s.page.$eval('#structPicker #structMsg', el => el.textContent)));
+    check('...and the search box is disabled',
+      await s.page.$eval('#structSearch', el => el.disabled));
+    await s.page.keyboard.press('Escape');
     await s.close();
 
     /* ================= app-missing: a stored invalid_scope ================= */
@@ -279,7 +352,7 @@ H.run('permissions', async () => {
       await s.page.evaluate(() => document.getElementById('evePerms').classList.contains('eveModal')));
     await s.page.keyboard.press('Escape');
     // pick() resolves only when the modal closes — fire and forget, then inspect the DOM
-    await s.page.evaluate(() => { EveStructures.pick({ title: 'x', manage: true }); });
+    await s.page.evaluate(() => { EveStructures.pick({ title: 'x', list: true }); });
     await s.page.waitForSelector('#structPicker');
     check('...and so does the structure picker',
       await s.page.evaluate(() => document.getElementById('structPicker').classList.contains('eveModal')));
