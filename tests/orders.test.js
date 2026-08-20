@@ -245,7 +245,7 @@ H.run('orders', async () => {
     eq('...which links the scope it needs',
       await page.getAttribute('#ordChars .evePermLink', 'data-perm-scope'), ORDERS_SCOPE);
     check('...and the readable character reports its slots in use',
-      charsBox.includes('10 slots in use'), charsBox);
+      charsBox.includes('10 slots · 9 sell · 1 buy'), charsBox);
     const summary = await page.textContent('#ordSummary');
     check('the header counts the open orders', summary.includes('10'), summary);
     check('...and reports slots in use per character rather than a made-up cap',
@@ -329,10 +329,21 @@ H.run('orders', async () => {
     const dDump = await diagOf(page, 12);
     eq('an order the market never reaches is stalled', dDump.stalled, true);
     eq('...for the odds', dDump.chance, 0);
-    check('...and says so in words', dDump.reasons.join(' ').includes('chance of filling'), dDump.reasons);
+    check('...with a chip stating the odds against the floor',
+      dDump.reasons.some(r => /^\d+%<\d+%$/.test(r.t)), JSON.stringify(dDump.reasons));
+    check('...whose tooltip carries the chance and the floor it missed',
+      dDump.reasons.some(r => /chance: \d+% of filling at/.test(r.ttl) && /floor: \d+% \("balanced"\)/.test(r.ttl)),
+      JSON.stringify(dDump.reasons));
+    check('...and the chip stays a chip', dDump.reasons.every(r => r.t.length <= 10),
+      JSON.stringify(dDump.reasons.map(r => r.t)));
     eq('the window is capped by the days left on the order', dQueue.window, 2);
     check('a queue that cannot clear before expiry is stalled',
-      dQueue.stalled && dQueue.reasons.some(r => /queued at or below your price/.test(r)), dQueue.reasons);
+      dQueue.stalled && dQueue.reasons.some(r => /^q[\d.<]+d>[\d.<]+d$/.test(r.t)),
+      JSON.stringify(dQueue.reasons));
+    check('...with the units queued at or below your price on the tooltip',
+      dQueue.reasons.some(r => /queue: [\d,]+ u at or below your price/.test(r.ttl)
+        && /clears in: [\d.<]+d/.test(r.ttl) && /expires in: [\d.<]+d/.test(r.ttl)),
+      JSON.stringify(dQueue.reasons));
     const dSlide = await diagOf(page, 17);
     near('a sliding market is measured, not guessed', dSlide.trendPctWk, TREND, 1e-9);
     // 2,000 units ahead / 100 a day = 20 days against a 14-day window -> the queue tempers
@@ -341,7 +352,11 @@ H.run('orders', async () => {
     near('...the chance is the hit rate tempered by the queue', dSlide.chance, 0.7, 1e-9);
     check('being above the best sell on a falling market is stalled on its own',
       dSlide.stalled && dSlide.reasons.length === 1
-        && /above the best sell/.test(dSlide.reasons[0]), dSlide.reasons);
+        && /^\+[\d.]+%▼$/.test(dSlide.reasons[0].t), JSON.stringify(dSlide.reasons));
+    check('...its tooltip naming the gap and the slide that widens it',
+      /above best sell: \+[\d.]+%/.test(dSlide.reasons[0].ttl)
+        && /trend: -[\d.]+%\/wk/.test(dSlide.reasons[0].ttl)
+        && /the gap only widens/.test(dSlide.reasons[0].ttl), dSlide.reasons[0].ttl);
     check('...even though the odds pass the floor and the queue clears in time',
       dSlide.chance > 0.55 && dSlide.daysToFill < dSlide.daysLeft,
       dSlide.chance + ' / ' + dSlide.daysToFill + ' vs ' + dSlide.daysLeft);
@@ -387,7 +402,8 @@ H.run('orders', async () => {
     check('...not that minus the broker fee already spent',
       Math.abs(dRep.valueDump - (net(10 * 100) - 0.015 * 10 * 2000)) > 1, dRep.valueDump);
     check('...and the explanation says so',
-      /SUNK/.test(dRep.why) && /least of all against cancelling/.test(dRep.why), dRep.why);
+      /^sunk: the broker fee that put this order up/m.test(dRep.why)
+        && /least of all against cancelling/.test(dRep.why), dRep.why);
     check('the only fee in the comparison is the future relist fee',
       /relist fee/.test(dRep.why), dRep.why);
 
@@ -395,8 +411,51 @@ H.run('orders', async () => {
     const verdictTitle = await page.evaluate(() =>
       document.querySelector('#ordBody tr[data-order-id="13"] .badge').title);
     check('the badge carries the whole derivation', verdictTitle === dRep.why && verdictTitle.length > 200);
-    check('...naming all three options', /Hold =/.test(verdictTitle)
-      && /Reprice =/.test(verdictTitle) && /Cancel & dump =/.test(verdictTitle), verdictTitle);
+    check('...naming all three options', /^hold: /m.test(verdictTitle)
+      && /^reprice [\d,.]+: /m.test(verdictTitle) && /^dump: /m.test(verdictTitle), verdictTitle);
+    check('...as one key: value line each, not a paragraph',
+      verdictTitle.split('\n').length >= 5
+        && verdictTitle.split('\n').every(l => l.length <= 160), verdictTitle);
+
+    /* ---------- (i2) the raw numbers, handed to a spreadsheet ----------
+       The table on screen is terse on purpose, so the TSV is where the working numbers
+       live: every visible column plus the diagnostics behind the verdict. */
+    section('Copy TSV for the triage table');
+    const otsv = await page.evaluate(() => {
+      const lines = ordTsv().split('\n');
+      const head = lines[0].split('\t');
+      const idx = h => head.indexOf(h);
+      const row = (lines.find(l => l.startsWith('Miquel Dreamer\tReprice Widget')) || '').split('\t');
+      const cells = {};
+      for (const h of head) cells[h] = row[idx(h)];
+      return { head, cells, n: lines.length - 1,
+               widths: lines.slice(1).map(l => l.split('\t').length) };
+    });
+    check('the diagnostic columns are all there',
+      ['Queue ahead', 'Fill est. d', 'Chance %', 'Trend %/wk', 'Hold ISK', 'Reprice ISK',
+       'Dump ISK', 'Relist fee ISK'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
+    check('...alongside the columns the table shows',
+      ['Character', 'Item', 'Your price', 'Qty left', 'Location', 'ISK tied up', 'vs best %',
+       'Stalled', 'Verdict'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
+    check('every row is as wide as the header',
+      otsv.widths.every(w => w === otsv.head.length), JSON.stringify(otsv.widths));
+    eq('one line per sell order', otsv.n, 9);
+    eq('the reprice row carries its verdict', otsv.cells['Verdict'], 'REPRICE');
+    eq('...the price it would move to', otsv.cells['Reprice price'], '1000.00');
+    near('...the relist fee that costs', Number(otsv.cells['Relist fee ISK']),
+      RELIST_PCT / 100 * 10 * 1000, 1e-9);
+    near('...and the three option values behind the choice', Number(otsv.cells['Dump ISK']),
+      net(10 * 100), 1e-6);
+    check('...with hold and reprice beside it',
+      Number(otsv.cells['Reprice ISK']) > Number(otsv.cells['Hold ISK']),
+      otsv.cells['Reprice ISK'] + ' vs ' + otsv.cells['Hold ISK']);
+    check('the stalled reasons travel as their chips',
+      /%<\d+%/.test(otsv.cells['Stalled reasons']), otsv.cells['Stalled reasons']);
+    await page.click('#btnOrdTsv');
+    await page.waitForFunction(() => document.getElementById('copyStatusOrd').textContent !== '');
+    check('the button reports what it copied',
+      /copied 9 orders/.test(await page.textContent('#copyStatusOrd')),
+      await page.textContent('#copyStatusOrd'));
 
     /* ---------- (i) the totals the user asked for ---------- */
     section('stalled totals');
@@ -437,9 +496,11 @@ H.run('orders', async () => {
     eq('...with the skill resolved by name, not by a hardcoded id',
       await page.evaluate(() => advBrokerLevel), ADV_BROKER_LEVEL);
     const src = await page.textContent('#relistSrc');
+    const srcTip = await page.getAttribute('#relistSrc', 'title');
     check('...and the page says it is unverified', /UNVERIFIED/.test(src), src);
     check('...names the skill and the level it read', /Advanced Broker Relations \(level 4\)/.test(src), src);
-    check('...and asks the user to check it against the client', /client/.test(src), src);
+    check('...and asks the user to check it against the client, on hover',
+      /verified: no/.test(srcTip) && /compare with your client/.test(srcTip), srcTip);
     await page.fill('#relistPct', '0.75');
     await page.dispatchEvent('#relistPct', 'change');
     const dRep2 = await diagOf(page, 13);
@@ -449,7 +510,11 @@ H.run('orders', async () => {
       dRep2.relistFee, 100, 1e-9);
     near('...and the reprice value follows it', dRep2.valueReprice, net(10 * 1000) - 100, 1e-6);
     check('...and the note stops claiming the computed derivation',
-      !/UNVERIFIED —/.test(await page.textContent('#relistSrc')));
+      !/UNVERIFIED/.test(await page.textContent('#relistSrc')),
+      await page.textContent('#relistSrc'));
+    check('...while still saying neither number is checked against the client',
+      /verified: no/.test(await page.getAttribute('#relistSrc', 'title')),
+      await page.getAttribute('#relistSrc', 'title'));
     await page.reload();
     await page.waitForFunction("typeof runOrders === 'function'");
     eq('the override survives a reload', await page.inputValue('#relistPct'), '0.75');
@@ -477,7 +542,8 @@ H.run('orders', async () => {
     check('ticking the toggle shows the buy order', !!buyCells, 'no buy row');
     check('...marked as a buy', buyCells[1].includes('BUY'), buyCells[1]);
     check('...and separated by a line saying why they are different',
-      (await page.textContent('#ordBody')).includes('the other way round'));
+      (await page.textContent('#ordBody')).includes('ISK in escrow · no sell-side triage'),
+      await page.textContent('#ordBody'));
     eq('...with no sell-side verdict on it', (await page.evaluate(() =>
       state.orders.diag[20] || null)), null);
     check('...and the ISK committed reported apart from the sell side',
@@ -494,7 +560,7 @@ H.run('orders', async () => {
       dNoBook.trendPctWk, 0);
     eq('an item with no history at all gets no chance', dBlind.chance, null);
     eq('...and no verdict', dBlind.verdict, null);
-    check('...saying that plainly', /No price history/.test(dBlind.why), dBlind.why);
+    check('...saying that plainly', /^no history in this region: no odds/.test(dBlind.why), dBlind.why);
     eq('...but the queue ahead of it is still counted', dBlind.queueAhead, 5);
     const spark = await page.evaluate(() => {
       const cell = id => document.querySelector(`#ordBody tr[data-order-id="${id}"] td.spark`);
@@ -527,16 +593,20 @@ H.run('orders', async () => {
     await page.waitForFunction(() => !document.getElementById('btnEsi').disabled && !state.esiRunning,
       null, { timeout: 20000 });
     const sellRows = await page.evaluate(() => state.rows.map(r =>
-      ({ name: r.name, strategy: r.strategy, dup: r.dupOrders.length, flags: r.flags.map(f => f.t) })));
+      ({ name: r.name, strategy: r.strategy, dup: r.dupOrders.length, flags: r.flags.map(f => f.t),
+         flagTips: r.flags.map(f => f.ttl || '') })));
     const dupRow = sellRows.find(r => r.name === 'Hold Widget');
     eq('the item you already have listed here is matched', dupRow.dup, 1);
     check('...and flagged before you list a second order against yourself',
-      dupRow.flags.some(f => /already listed here/.test(f)), dupRow.flags);
-    check('...naming the price it is already up at',
-      dupRow.flags.some(f => f.includes('1,000')), dupRow.flags);
+      dupRow.flags.includes('dup×1'), JSON.stringify(dupRow.flags));
+    check('...with the tooltip naming the price it is already up at',
+      dupRow.flagTips.some(t => /open sell orders here: 1/.test(t) && /first at: 1,000 ISK/.test(t)),
+      JSON.stringify(dupRow.flagTips));
+    check('...and the second broker fee it would cost',
+      dupRow.flagTips.some(t => /same queue, second broker fee/.test(t)), JSON.stringify(dupRow.flagTips));
     const other = sellRows.find(r => r.name === 'Tritanium');
     check('an item you have no order for is not flagged',
-      other.dup === 0 && !other.flags.some(f => /already listed/.test(f)), other.flags);
+      other.dup === 0 && !other.flags.some(f => /^dup/.test(f)), other.flags);
     await s.close();
 
     /* ---------- (q) a login without the structure scope ---------- */

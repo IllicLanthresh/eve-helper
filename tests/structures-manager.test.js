@@ -822,7 +822,10 @@ H.run('structures-manager', async () => {
         await page.$eval('#brokerFee', el => el.value), '4.5');
       const src = await page.$eval('#feeSrc', el => el.textContent);
       check('the fee box says where that rate came from',
-        /owner-set rate from the structure manager/.test(src), src);
+        /broker 4\.5% — Test Keepstar: owner-set/.test(src), src);
+      check('...naming the structure manager on hover',
+        /structure manager/.test(await page.$eval('#feeSrc span', el => el.title)),
+        await page.$eval('#feeSrc span', el => el.title));
       eq('...and offers the record itself',
         await page.$eval('#feeSrc a', el => el.getAttribute('href')), 'structures.html#s' + KEEPSTAR);
       eq('...as does the manage link beside the market picker',
@@ -1232,7 +1235,7 @@ H.run('structures-manager', async () => {
         await sell.$eval('#brokerFee', el => el.value));
       eq('...the structure order book is dropped', await sell.evaluate(() => state.esi.size), 0);
       const st = await sell.$eval('#esiStatus', el => el.textContent);
-      check('...and the page says why', /removed in the Structure Manager/.test(st), st);
+      check('...and the page says why', /structure removed in the Structure Manager/.test(st), st);
       await sell.evaluate(() => persist());
       const blob = await sell.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')));
       eq('...with the dead market not persisted', blob.market, 'jita');

@@ -224,11 +224,51 @@ async function captureSell(browser, server) {
       bestBuy: r.bestBuy, bestSell: r.bestSell, buyDepth: r.buyDepth, sellDepth: r.sellDepth,
       totalNet: r.totalNet, netInstant: r.netInstant, netOrder: r.netOrder,
       instFill: r.instFill, splitFill: r.splitFill, brokerEffPct: r.brokerEffPct,
-      flags: r.flags.map(f => f.t),
+      // the CONDITION each flag reports, not this build's wording for it
+      flags: r.flags.map(f => f.t).map(t =>
+        /min ?fee/i.test(t) ? 'minfee'
+        : /already listed here|^dup×/.test(t) ? 'dup'
+        : /suspect/.test(t) ? 'suspect'
+        : /≫/.test(t) ? 'sell>>hist'
+        : /≪/.test(t) ? 'sell<<hist'
+        : /^depth/.test(t) ? 'depth'
+        : /above best sell|^>best$/.test(t) ? 'above-best'
+        : /no buy/.test(t) ? 'no-buy'
+        : /no sell/.test(t) ? 'no-sell'
+        : /unsellable/.test(t) ? 'unsellable'
+        : /using history price|^L=hist$/.test(t) ? 'L-from-hist'
+        : /using current sell|^L=sell$/.test(t) ? 'L-from-sell'
+        : /^[↓▼]/.test(t) ? 'falling'
+        : 'other:' + t),
     })).sort((x, y) => x.name.localeCompare(y.name)),
-    // the two artifacts the page hands back to the game
+    // the artifact the page hands back to the game
     importList: document.getElementById('preview').value,
-    summary: document.getElementById('summary').textContent,
+    // the summary line is presentation; what must hold is that each figure on it still
+    // equals the rows behind it. Shapes only here — the agreement is checked in-page.
+    summaryStats: [...document.querySelectorAll('#summary .stat')]
+      .map(s => s.querySelector('span').textContent.replace(/\d+/g, '#')),
+    summaryAgrees: (() => {
+      try {
+        const sum = k => state.rows.filter(r => k === 'all' || r.strategy === k)
+          .reduce((t, r) => t + r.totalNet, 0);
+        const stat = re => {
+          const s = [...document.querySelectorAll('#summary .stat')]
+            .find(x => re.test(x.querySelector('span').textContent));
+          return s ? s.querySelector('b').textContent : null;
+        };
+        return {
+          all: stat(/^expected net$/) === fmtCompact(sum('all')) + ' ISK',
+          imm: stat(/^instant · /) === fmtCompact(sum('imm')) + ' ISK',
+          list: stat(/^list · /) === fmtCompact(sum('ord') + sum('pat')) + ' ISK',
+          split: stat(/^split · /) === fmtCompact(sum('split')) + ' ISK',
+          counts: [
+            stat(/^instant · /) != null && Number((/instant · (\d+)/.exec(
+              [...document.querySelectorAll('#summary .stat span')].map(x => x.textContent).join('|')) || [])[1])
+              === state.rows.filter(r => r.strategy === 'imm').length,
+          ].every(Boolean),
+        };
+      } catch (_e) { return null; }   // the pre-migration build has no such summary
+    })(),
   }));
   await context.close();
   return snap;
@@ -491,7 +531,17 @@ H.run('equivalence', async () => {
     check('...and a row where the 100 ISK broker floor binds',
       sellBefore.rows.some(r => r.brokerEffPct != null && r.brokerEffPct > 4.5),
       JSON.stringify(sellBefore.rows.map(r => r.brokerEffPct)));
-    same('every Sell fee and per-row plan is identical before and after', sellBefore, sellAfter);
+    same('every Sell fee and per-row plan is identical before and after',
+      { ...sellBefore, summaryStats: undefined, summaryAgrees: undefined },
+      { ...sellAfter, summaryStats: undefined, summaryAgrees: undefined });
+    /* The summary line is deliberately terser than the old build's; what must not change
+       is the set of totals it reports, and that each still equals the rows behind it. */
+    check('the summary still reports one total per plan shape, plus the import list',
+      sellAfter.summaryStats.length === sellBefore.summaryStats.length,
+      JSON.stringify(sellAfter.summaryStats) + ' vs ' + JSON.stringify(sellBefore.summaryStats));
+    const ag = sellAfter.summaryAgrees;
+    check('...and every figure on it equals the rows behind it',
+      ag && ag.all && ag.imm && ag.list && ag.split && ag.counts, JSON.stringify(ag));
 
     section('...and the Sell blob no longer owns the rate');
     const ctx = await browser.newContext();
@@ -509,8 +559,11 @@ H.run('equivalence', async () => {
     eq('...because the rate is on the structure record now', recBroker, 4.5);
     // the fee line says where the rate comes from, and points at the record
     const feeSrc = await p.evaluate(() => document.getElementById('feeSrc').textContent);
-    check('the fee note names the structure manager as the source',
-      /owner-set rate from the structure manager/.test(feeSrc), feeSrc);
+    const feeTip = await p.evaluate(() => document.querySelector('#feeSrc span').title);
+    check('the fee note names the owner-set rate as the source',
+      /broker 4\.5% — Test Keepstar: owner-set/.test(feeSrc), feeSrc);
+    check('...and the structure manager as where it lives',
+      /structure manager/.test(feeTip), feeTip);
     eq('...and deep-links to this structure',
       await p.evaluate(() => document.querySelector('#feeSrc a').getAttribute('href')),
       'structures.html#s' + KEEPSTAR.id);

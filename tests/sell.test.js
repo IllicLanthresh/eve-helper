@@ -206,6 +206,7 @@ const rowsOf = page => page.evaluate(() => state.rows.map(r => ({
   netInstant: r.netInstant, netOrder: r.netOrder, L: r.L, exportPrice: r.exportPrice,
   instFill: r.instFill, splitFill: r.splitFill, brokerEffPct: r.brokerEffPct,
   checked: r.checked, inImport: r.inImport, flags: r.flags.map(f => f.t),
+  flagTips: r.flags.map(f => f.ttl || ''),
 })));
 const rowNamed = (rows, n) => rows.find(r => r.name === n);
 
@@ -311,13 +312,19 @@ H.run('sell', async () => {
     eq('the cheap stack is an ORDER', cheap.strategy, 'ord');
     near('100 units x 45 ISK = 4,500 ISK order -> 2.2% effective broker rate',
       cheap.brokerEffPct, 100 / 4500 * 100, 1e-9);
-    check('...and the row carries a min-fee flag',
-      cheap.flags.some(f => /min fee 100 ISK/.test(f)), JSON.stringify(cheap.flags));
-    check('...naming the effective rate',
-      cheap.flags.some(f => /2\.2%/.test(f)), JSON.stringify(cheap.flags));
+    check('...and the row carries a min-fee chip',
+      cheap.flags.includes('minfee'), JSON.stringify(cheap.flags));
+    check('...whose tooltip names the 100 ISK floor',
+      cheap.flagTips.some(t => /broker floor: 100 ISK/.test(t)), JSON.stringify(cheap.flagTips));
+    check('...and the effective rate it produces',
+      cheap.flagTips.some(t => /effective: 2\.2%/.test(t)), JSON.stringify(cheap.flagTips));
+    check('...against the nominal one',
+      cheap.flagTips.some(t => /nominal: 1\.50%/.test(t)), JSON.stringify(cheap.flagTips));
+    check('...and the chip itself stays short', cheap.flags.every(f => f.length <= 10),
+      JSON.stringify(cheap.flags));
     near('a big order pays exactly the nominal 1.5%', bulk.brokerEffPct, 1.5, 1e-9);
-    check('...and carries no min-fee flag',
-      !bulk.flags.some(f => /min fee/.test(f)), JSON.stringify(bulk.flags));
+    check('...and carries no min-fee chip',
+      !bulk.flags.includes('minfee'), JSON.stringify(bulk.flags));
 
     const floorMath = await page.evaluate(() => ({
       small: brokerOn(4500, 0.015),
@@ -399,8 +406,12 @@ H.run('sell', async () => {
       /hidden/.test(await s2.page.$eval('#fltCount', el => el.textContent)),
       await s2.page.$eval('#fltCount', el => el.textContent));
     check('...and the import echo warns as well',
-      /hidden by the current filters/.test(await s2.page.$eval('#impEcho', el => el.textContent)),
+      /⚠\d+ hidden/.test(await s2.page.$eval('#impEcho', el => el.textContent)),
       await s2.page.$eval('#impEcho', el => el.textContent));
+    check('...with the long form on its tooltip',
+      /hidden by the filters: \d+ — still in the list/
+        .test(await s2.page.$eval('#impEcho', el => el.title)),
+      await s2.page.$eval('#impEcho', el => el.title));
 
     await s2.page.fill('#fltText', '');
     await s2.page.dispatchEvent('#fltText', 'input');
@@ -642,11 +653,13 @@ H.run('sell', async () => {
     check('the sliding item’s listing is worth less than dumping it',
       sliding.patOpt.net < sliding.netInstant, sliding.patOpt.net + ' vs ' + sliding.netInstant);
     check('the "why" names the decay rather than a dip',
-      /Decay, not a dip/.test(sliding.why), sliding.why);
+      /decay, not a dip/.test(sliding.why), sliding.why);
     check('...and quotes the trend it turned on',
-      /-6\.8%\/week \(falling\)/.test(sliding.why), sliding.why);
+      /trend: -6\.8%\/wk \(falling\)/.test(sliding.why), sliding.why);
     check('the flat item’s "why" quotes the percentile and the window instead',
-      /percentile of the last 60 days/.test(steady.why) && /14-day window/.test(steady.why), steady.why);
+      /rank: p\d+ of 60d/.test(steady.why) && /in 14d/.test(steady.why), steady.why);
+    check('...as key: value lines, never a paragraph',
+      steady.why.includes('\n') && !/\. [A-Z]/.test(steady.why), JSON.stringify(steady.why));
 
     section('the fee guard: no listing that would spend the broker fee for nothing');
     const decay = await decisionRow(p4, 'Decay Widget');
@@ -658,7 +671,9 @@ H.run('sell', async () => {
     check('so it is refused by the guard, not recommended',
       decay.guarded.some(g => g.price === decay.patientPrice), JSON.stringify(decay.guarded));
     check('...and the reason names the fee that would have been burned',
-      /broker fee is spent whether it fills or not/.test(decay.why), decay.why);
+      /fee [\d,.]+ ISK spent either way/.test(decay.why), decay.why);
+    check('...under the floor it failed to clear',
+      /skip [\d,.]+: \d+% < 55% floor \(balanced\)/.test(decay.why), decay.why);
     eq('the item is still sold — listed at a price the market does pay', decay.strategy, 'ord');
     eq('...which is the live best sell', decay.exportPrice, 700000);
     eq('...with a fill chance the guard is happy with', decay.fillChance, 1);
@@ -687,7 +702,7 @@ H.run('sell', async () => {
     eq('...with no trend', blind.trendPctWk, null);
     eq('...no chance', blind.fillChance, null);
     check('...and a "why" that says so',
-      /No price history here/.test(blind.why), blind.why);
+      /no history: plain fee arithmetic, no odds/.test(blind.why), blind.why);
     const nohigh = await decisionRow(p4, 'Nohigh Widget');
     check('a history with no `highest` still yields a probability',
       nohigh.fillChance != null, String(nohigh.fillChance));
@@ -746,8 +761,8 @@ H.run('sell', async () => {
       cols.heads[3] === 'History' && cols.keys[3] === 'trendPctWk',
       cols.heads[3] + '/' + cols.keys[3]);
     check('the plan cell reads as an action', /LIST-PATIENT/.test(cols.planCell), cols.planCell);
-    check('...and hovering it explains itself in words',
-      /per slot-day/.test(cols.planTitle) && /chance of filling/.test(cols.planTitle), cols.planTitle);
+    check('...and hovering it gives the numbers behind it',
+      /ISK\/slot-day/.test(cols.planTitle) && /% in \d+d/.test(cols.planTitle), cols.planTitle);
     check('the chance cell shows a percentage', /%$/.test(cols.chance), cols.chance);
     check('the slot-day cell copies its raw value', Number(cols.slot) > 0, cols.slot);
     check('the fill cell copies its raw value', Number(cols.fill) >= 0, cols.fill);
@@ -869,7 +884,7 @@ H.run('sell', async () => {
     check('a row with no history opens an explanation rather than an empty chart',
       await p7.evaluate(() => {
         const d = document.querySelector('tr.detail');
-        return !d.querySelector('svg') && /No price history/.test(d.textContent);
+        return !d.querySelector('svg') && /no history at this market/.test(d.textContent);
       }));
     await p7.click(sparkCell('spark widget'));
     await p7.waitForSelector('tr.detail svg[role=img]');
@@ -910,9 +925,9 @@ H.run('sell', async () => {
       && det.labels.some(t => /best sell/.test(t)) && det.labels.some(t => /patient price/.test(t)),
       JSON.stringify(det.labels));
     eq('the row’s decision numbers are restated under the chart',
-      det.nums.join(','), 'plan,expected net ISK,fill est. (days),chance of filling,ISK / slot-day');
+      det.nums.join(','), 'plan,net ISK,fill est. d,chance,ISK/slot-day');
     check('...with real values', det.values.every(v => v && v !== ''), JSON.stringify(det.values));
-    check('...and the same plain-language why', /the buy book pays|LIST at/.test(det.why), det.why);
+    check('...and the same key: value why', /^(INSTANT|LIST) /.test(det.why), det.why);
     check('the chart is labelled for a screen reader',
       /days of price history/.test(det.aria) && /daily traded volume/.test(det.aria), det.aria);
 

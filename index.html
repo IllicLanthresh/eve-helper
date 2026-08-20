@@ -2222,12 +2222,12 @@ function renderFeeSrc(){
   if (pct == null){
     // never let the number in the box pass for a fact about this structure: name it as
     // the stand-in it is, so a plan priced with it is not read as the owner's rate
-    txt.textContent = `⚑ broker % — ${h.label}: none recorded yet · pricing with ${$('brokerFee').value}% (stand-in) · `;
+    txt.textContent = `⚑ owner broker % — ${h.label}: none recorded yet · pricing with ${$('brokerFee').value}% (stand-in) · `;
     txt.title = 'owner rate: none recorded in the structure manager'
       + `\nusing: ${$('brokerFee').value}% — the NPC-hub rate from your skills and standings`
       + '\nfix: read the real rate off the in-game sell window and type it here (saved on the record)';
   } else {
-    txt.textContent = `⚑ broker ${pct}% — ${h.label}: owner-set rate · `;
+    txt.textContent = `⚑ broker ${pct}% — ${h.label}: owner-set · `;
     txt.title = 'source: this structure\'s record in the structure manager'
       + '\nedit: typing in the box updates that record';
   }

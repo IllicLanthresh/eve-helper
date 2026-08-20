@@ -203,12 +203,15 @@ H.run('fees', async () => {
       // the market switch is settled once syncBrokerForMarket has claimed the structure
       // AND the auto-fill has finished writing its note — then typing cannot be clobbered
       await s.page.waitForFunction(() => hub().structure === 1035466617946
-        && /owner-set rate from the structure manager/.test(
+        && /owner broker %/.test(
           [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')),
         null, { timeout: 15000 });
       const src = await s.page.$eval('#feeSrc', el => el.textContent);
-      check('a structure market says the rate comes from the structure manager',
-        /owner-set rate from the structure manager/.test(src), src);
+      const srcTip = await s.page.$eval('#feeSrc span', el => el.title);
+      check('a structure market names the owner rate as the source of the broker %',
+        /owner broker % — Test Keepstar: none recorded yet/.test(src), src);
+      check('...and the tooltip says the structure manager holds it',
+        /owner rate: none recorded in the structure manager/.test(srcTip), srcTip);
       check('...and offers the record itself',
         await s.page.$eval('#feeSrc a', el => el.getAttribute('href')) === 'structures.html#s1035466617946');
       await s.page.fill('#brokerFee', '3.75');
