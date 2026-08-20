@@ -73,6 +73,23 @@
   tr.excluded td{opacity:.45}
   .tablewrap{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
   #preview{height:200px}
+  /* price history: a sparkline per row, and the chart it opens into */
+  td.spark{padding:3px 6px;cursor:zoom-in;width:124px}
+  td.spark svg{display:block}
+  td.spark:hover{background:#1b2434}
+  td.spark:focus-visible{outline:1px solid var(--cyan)}
+  tr.open td.spark{background:#14344a}
+  tr.detail td{background:var(--panel2);padding:12px 14px;cursor:default}
+  tr.detail .chartwrap{overflow-x:auto;max-width:100%}
+  tr.detail svg{max-width:100%;height:auto}
+  .chart-nums{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 0}
+  .chart-nums span{color:var(--dim);font-size:11px;display:block;text-transform:uppercase;letter-spacing:.6px}
+  .chart-nums b{font-family:var(--mono);font-size:15px;color:#fff}
+  .chart-why{color:var(--dim);font-size:12px;margin-top:8px;max-width:1000px}
+  .chart-legend{margin-top:6px}
+  .chart-legend i{display:inline-block;width:16px;border-top:2px dashed currentColor;
+    vertical-align:middle;margin-right:5px}
+  .chart-legend em{font-style:normal;margin-right:14px;font-size:11px}
   /* patience: a segmented control, because it gets flipped constantly */
   .seg{display:inline-flex;border:1px solid #2e3b52;border-radius:8px;overflow:hidden;background:var(--panel2)}
   .seg label{margin:0;padding:0;display:inline-block;border-right:1px solid #2e3b52}
@@ -268,7 +285,7 @@
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
-    <span class="hint">· click a cell to copy its value</span>
+    <span class="hint">· click a cell to copy its value · click a sparkline for the full chart</span>
   </div>
   <div class="tablewrap">
     <table id="tbl">
@@ -276,6 +293,7 @@
         <th data-key="checked" title="tick to include a row in the import list — INSTANT rows have nothing to import (no price to choose) and are always sold via the instant checklist instead">Import</th>
         <th data-key="rank" class="num">#</th>
         <th data-key="name">Item</th>
+        <th data-key="trendPctWk" title="the last 120 days of daily average price, with markers for the current best sell, the competitive list price and the patient price — click a cell for the full chart. Sorts by trend %/week: the line's own slope">History</th>
         <th data-key="qty" class="num">Qty</th>
         <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy ISK/u</th>
         <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell ISK/u</th>
@@ -1217,7 +1235,7 @@ function rebuild(keepChecks = true){
       fillDays, fillChance, perSlot, trendPctWk, dir, pctRank, brokerEffPct,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
-      hist90: e.hist || null,
+      histRows: e.hist || null,
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
                  window: pat.days, minFill: pat.minFill, label: pat.label },
       flags, unsellable,
@@ -1336,6 +1354,267 @@ function whyText(r){
   return out.join(' ');
 }
 
+/* ---------- price history graphics ----------
+   Pure inline SVG: no library, no request, no canvas. Two views of the same series —
+   a sparkline that fits in a table cell, and the chart it opens into.
+
+   The sparkline exists to make the hit-rate claim visible: the three prices that decide
+   the row (the live best sell, the competitive list price, the patient price) are drawn
+   as horizontal markers over the last 120 days of daily averages, so "the patient price
+   is above everything this market has done lately" is a picture, not a percentage.
+
+   The vertical scale spans the series AND the markers, so a marker is never off-canvas;
+   a patient price far above the line simply squashes the line, which is itself the point.
+   Sparklines are drawn LAZILY, only for cells scrolled into view, so a 250-row table does
+   not pay for 250 charts nobody looks at. */
+const SPARK_DAYS = 120;
+const SPARK_W = 116, SPARK_H = 28;
+const DETAIL_DAYS = 365;
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (name, attrs) => {
+  const el = document.createElementNS(SVGNS, name);
+  for (const k in attrs) if (attrs[k] != null) el.setAttribute(k, attrs[k]);
+  return el;
+};
+const TREND_STROKE = { rising: 'var(--green)', falling: 'var(--red)', flat: 'var(--dim)' };
+// the three prices a row turns on, in a fixed order and colour
+function markersOf(r){
+  const out = [];
+  if (r.bestSell != null) out.push({ key: 'sell', price: r.bestSell, colour: 'var(--cyan)', label: 'best sell' });
+  if (r.L != null && (r.bestSell == null || Math.abs(r.L - r.bestSell) > tickFor(r.bestSell) / 2))
+    out.push({ key: 'list', price: r.L, colour: 'var(--amber)', label: 'competitive list' });
+  const pp = r.metrics ? r.metrics.patientPrice : null;
+  if (pp != null && (r.L == null || Math.abs(pp - r.L) > tickFor(pp) / 2))
+    out.push({ key: 'patient', price: pp, colour: 'var(--violet)', label: 'patient price' });
+  return out;
+}
+// last `days` of history, oldest first, with a usable average
+const chartRows = (r, days) => {
+  if (!r.histRows || !r.histRows.length) return [];
+  const cutoff = Date.now() - days * 86400e3;
+  return r.histRows
+    .filter(h => Number.isFinite(h.average) && h.average > 0 && Date.parse(h.date) >= cutoff)
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+};
+// one shared y-scale: the series, its high/low band if drawn, and every marker
+function priceScale(vals, markers, top, bottom){
+  let lo = Infinity, hi = -Infinity;
+  for (const v of vals){ if (v < lo) lo = v; if (v > hi) hi = v; }
+  for (const m of markers){ if (m.price < lo) lo = m.price; if (m.price > hi) hi = m.price; }
+  if (!Number.isFinite(lo)) return null;
+  const span = hi - lo;
+  return { lo, hi, y: v => span > 0 ? bottom - (v - lo) / span * (bottom - top) : (top + bottom) / 2 };
+}
+
+function buildSparkline(r){
+  const rows = chartRows(r, SPARK_DAYS);
+  if (rows.length < 2) return null;
+  const marks = markersOf(r);
+  const sc = priceScale(rows.map(h => h.average), marks, 2, SPARK_H - 2);
+  const svg = svgEl('svg', { viewBox: `0 0 ${SPARK_W} ${SPARK_H}`, width: SPARK_W, height: SPARK_H,
+    role: 'img', preserveAspectRatio: 'none' });
+  const x = i => 1 + i * (SPARK_W - 2) / (rows.length - 1);
+  let d = '';
+  rows.forEach((h, i) => { d += (i ? 'L' : 'M') + x(i).toFixed(2) + ' ' + sc.y(h.average).toFixed(2); });
+  const label = `${rows.length} days of daily average price, ${fmtIsk(rows[0].average)} to `
+    + `${fmtIsk(rows[rows.length - 1].average)} ISK`
+    + (r.trendPctWk != null ? `, trend ${pctSigned(r.trendPctWk)} per week` : '')
+    + marks.map(m => `; ${m.label} ${fmtIsk(m.price)}`).join('');
+  svg.setAttribute('aria-label', label);
+  svg.appendChild(svgEl('title', {})).textContent = label + ' — click for the full chart';
+  for (const m of marks)
+    svg.appendChild(svgEl('line', { x1: 0, x2: SPARK_W, y1: sc.y(m.price).toFixed(2), y2: sc.y(m.price).toFixed(2),
+      stroke: m.colour, 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.85,
+      'data-marker': m.key, 'data-price': m.price }));
+  svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.2, 'stroke-linejoin': 'round',
+    stroke: TREND_STROKE[r.dir] || 'var(--dim)', 'data-series': 'avg', 'data-points': rows.length }));
+  return svg;
+}
+
+/* The expanded chart: the same series with room to breathe — a high/low band where ESI
+   gave us one, the price line, labelled markers, and the daily traded volume beneath.
+   Same numbers as the row, restated so the recommendation can be read against the picture. */
+const DET_W = 820, DET_H = 300, DET_TOP = 14, DET_PRICE_BOT = 196, DET_VOL_TOP = 218, DET_VOL_BOT = 272;
+const DET_L = 62, DET_R = 152;    // gutters: axis labels left, marker labels right
+// axis and marker labels want to be short — the legend under the chart carries the exact ISK
+const fmtCompact = n => {
+  if (n == null) return '—';
+  const a = Math.abs(n);
+  return a >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(2) + 'M'
+    : a >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : fmtIsk(n);
+};
+function buildDetailChart(r){
+  const box = document.createElement('div');
+  const rows = chartRows(r, DETAIL_DAYS);
+  if (rows.length < 2){
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'No price history for this item at this market — the plan above is the plain '
+      + 'fee arithmetic, with no odds behind it.';
+    box.appendChild(p);
+    return box;
+  }
+  const marks = markersOf(r);
+  const hasBand = rows.some(h => Number.isFinite(h.highest) && Number.isFinite(h.lowest) && h.highest > 0);
+  const vals = rows.map(h => h.average);
+  if (hasBand) for (const h of rows){
+    if (Number.isFinite(h.highest) && h.highest > 0) vals.push(h.highest);
+    if (Number.isFinite(h.lowest) && h.lowest > 0) vals.push(h.lowest);
+  }
+  const sc = priceScale(vals, marks, DET_TOP, DET_PRICE_BOT);
+  const x = i => DET_L + i * (DET_W - DET_L - DET_R) / (rows.length - 1);
+  const wrap = document.createElement('div');
+  wrap.className = 'chartwrap';
+  const svg = svgEl('svg', { viewBox: `0 0 ${DET_W} ${DET_H}`, width: DET_W, height: DET_H, role: 'img' });
+  const label = `${r.name}: ${rows.length} days of price history from ${rows[0].date} to `
+    + `${rows[rows.length - 1].date}, ${fmtIsk(sc.lo)} to ${fmtIsk(sc.hi)} ISK, with daily traded volume`;
+  svg.setAttribute('aria-label', label);
+  svg.appendChild(svgEl('title', {})).textContent = label;
+
+  const txt = (s, at) => {
+    const t = svgEl('text', at);
+    t.textContent = s;
+    svg.appendChild(t);
+    return t;
+  };
+  // price gridlines: just the two ends, so the scale is readable without a busy grid
+  for (const v of [sc.hi, sc.lo]){
+    svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: sc.y(v), y2: sc.y(v),
+      stroke: 'var(--line)', 'stroke-width': 1 }));
+    txt(fmtCompact(v), { x: DET_L - 4, y: sc.y(v) + 3, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  }
+  if (hasBand){
+    let up = '', down = '';
+    rows.forEach((h, i) => {
+      const hi = Number.isFinite(h.highest) && h.highest > 0 ? h.highest : h.average;
+      up += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sc.y(hi).toFixed(1);
+    });
+    for (let i = rows.length - 1; i >= 0; i--){
+      const h = rows[i];
+      const lo = Number.isFinite(h.lowest) && h.lowest > 0 ? h.lowest : h.average;
+      down += 'L' + x(i).toFixed(1) + ' ' + sc.y(lo).toFixed(1);
+    }
+    svg.appendChild(svgEl('path', { d: up + down + 'Z', fill: 'var(--cyan)', opacity: 0.12,
+      stroke: 'none', 'data-band': 'highlow' }));
+  }
+  let d = '';
+  rows.forEach((h, i) => { d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sc.y(h.average).toFixed(1); });
+  svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.5, stroke: TREND_STROKE[r.dir] || 'var(--dim)',
+    'data-series': 'avg', 'data-points': rows.length }));
+  for (const m of marks){
+    const y = sc.y(m.price);
+    svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: y, y2: y, stroke: m.colour,
+      'stroke-width': 1, 'stroke-dasharray': '4 3', 'data-marker': m.key, 'data-price': m.price }));
+    txt(`${m.label} ${fmtCompact(m.price)}`, { x: DET_W - DET_R + 5, y: y + 3, fill: m.colour,
+      'font-size': 9, 'data-marker-label': m.key });
+  }
+  // volume beneath, on its own scale
+  const maxVol = rows.reduce((t, h) => Math.max(t, h.volume || 0), 0);
+  const bw = Math.max(1, (DET_W - DET_L - DET_R) / rows.length - 0.6);
+  rows.forEach((h, i) => {
+    const v = h.volume || 0;
+    const hgt = maxVol > 0 ? v / maxVol * (DET_VOL_BOT - DET_VOL_TOP) : 0;
+    svg.appendChild(svgEl('rect', { x: (x(i) - bw / 2).toFixed(1), y: (DET_VOL_BOT - hgt).toFixed(1),
+      width: bw.toFixed(2), height: Math.max(hgt, v > 0 ? 0.5 : 0).toFixed(2),
+      fill: 'var(--cyan)', opacity: 0.45, 'data-vol': v }));
+  });
+  svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: DET_VOL_BOT, y2: DET_VOL_BOT,
+    stroke: 'var(--line)', 'stroke-width': 1 }));
+  txt(`${fmtCompact(maxVol)} u/day`, { x: DET_L - 4, y: DET_VOL_TOP + 8, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  txt('volume', { x: DET_L - 4, y: DET_VOL_BOT, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  txt(rows[0].date, { x: DET_L, y: DET_H - 10, fill: 'var(--dim)', 'font-size': 9 });
+  txt(rows[rows.length - 1].date, { x: DET_W - DET_R, y: DET_H - 10, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  wrap.appendChild(svg);
+  box.appendChild(wrap);
+
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  for (const m of marks){
+    const e = document.createElement('em');
+    e.style.color = m.colour;
+    e.innerHTML = '<i></i>';
+    e.appendChild(document.createTextNode(`${m.label} ${fmtIsk(m.price)}`));
+    legend.appendChild(e);
+  }
+  if (hasBand){
+    const e = document.createElement('em');
+    e.style.color = 'var(--dim)';
+    e.textContent = 'shaded band = daily high–low';
+    legend.appendChild(e);
+  }
+  box.appendChild(legend);
+
+  // the four numbers the recommendation is made of, restated against the picture
+  const nums = document.createElement('div');
+  nums.className = 'chart-nums';
+  const mk = (label, value) => {
+    const d2 = document.createElement('div');
+    const b = document.createElement('b'); b.textContent = value;
+    const s2 = document.createElement('span'); s2.textContent = label;
+    d2.append(b, s2); nums.appendChild(d2);
+  };
+  mk('plan', PLAN_LABEL[r.strategy]);
+  mk('expected net ISK', fmtIsk(r.totalNet));
+  mk('fill est. (days)', r.fillDays == null ? '—' : fmtDays(r.fillDays));
+  mk('chance of filling', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%');
+  mk('ISK / slot-day', r.perSlot == null ? '— (no slot)' : fmtIsk(r.perSlot));
+  box.appendChild(nums);
+  const why = document.createElement('p');
+  why.className = 'chart-why';
+  why.textContent = r.why;
+  box.appendChild(why);
+  return box;
+}
+
+/* Lazy drawing. Only cells scrolled into the table's own viewport get a chart; the rest
+   stay empty placeholders until they are. Every cell ends up carrying data-spark, which
+   is the signal to wait on (a drawn chart, or an honest "no history"). */
+let sparkObs = null;
+function sparkObserver(){
+  if (sparkObs || typeof IntersectionObserver !== 'function') return sparkObs;
+  sparkObs = new IntersectionObserver(entries => {
+    for (const en of entries) if (en.isIntersecting){ sparkObs.unobserve(en.target); drawSpark(en.target); }
+  }, { root: document.querySelector('.tablewrap'), rootMargin: '160px' });
+  return sparkObs;
+}
+function drawSpark(td){
+  if (!td || td.dataset.spark || !td.isConnected) return;
+  const r = td._row;
+  const svg = r ? buildSparkline(r) : null;
+  if (svg){ td.textContent = ''; td.appendChild(svg); td.dataset.spark = 'ready'; }
+  else {
+    td.textContent = '—';
+    td.title = 'no price history for this item at this market';
+    td.dataset.spark = 'none';
+  }
+  state.sparkDrawn = (state.sparkDrawn || 0) + 1;
+}
+
+/* One detail row at a time, remembered by row key so a re-sort, a patience flip or a
+   re-render puts it back where it belongs instead of collapsing it. */
+function renderDetail(tbody){
+  if (!state.openDetail) return;
+  const tr = [...tbody.children].find(x => x.dataset && x.dataset.key === state.openDetail);
+  if (!tr){ return; }
+  const r = state.rows.find(x => x.key === state.openDetail);
+  if (!r) return;
+  tr.classList.add('open');
+  const dtr = document.createElement('tr');
+  dtr.className = 'detail';
+  const td = document.createElement('td');
+  td.colSpan = document.querySelectorAll('#tbl thead th').length;
+  td.appendChild(buildDetailChart(r));
+  dtr.appendChild(td);
+  tr.after(dtr);
+  // the table body is a scroll box: a chart opened at its bottom edge would be off-screen
+  if (state.openDetailScroll){ state.openDetailScroll = false; dtr.scrollIntoView({ block: 'nearest' }); }
+}
+function toggleDetail(key){
+  state.openDetail = state.openDetail === key ? null : key;
+  state.openDetailScroll = !!state.openDetail;
+  render();
+}
+
 function sortedRows(){
   const k = state.sortKey, d = state.sortDir;
   const rows = state.rows.filter(rowFilter);
@@ -1358,6 +1637,7 @@ function render(){
   const frag = document.createDocumentFragment();
   for (const r of sortedRows()){
     const tr = document.createElement('tr');
+    tr.dataset.key = r.key;
     // dim only rows that end up in neither artifact (instants always go to the checklist)
     if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)) tr.classList.add('excluded');
     if (r.dir === 'falling') tr.classList.add('falling');
@@ -1398,6 +1678,20 @@ function render(){
       if (title) td.title = title;
       tr.appendChild(td);
     }
+
+    // the sparkline sits next to the name, where the eye already is. It is not drawn
+    // here: the observer fills it in if and when the row is actually on screen.
+    const tdSpark = document.createElement('td');
+    tdSpark.className = 'spark';
+    tdSpark._row = r;
+    tdSpark.tabIndex = 0;
+    tdSpark.setAttribute('role', 'button');
+    tdSpark.setAttribute('aria-expanded', String(state.openDetail === r.key));
+    tdSpark.title = (r.trendPctWk != null ? `trend ${pctSigned(r.trendPctWk)}/week · ` : '')
+      + 'click for the full price chart';
+    const obs = sparkObserver();
+    if (obs) obs.observe(tdSpark); else drawSpark(tdSpark);
+    tr.insertBefore(tdSpark, tr.children[3]);   // after Import, #, Item
 
     const tdStrat = document.createElement('td');
     const badge = document.createElement('span');
@@ -1446,6 +1740,7 @@ function render(){
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  renderDetail(tbody);
   if (!tbody.children.length){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
@@ -2085,6 +2380,14 @@ $('btnCopyInst').addEventListener('click', () => {
 });
 $('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), $('copyStatusTsv'), $('preview'), 'copied full table as TSV'));
 
+$('tblBody').addEventListener('keydown', e => {
+  const td = e.target.closest && e.target.closest('td.spark');
+  if (!td || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  const tr = td.closest('tr');
+  if (tr && tr.dataset.key) toggleDetail(tr.dataset.key);
+});
+
 document.querySelectorAll('thead th').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.key;
@@ -2110,6 +2413,11 @@ $('tblBody').addEventListener('click', e => {
   const td = e.target.closest('td');
   if (!td || td.cellIndex === 0 || td.colSpan > 1) return;      // checkbox column / empty-state row
   if (e.target.closest('input')) return;
+  if (td.classList.contains('spark')){                          // the chart, not a value to copy
+    const tr = td.closest('tr');
+    if (tr && tr.dataset.key) toggleDetail(tr.dataset.key);
+    return;
+  }
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed) return;                          // user is selecting text, don't hijack
   const text = (td.dataset.copy ?? td.textContent).trim();

@@ -6,7 +6,8 @@
    flat 100 ISK per-order broker floor, the import list (ticked ORDER/SPLIT rows only)
    and the rule that filters are view-only.
 
-   ...and the decision layer that replaced the ⏳ wait tag: the trend, the percentile
+   ...the inline SVG sparkline and the chart a row expands into, and the decision layer
+   that replaced the ⏳ wait tag: the trend, the percentile
    rank, the fill estimate, the recency-weighted hit rate, the two-branch expectation with
    the broker fee charged in both branches, the fill-probability guard, ISK per slot-day,
    and the case the whole rework exists for — a recommendation flipping from LIST-PATIENT
@@ -31,6 +32,7 @@ const TYPE_IDS = {
   'Decay Widget': 9007,         // the p90-forever case
   'Nohigh Widget': 9008,        // history without a `highest` field
   'Blind Widget': 9009,         // no history at all
+  'Spark Widget': 9010,         // a history built for the sparkline's arithmetic
 };
 
 /* ---------- history fixtures for the decision layer ----------
@@ -71,6 +73,12 @@ const DECAY_HIST = series(400, t => {
    and say so. */
 const NOHIGH_HIST = series(200, t => ({ average: 1000000, volume: 50 }));
 
+/* Exactly 120 days, one point per day, a straight decline — the sparkline's geometry is
+   then a closed form the suite can re-derive. */
+const SPARK_HIST = series(120, t => ({
+  average: 1000 + t * 10, highest: 1000 + t * 10 + 5, lowest: 1000 + t * 10 - 5,
+  volume: 100 + (t % 7), order_count: 4 }));
+
 const BOOKS = {
   // deep buy book well under the sell price -> listing wins outright (ORDER)
   Tritanium: { buys: [{ p: 4.0, v: 1e6 }], sells: [{ p: 6.0, v: 1e6 }] },
@@ -103,6 +111,11 @@ const BOOKS = {
   'Nohigh Widget':   { buys: [{ p: 600000, v: 1000 }], sells: [{ p: 950000, v: 40 }], hist: NOHIGH_HIST },
   // priced, but with no history whatsoever — must degrade to the plain fee arithmetic
   'Blind Widget':    { buys: [{ p: 600000, v: 1000 }], sells: [{ p: 950000, v: 40 }] },
+  /* Drawn on purpose: 120 days of daily average sliding 2,190 -> 1,000, a best sell of
+     1,200 inside that range and a 30-day median of 1,145 under it, so the sparkline's
+     scale, its point count and both marker positions are arithmetic, not eyeballing. */
+  'Spark Widget':    { buys: [{ p: 800, v: 1000 }], sells: [{ p: 1200, v: 40 }],
+                       hist: SPARK_HIST },
 };
 
 const PASTE = [
@@ -727,8 +740,11 @@ H.run('sell', async () => {
     });
     check('Fill est., Chance % and ISK/slot-day are columns',
       ['fillDays', 'fillChance', 'perSlot'].every(k => cols.keys.includes(k)), cols.keys.join(','));
-    check('no separate Trend column crowds the table',
-      !cols.keys.includes('trendPctWk'), cols.keys.join(','));
+    check('no numeric Trend %/wk column crowds the table — it lives in the tooltip',
+      !cols.heads.some(h => /^Trend/.test(h)), cols.heads.join('|'));
+    check('...the sparkline column carries that sort instead',
+      cols.heads[3] === 'History' && cols.keys[3] === 'trendPctWk',
+      cols.heads[3] + '/' + cols.keys[3]);
     check('the plan cell reads as an action', /LIST-PATIENT/.test(cols.planCell), cols.planCell);
     check('...and hovering it explains itself in words',
       /per slot-day/.test(cols.planTitle) && /chance of filling/.test(cols.planTitle), cols.planTitle);
@@ -776,6 +792,205 @@ H.run('sell', async () => {
     check('...and a re-save drops the key',
       await p6.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')).waitPct === undefined));
     await ctx6.close();
+
+    /* ================= the graphs ================= */
+    section('the sparkline — the hit-rate claim, drawn');
+    const s7 = await openSell(browser, server);
+    const p7 = s7.page;
+    await fetchWithHistory(p7, ['Spark Widget\t20', 'Blind Widget\t20'].join('\n'), 'median', 30);
+    // wait on the drawing itself, never on a clock: every visible cell ends up carrying
+    // data-spark, either a chart or an honest "no history"
+    await p7.waitForFunction(() => document.querySelectorAll('#tblBody td.spark[data-spark]').length === 2);
+
+    const geom = await p7.evaluate(() => {
+      const cell = n => [...document.querySelectorAll('#tblBody tr')]
+        .find(tr => tr.children[2].textContent === n).children[3];
+      const spark = cell('Spark Widget');
+      const line = spark.querySelector('[data-series]');
+      return {
+        W: SPARK_W, H: SPARK_H, days: SPARK_DAYS,
+        state: spark.dataset.spark,
+        points: Number(line.dataset.points),
+        d: line.getAttribute('d'),
+        stroke: line.getAttribute('stroke'),
+        markers: [...spark.querySelectorAll('[data-marker]')].map(l => ({
+          key: l.dataset.marker, price: Number(l.dataset.price), y: l.getAttribute('y1'),
+          x1: l.getAttribute('x1'), x2: l.getAttribute('x2'),
+        })),
+        aria: spark.querySelector('svg').getAttribute('aria-label'),
+        title: spark.querySelector('svg title').textContent,
+        role: spark.querySelector('svg').getAttribute('role'),
+        cellRole: spark.getAttribute('role'),
+        expanded: spark.getAttribute('aria-expanded'),
+        bare: cell('Blind Widget').dataset.spark,
+        bareText: cell('Blind Widget').textContent,
+        bareSvg: !!cell('Blind Widget').querySelector('svg'),
+        row: (() => { const r = state.rows.find(x => x.name === 'Spark Widget'); return { L: r.L, bestSell: r.bestSell, patient: r.metrics.patientPrice, dir: r.dir }; })(),
+      };
+    });
+    eq('a priced row with history gets a sparkline', geom.state, 'ready');
+    eq('...one point per day of the 120-day window', geom.points, 120);
+    check('...drawn as a single path', /^M[\d. ]+L/.test(geom.d), geom.d.slice(0, 40));
+    // the scale spans the series AND the markers, so a marker is never off-canvas:
+    //   lo = 1,000 (today's average)   hi = 2,190 (the oldest day)
+    //   y(v) = (H-2) - (v - lo)/(hi - lo) x (H-4)
+    const yOf = v => ((geom.H - 2) - (v - 1000) / (2190 - 1000) * (geom.H - 4)).toFixed(2);
+    eq('the best sell is marked', geom.markers.filter(m => m.key === 'sell').length, 1);
+    eq('...at exactly its place on the shared scale',
+      geom.markers.find(m => m.key === 'sell').y, yOf(1200));
+    eq('the patient price is marked too', geom.markers.filter(m => m.key === 'patient').length, 1);
+    eq('...also at its own place', geom.markers.find(m => m.key === 'patient').y, yOf(1145));
+    eq('...which is the 30-day median the plan uses', geom.row.patient, 1145);
+    check('a cheaper price sits lower on the chart',
+      Number(geom.markers.find(m => m.key === 'patient').y) > Number(geom.markers.find(m => m.key === 'sell').y),
+      JSON.stringify(geom.markers));
+    check('the list price is not drawn twice when it IS the best sell',
+      !geom.markers.some(m => m.key === 'list') && geom.row.L === geom.row.bestSell,
+      JSON.stringify(geom.markers));
+    check('markers run the full width', geom.markers.every(m => m.x1 === '0' && Number(m.x2) === geom.W),
+      JSON.stringify(geom.markers));
+    eq('a falling market is drawn in red', geom.stroke, 'var(--red)');
+    eq('...because that is what the row says it is', geom.row.dir, 'falling');
+    check('the chart is labelled for a screen reader',
+      /days of daily average price/.test(geom.aria) && /patient price/.test(geom.aria), geom.aria);
+    eq('...and is an image with a title', geom.role, 'img');
+    check('...whose title invites the full chart', /click for the full chart/.test(geom.title), geom.title);
+    eq('the cell announces itself as a control', geom.cellRole, 'button');
+    eq('...that is not expanded yet', geom.expanded, 'false');
+    eq('a row with no history says so instead of drawing nothing', geom.bare, 'none');
+    eq('...with a dash in the cell', geom.bareText, '—');
+    check('...and no empty SVG', !geom.bareSvg);
+
+    section('the expanded chart');
+    const sparkCell = n => `#tblBody tr[data-key="${n}"] td.spark`;
+    // the row with no history opens too — it just says so instead of drawing a chart
+    await p7.click(sparkCell('blind widget'));
+    await p7.waitForSelector('tr.detail');
+    check('a row with no history opens an explanation rather than an empty chart',
+      await p7.evaluate(() => {
+        const d = document.querySelector('tr.detail');
+        return !d.querySelector('svg') && /No price history/.test(d.textContent);
+      }));
+    await p7.click(sparkCell('spark widget'));
+    await p7.waitForSelector('tr.detail svg[role=img]');
+    const det = await p7.evaluate(() => {
+      const d = document.querySelector('tr.detail');
+      const svg = d.querySelector('svg');
+      return {
+        openKey: state.openDetail,
+        colSpan: d.querySelector('td').colSpan,
+        headers: document.querySelectorAll('#tbl thead th').length,
+        points: Number(svg.querySelector('[data-series]').dataset.points),
+        band: !!svg.querySelector('[data-band]'),
+        bars: svg.querySelectorAll('[data-vol]').length,
+        barVols: [...svg.querySelectorAll('[data-vol]')].map(rc => Number(rc.dataset.vol)),
+        zeroHeight: [...svg.querySelectorAll('[data-vol]')].every(rc => Number(rc.getAttribute('height')) > 0),
+        markers: [...svg.querySelectorAll('[data-marker]')].map(l => l.dataset.marker),
+        labels: [...svg.querySelectorAll('[data-marker-label]')].map(t => t.textContent),
+        nums: [...d.querySelectorAll('.chart-nums div')].map(x => x.querySelector('span').textContent),
+        values: [...d.querySelectorAll('.chart-nums b')].map(x => x.textContent),
+        why: d.querySelector('.chart-why').textContent,
+        aria: svg.getAttribute('aria-label'),
+        expanded: document.querySelector('#tblBody tr.open td.spark').getAttribute('aria-expanded'),
+        rows: document.querySelectorAll('#tblBody tr.detail').length,
+      };
+    });
+    eq('clicking a sparkline opens exactly one detail row', det.rows, 1);
+    eq('...spanning the whole table', det.colSpan, det.headers);
+    eq('...remembered by row key', det.openKey, 'spark widget');
+    eq('...and the cell now reports itself expanded', det.expanded, 'true');
+    eq('the price series is redrawn at full size', det.points, 120);
+    check('the high/low band is drawn when ESI gave us one', det.band);
+    eq('every day gets a volume bar', det.bars, 120);
+    check('...with the volumes the history carried',
+      det.barVols[0] === 100 + (119 % 7) && det.barVols[119] === 100, JSON.stringify(det.barVols.slice(0, 3)));
+    check('...and none of them collapse to nothing', det.zeroHeight);
+    check('both price markers are repeated and labelled',
+      det.markers.includes('sell') && det.markers.includes('patient')
+      && det.labels.some(t => /best sell/.test(t)) && det.labels.some(t => /patient price/.test(t)),
+      JSON.stringify(det.labels));
+    eq('the row’s decision numbers are restated under the chart',
+      det.nums.join(','), 'plan,expected net ISK,fill est. (days),chance of filling,ISK / slot-day');
+    check('...with real values', det.values.every(v => v && v !== ''), JSON.stringify(det.values));
+    check('...and the same plain-language why', /the buy book pays|LIST at/.test(det.why), det.why);
+    check('the chart is labelled for a screen reader',
+      /days of price history/.test(det.aria) && /daily traded volume/.test(det.aria), det.aria);
+
+    // the open chart is a property of the row, not of this render
+    await setPatience(p7, 'patient');
+    eq('a re-rank keeps the chart open on the same row',
+      await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
+    await p7.click('#tbl thead th[data-key=name]');
+    eq('...and so does a re-sort',
+      await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
+    await setPatience(p7, 'balanced');
+    await p7.click('#tblBody tr.open td.spark');
+    await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0);
+    eq('clicking again closes it', await p7.evaluate(() => state.openDetail), null);
+    // the keyboard reaches it too
+    await p7.evaluate(() => {
+      const td = document.querySelector('#tblBody tr[data-key="spark widget"] td.spark');
+      td.focus();
+      td.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await p7.waitForSelector('tr.detail');
+    check('Enter on a focused sparkline opens the chart too',
+      await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length) === 1);
+
+    section('a history with no high/low still charts');
+    await p7.evaluate(() => { state.openDetail = null; render(); });
+    await fetchWithHistory(p7, 'Nohigh Widget\t20', 'median', 30);
+    await p7.waitForFunction(() => document.querySelectorAll('#tblBody td.spark[data-spark]').length === 1);
+    await p7.click('#tblBody tr[data-key="nohigh widget"] td.spark');
+    await p7.waitForSelector('tr.detail svg');
+    const noBand = await p7.evaluate(() => {
+      const svg = document.querySelector('tr.detail svg');
+      return { band: !!svg.querySelector('[data-band]'), series: !!svg.querySelector('[data-series]'),
+               bars: svg.querySelectorAll('[data-vol]').length };
+    });
+    check('no `highest`/`lowest`, no band drawn', !noBand.band);
+    check('...but the price line and the volume bars are still there',
+      noBand.series && noBand.bars > 0, JSON.stringify(noBand));
+    await s7.close();
+
+    section('250 rows stay fast because the charts are lazy');
+    const BULK_IDS = {}, BULK_BOOKS = {}, bulkLines = [];
+    for (let i = 0; i < 250; i++) {
+      const name = 'Bulk Item ' + String(i).padStart(3, '0');
+      BULK_IDS[name] = 20000 + i;
+      BULK_BOOKS[name] = {
+        buys: [{ p: 900 + i, v: 1000 }], sells: [{ p: 1200 + i, v: 40 }],
+        hist: series(90, t => ({ average: 1000 + i + t * 3, highest: 1010 + i + t * 3,
+                                 lowest: 990 + i + t * 3, volume: 50 + t })),
+      };
+      bulkLines.push(name + '\t' + (10 + i));
+    }
+    const s8 = await openSell(browser, server, { typeIds: BULK_IDS, books: BULK_BOOKS });
+    await fetchWithHistory(s8.page, bulkLines.join('\n'), 'median', 30);
+    await s8.page.waitForFunction(() => state.rows.length === 250);
+    await s8.page.waitForFunction(() => (state.sparkDrawn || 0) > 0);
+    const bulkStats = await s8.page.evaluate(() => {
+      const t0 = performance.now();
+      render();
+      const ms = performance.now() - t0;
+      return { ms, rows: document.querySelectorAll('#tblBody tr').length,
+               cells: document.querySelectorAll('#tblBody td.spark').length,
+               drawnNow: document.querySelectorAll('#tblBody td.spark[data-spark]').length };
+    });
+    eq('all 250 rows render', bulkStats.rows, 250);
+    eq('...each with a sparkline cell', bulkStats.cells, 250);
+    check('...but only the ones on screen are actually drawn',
+      bulkStats.drawnNow < 250, bulkStats.drawnNow + ' of 250 drawn immediately');
+    check('...and a full re-render of 250 rows stays well under a second',
+      bulkStats.ms < 900, bulkStats.ms + ' ms');
+    // scrolling the table draws the rows that come into view — waited on the count, not a clock
+    const drawnBefore = await s8.page.evaluate(() => state.sparkDrawn || 0);
+    await s8.page.evaluate(() => { document.querySelector('.tablewrap').scrollTop = 6000; });
+    await s8.page.waitForFunction(n => (state.sparkDrawn || 0) > n, drawnBefore, { timeout: 15000 });
+    check('scrolling draws the newly visible ones',
+      await s8.page.evaluate(() => document.querySelectorAll('#tblBody td.spark[data-spark] svg').length) > 0);
+    await s8.close();
+
 
   } finally {
     await browser.close();

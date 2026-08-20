@@ -237,6 +237,28 @@ input and its three-way filter are gone; a **LIST-PATIENT** recommendation — o
 survive the fee guard — replaces it. Old saved settings load cleanly; the dead keys are
 ignored and dropped on the next save.
 
+### The graphs
+
+Every priced row carries an inline **sparkline** — the last 120 days of daily average
+price, drawn in the trend's own colour (green rising, red falling, grey flat), with
+horizontal markers for the three prices the row turns on: the current best sell (cyan),
+the competitive list price (amber, drawn only when it differs from the best sell) and the
+patient price (violet). The vertical scale spans the series *and* the markers, so a marker
+is never off-canvas and "the patient price is above everything this market has done lately"
+becomes a picture rather than a percentage.
+
+**Click a sparkline** (or focus it and press Enter) to expand the row into a full chart:
+the same series at ~12 months, a shaded band between the daily high and low where ESI
+provides them, the price markers repeated and labelled, daily traded volume as bars
+beneath, and the row's decision numbers — plan, expected net, fill estimate, chance,
+ISK/slot-day — restated under it next to the plain-language *why*. One chart is open at a
+time, and it stays open across a re-sort or a patience flip.
+
+It is all inline SVG: no chart library, no external request, no canvas. Sparklines are
+drawn **lazily**, only for cells actually scrolled into the table's viewport, so a 250-row
+hangar does not pay for 250 charts nobody looks at. Rows with no history at this market say
+so instead of drawing an empty box.
+
 ### Honest caveats
 
 - **Fill est. is an approximation, and an optimistic one.** ESI publishes regional traded
