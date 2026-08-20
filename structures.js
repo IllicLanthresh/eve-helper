@@ -435,8 +435,8 @@
                 const cur = (get(rec.id) || rec).roleBonus;
                 const key = rec.id + ':bonus';
                 if (cur && !sameBonus(cur, want) && owner[key])
-                  addConflict(rec.id, `profile "${owner[key]}" said role bonuses ME ${cur.me}% / TE ${cur.te}% / `
-                    + `cost ${cur.cost}% and "${p.name}" said ME ${want.me}% / TE ${want.te}% / cost ${want.cost}%; `
+                  addConflict(rec.id, `role bonuses disagreed: "${owner[key]}" ME ${cur.me}% / TE ${cur.te}% / `
+                    + `cost ${cur.cost}% · "${p.name}" ME ${want.me}% / TE ${want.te}% / cost ${want.cost}% · `
                     + `kept "${p.name}"'s`);
                 if (!sameBonus(cur, want)){
                   setFact(rec.id, 'roleBonus', want);
@@ -453,9 +453,9 @@
               const key = rec.id + ':rigs';
               const same = cur.length === tids.length && cur.every(t => tids.includes(t));
               if (cur.length && !same && owner[key]){
-                addConflict(rec.id, `profile "${owner[key]}" and "${p.name}" disagreed about rigs; `
-                  + `kept "${p.name}"'s (${tids.length} rig${tids.length > 1 ? 's' : ''}, `
-                  + `dropped ${cur.length} from "${owner[key]}")`);
+                addConflict(rec.id, `rigs disagreed: "${owner[key]}" · "${p.name}" · `
+                  + `kept "${p.name}"'s ${tids.length} rig${tids.length > 1 ? 's' : ''}, `
+                  + `dropped ${cur.length} from "${owner[key]}"`);
               }
               if (!same){
                 setFact(rec.id, 'rigs', tids);
@@ -472,7 +472,7 @@
               const cur = (get(rec.id) || rec).facilityTax;
               const key = rec.id + ':tax';
               if (cur != null && cur !== tax && owner[key])
-                addConflict(rec.id, `profile "${owner[key]}" said facility tax ${cur}% and "${p.name}" said ${tax}%; `
+                addConflict(rec.id, `facility tax disagreed: "${owner[key]}" ${cur}% · "${p.name}" ${tax}% · `
                   + `kept "${p.name}"'s ${tax}%`);
               if (cur !== tax){
                 setFact(rec.id, 'facilityTax', tax);
@@ -578,13 +578,13 @@
         // #topbar is 20), so "log in first" with no login control is a dead end — offer
         // the action here, the same way the missing-scopes branch offers the panel
         msg.className = 'msg err';
-        msg.textContent = 'log in with EVE first — the search runs as your character.';
+        msg.textContent = 'log in with EVE — the search runs as your character';
         const link = document.createElement('span');
         link.className = 'evePermLink';
         link.id = 'structLogin';
         link.style.cssText = 'display:inline-block;margin-top:6px';
         link.textContent = 'log in with EVE';
-        link.title = 'starts the EVE SSO login — the picker closes first, since it covers the topbar button';
+        link.title = 'starts the EVE SSO login\nthe picker closes first, since it covers the topbar button';
         link.addEventListener('click', () => {
           done(null);
           if (window.EveAuth && EveAuth.login) EveAuth.login();
@@ -593,7 +593,7 @@
       } else if (missing.length){
         // don't just describe the problem — hand the user the panel that fixes it
         msg.className = 'msg err';
-        msg.textContent = `structure search is unavailable: your login lacks ${missing.join(' + ')} — `;
+        msg.textContent = `search unavailable · missing scope: ${missing.join(' + ')} — `;
         const link = document.createElement('span');
         link.className = 'evePermLink';
         link.textContent = 'see permissions';
@@ -663,7 +663,7 @@
           const none = document.createElement('div');
           none.className = 'msg';
           none.id = 'structNone';
-          none.textContent = 'no saved structures yet — search for one above, or add and edit them in the '
+          none.textContent = 'no saved structures yet — search above, or add and edit them in the '
             + 'Structure Manager';
           rows.appendChild(none);
         }
@@ -672,7 +672,7 @@
         const link = document.createElement('a');
         link.href = 'structures.html';
         link.textContent = 'manage structures →';
-        link.title = 'the Structure Manager — rename, edit or remove a structure in one place';
+        link.title = 'Structure Manager — rename, edit or remove a structure in one place';
         foot.appendChild(link);
         savedBox.append(rows, foot);
       }
@@ -698,7 +698,7 @@
           if (my !== seq) return;
           if (!ids.length){
             msg.className = 'msg';
-            msg.textContent = `nothing found — the search only sees structures ${EveAuth.character().name} can access`;
+            msg.textContent = `nothing found — the search only sees what ${EveAuth.character().name} can access`;
             return;
           }
           const entries = [];
@@ -707,7 +707,7 @@
           }
           if (my !== seq) return;
           msg.className = 'msg';
-          msg.textContent = entries.length ? '' : 'matches found, but none could be resolved (no access?)';
+          msg.textContent = entries.length ? '' : 'matches found, none resolvable — no access?';
           items = entries.map(e => { const el = rowEl(e); results.appendChild(el); return el; });
           if (items.length) setActive(0);
         }catch(e){

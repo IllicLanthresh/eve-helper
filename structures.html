@@ -41,6 +41,18 @@
   .ok{color:var(--green)} .err{color:var(--red)} .warn{color:var(--amber)}
   code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
   #sdeStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  /* section help: the one-line fact stays on screen, the long form hides behind a ?
+     that is CLOSED by default. Long-form reference lives in the README. */
+  details.help{display:inline-block;margin:0 0 0 6px;vertical-align:baseline;font-size:12px}
+  details.help>summary{list-style:none;display:inline-block;min-width:16px;height:16px;line-height:14px;
+    text-align:center;border:1px solid var(--line);border-radius:9px;color:var(--dim);font-size:11px;
+    cursor:pointer;user-select:none;padding:0 4px}
+  details.help>summary::-webkit-details-marker{display:none}
+  details.help>summary:hover{color:var(--text);border-color:var(--cyan)}
+  details.help[open]>summary{color:var(--cyan);border-color:var(--cyan)}
+  details.help .helpbody{display:block;margin:8px 0 0;color:var(--dim);font-size:12px;
+    max-width:960px;line-height:1.5}
+  .subhead{margin:4px 0 0;color:var(--dim);font-size:13px;max-width:1100px}
   details.notes{margin-top:10px;color:var(--dim);font-size:13px}
   details.notes summary{cursor:pointer;color:var(--text)}
   ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
@@ -111,20 +123,20 @@
 </nav>
 <header>
   <h1>Structure Manager</h1>
-  <p>One record per structure, shared by every tool. What is intrinsic to the structure lives here — the
-     owner-set market broker rate, the facility tax, the installed rigs, the reprocessing rig, the hull's
-     role bonuses, what it can build — and the Sell, Mine and Industry pages <em>select</em> a structure
-     and read those facts. There is exactly one write-through: the Sell page's broker box, because that
-     rate is read off the in-game market window while you are selling; typing it there records it here.
-     What is yours rather than the structure's (which profile builds where, product scopes,
-     your implant, cost-index overrides) stays in the tool that uses it.</p>
+  <div class="subhead">one record per structure · broker rate · facility tax · rigs · role bonuses ·
+    activities — read by Sell, Mine and Industry<details class="help"><summary>?</summary><span class="helpbody">Whatever is
+    intrinsic to the structure lives here; the other pages <em>select</em> a structure and read those facts.
+    There is exactly one write-through: the Sell page's broker box, because that rate is read off the in-game
+    market window while you are selling, so typing it there records it here. Whatever is yours rather than the
+    structure's — which profile builds where, product scopes, your implant, cost-index overrides — stays in the
+    tool that uses it. Long-form reference: README.</span></details></div>
 </header>
 <main>
 
 <section>
   <h2>Saved structures</h2>
   <div class="rowline">
-    <button id="btnAdd" type="button" class="primary">+ add structure…</button>
+    <button id="btnAdd" type="button" class="primary" title="search a structure your logged-in character can see">+ add structure…</button>
     <span id="sdeStatus"></span>
   </div>
   <!-- a #s<id> deep link whose record is not here any more: the tool that sent the user
@@ -134,16 +146,16 @@
   <details class="notes">
     <summary>What ESI does and doesn't tell us</summary>
     <ul class="plain">
-      <li>Identity — name, hull type, system, security, region — is read from ESI and refreshed with the
-        <b>re-resolve</b> button on each record. It is never hand-edited here.</li>
-      <li>Fittings are not in ESI, not even for the owner. Rigs are either picked from the real Standup
-        catalog or worked out with <b>infer rigs…</b>, which reads the numbers the in-game industry window
-        shows anyone who can use the structure.</li>
-      <li>Owner-set rates — market broker % and facility job tax % — have no ESI endpoint at all. Read them
-        off the in-game market/industry window and type them in once, here.</li>
-      <li>Hull role bonuses are presets this app ships, not ESI data: correct one here and every Industry
-        profile that routes work to this structure follows.</li>
-      <li>Every field is saved the moment you change it, and every open tab picks the change up.</li>
+      <li><b>Identity</b> — name, hull, system, security, region — comes from ESI, refreshed by
+        <b>re-resolve</b> on each record. Never hand-edited here.</li>
+      <li><b>Fittings</b> are not in ESI, not even for the owner. Pick rigs from the real Standup catalog, or
+        derive them with <b>infer rigs…</b> from the numbers the in-game industry window shows anyone who can
+        use the structure.</li>
+      <li><b>Owner-set rates</b> — market broker % and facility job tax % — have no ESI endpoint at all. Read
+        them off the in-game market / industry window and type them in once, here.</li>
+      <li><b>Role bonuses</b> are presets this app ships, not ESI data. Correct one here and every Industry
+        profile routing work to this structure follows.</li>
+      <li>Every field saves the moment you change it, and every open tab picks it up.</li>
     </ul>
   </details>
 </section>
@@ -185,10 +197,11 @@ async function loadStatic(){
     // hand the structure size/slot map to the shared store: pages that never load this
     // 2 MB file read it from the cached copy the store keeps
     if (D.structures) S.useTypeMap(D.structures);
-    el.textContent = `rig catalog OK — SDE ${D.v} · ${fmt0.format(Object.keys(D.rigs || {}).length)} Standup rigs`;
+    el.textContent = `SDE ${D.v} · ${fmt0.format(Object.keys(D.rigs || {}).length)} Standup rigs`;
+    el.title = 'rig catalog loaded from data/industry.json';
     el.className = 'ok';
   }catch(e){
-    el.textContent = 'data/industry.json missing or unreadable (' + (e.message || e) + ') — rig editing is '
+    el.textContent = 'data/industry.json missing or unreadable (' + (e.message || e) + ') · rig editing is '
       + "unavailable until it is there; it is built by CI from CCP's SDE at deploy time (see data/README.md)";
     el.className = 'err';
   }
@@ -273,7 +286,7 @@ function render(){
   if (!recs.length){
     const d = document.createElement('div');
     d.className = 'empty';
-    d.textContent = 'no structures yet — add one with the button above (the search runs as your logged-in '
+    d.textContent = 'no structures yet — add one above (the search runs as your logged-in '
       + 'character and only sees structures it can access)';
     box.appendChild(d);
     return;
@@ -307,12 +320,12 @@ function render(){
       // actually performs: Sell reverts to Jita, Mine to the NPC station (both of which
       // change the numbers they show), while an Industry facility routes work to a
       // structure it can no longer read and stops computing until it is added back
-      const where = used.length ? '\n\nIt is currently used by:\n· ' + used.join('\n· ')
-        + '\n\nThe Sell tool falls back to Jita and the Mine tool to the NPC station; an Industry '
-        + 'facility cannot be computed until this structure is added back.'
+      const where = used.length
+        ? '\n\nused by: ' + used.join(' · ')
+          + '\n\nfallbacks: Sell tool → Jita · Mine tool → NPC station'
+          + '\nIndustry: the facility cannot be computed until this structure is added back'
         : '\n\nNothing is using it right now.';
-      if (!window.confirm(`Remove "${rec.name}" and everything recorded about it — the owner-set `
-          + `rates, the rigs and the notes?${where}`)) return;
+      if (!window.confirm(`Remove "${rec.name}" — rates, rigs and notes?${where}`)) return;
       open.delete(rec.id);
       S.remove(rec.id);
       render();
@@ -385,7 +398,7 @@ function fillBody(body, rec){
   );
   const re = document.createElement('button');
   re.className = 'mini'; re.type = 'button'; re.textContent = 're-resolve';
-  re.title = 'read the identity again from ESI (needs a logged-in character with access to the structure)';
+  re.title = 'read the identity again from ESI\nneeds a logged-in character with access to the structure';
   const reMsg = document.createElement('span');
   reMsg.className = 'hint';
   re.addEventListener('click', async () => {
@@ -413,13 +426,12 @@ function fillBody(body, rec){
     gap.className = 'hint warn';
     gap.id = 'identGap' + rec.id;
     gap.style.marginTop = '4px';
-    gap.textContent = (rec.systemId == null && rec.security == null
-        ? 'no system or security recorded for this structure'
-        : rec.systemId == null ? 'no system recorded for this structure'
-        : 'no security recorded for this structure')
-      + ' — until it is, Industry counts the system cost index as 0'
-      + (rec.security == null ? ' and applies highsec rig multipliers' : '')
-      + '. Press re-resolve (needs a logged-in character that can see the structure).';
+    gap.textContent = (rec.systemId == null && rec.security == null ? 'no system or security recorded'
+        : rec.systemId == null ? 'no system recorded' : 'no security recorded')
+      + ' · re-resolve to fix';
+    gap.title = 'Industry counts the system cost index as 0'
+      + (rec.security == null ? '\nrig multipliers: highsec is assumed' : '')
+      + '\nre-resolve needs a logged-in character that can see the structure';
     body.appendChild(gap);
   }
 
@@ -433,17 +445,18 @@ function fillBody(body, rec){
   rl.className = 'rowline';
   rl.append(
     numField('marketBroker', 'market broker %', f.marketBroker,
-      'the broker fee this structure’s owner charges on market orders — ESI does not publish it; read it '
-      + 'off the in-game market window. The Sell tool uses it whenever this structure is the market.',
+      'the owner’s broker fee on market orders — no ESI endpoint\nread it off the in-game market window'
+      + '\nused by the Sell tool whenever this structure is the market',
       v => { S.update(rec.id, { marketBroker: v }); redraw(); }),
     numField('facilityTax', 'facility tax %', f.facilityTax,
-      'the owner-set job tax — ESI does not publish it; read it off the in-game industry window. '
-      + 'The Industry tool uses it for every job run here.',
+      'the owner-set job tax — no ESI endpoint\nread it off the in-game industry window'
+      + '\nused by the Industry tool for every job run here',
       v => { S.update(rec.id, { facilityTax: v }); redraw(); }),
   );
   const rHint = document.createElement('span');
   rHint.className = 'hint';
-  rHint.textContent = 'blank = not known (the tools fall back to their own defaults)';
+  rHint.textContent = 'blank = not known';
+  rHint.title = 'a blank rate leaves each tool on its own default';
   rl.appendChild(rHint);
   rates.append(rh, rl);
   body.appendChild(rates);
@@ -460,10 +473,10 @@ function fillBody(body, rec){
   const slots = rigSlotsOf(rec);
   const cap = document.createElement('div');
   cap.className = 'hint';
-  cap.title = 'real Standup rig catalog from the SDE — bonuses shown are base % × this system’s '
+  cap.title = 'real Standup rig catalog from the SDE\nbonuses shown are base % × this system’s '
     + 'security-band multiplier (engineering rigs: HS ×1.0, LS ×1.9, NS/WH ×2.1; reactor rigs: '
     + 'LS ×1.0, NS/WH ×1.1, never HS)';
-  cap.textContent = !D ? 'the rig catalog is unavailable — see the status line above'
+  cap.textContent = !D ? 'rig catalog unavailable — see the status line above'
     : st ? `${st[2]}-Set catalog · ${slots} slots · ${secLabel(rec.security)} multipliers`
     : 'unknown structure type — the catalog cannot tell which rigs fit';
   rigBox.appendChild(cap);
@@ -530,7 +543,7 @@ function fillBody(body, rec){
   if (valid.length){
     const wiz = document.createElement('button');
     wiz.className = 'mini'; wiz.type = 'button'; wiz.textContent = 'infer rigs…';
-    wiz.title = 'work out the installed rigs from what the in-game industry window shows you — '
+    wiz.title = 'derive the installed rigs from the in-game industry window\n'
       + 'no structure ownership needed';
     wiz.addEventListener('click', () => openRigWizard(rec));
     rigCtl.appendChild(wiz);
@@ -546,7 +559,7 @@ function fillBody(body, rec){
   rLab.textContent = 'reprocessing rig';
   const rSel = document.createElement('select');
   rSel.style.width = '200px';
-  rSel.title = 'reprocessing rig fitted to this structure — the Mine tool multiplies the refinery base by it '
+  rSel.title = 'reprocessing rig fitted here\nthe Mine tool multiplies the refinery base by it '
     + '(the security multiplier comes from the system)';
   for (const [k, label] of Object.entries(S.REPRO_RIGS)){
     const o = document.createElement('option');
@@ -560,7 +573,8 @@ function fillBody(body, rec){
   if (!rec.refinery){
     const warn = document.createElement('span');
     warn.className = 'hint';
-    warn.textContent = 'not a refinery hull — a reprocessing rig only pays off on an Athanor/Tatara';
+    warn.textContent = 'not a refinery hull';
+    warn.title = 'a reprocessing rig only pays off on an Athanor or Tatara';
     repro.appendChild(warn);
   }
   rigBox.appendChild(repro);
@@ -603,8 +617,9 @@ function fillBody(body, rec){
   const actHint = document.createElement('div');
   actHint.className = 'hint';
   actHint.style.marginTop = '6px';
-  actHint.textContent = 'what the structure is capable of. Which of them a given Industry profile actually '
-    + 'routes here, and for which products, stays in that profile.';
+  actHint.textContent = 'capability, not routing';
+  actHint.title = 'what the structure can run'
+    + '\nwhich activities a profile routes here, and for which products, stays in that profile';
   actBox.appendChild(actHint);
   body.appendChild(actBox);
 
@@ -646,8 +661,9 @@ function fillBody(body, rec){
   const bHint = document.createElement('div');
   bHint.className = 'hint';
   bHint.style.marginTop = '6px';
-  bHint.textContent = 'the hull’s own ME/TE/job-cost bonuses, before rigs. Every Industry profile that '
-    + 'routes work here uses these — correct them once if your in-game numbers differ.';
+  bHint.textContent = 'the hull’s own ME/TE/job-cost bonuses, before rigs';
+  bHint.title = 'every Industry profile routing work here uses these'
+    + '\ncorrect them once if your in-game numbers differ';
   bonBox.append(bh, bLine, bHint);
   body.appendChild(bonBox);
 
@@ -840,7 +856,7 @@ function openRigWizard(rec){
       const cSel = document.createElement('select');
       cSel.id = 'wizChar';
       cSel.style.width = '160px';
-      cSel.title = 'whose Industry / Advanced Industry / Reactions skills the job duration is stripped with';
+      cSel.title = 'whose Industry / Advanced Industry / Reactions skills strip the job duration';
       for (const c of chars){
         const o = document.createElement('option');
         o.value = String(c.id); o.textContent = c.name;
@@ -852,7 +868,7 @@ function openRigWizard(rec){
     } else {
       const warn = document.createElement('span');
       warn.className = 'hint warn';
-      warn.textContent = 'not logged in — job times are stripped with level-0 skills, so the time cross-check '
+      warn.textContent = 'not logged in — job times strip with level-0 skills, so the time cross-check '
         + 'will disagree; quantities still work';
       line0.appendChild(warn);
     }
@@ -1034,7 +1050,8 @@ function openRigWizard(rec){
     l6.append('shown job duration ', dur);
     const hint = document.createElement('span');
     hint.className = 'hint';
-    hint.textContent = 'blank = skip the time check (tier cross-check unavailable)';
+    hint.textContent = 'blank = skip the time check';
+    hint.title = 'without a duration the tier cross-check is unavailable';
     line4.append(l6, hint);
     s.appendChild(line4);
     const err = document.createElement('div');

@@ -654,10 +654,10 @@ H.run('structures-manager', async () => {
       // "those will fall back to their defaults" was one blanket promise for three tools
       // that behave differently — the confirm now names the fallback each one performs,
       // and every one of these is asserted against the tool itself further down
-      check('...and names the fallback Sell performs', /falls back to Jita/.test(dialog), dialog);
-      check('...the one Mine performs', /Mine tool to the NPC station/.test(dialog), dialog);
+      check('...and names the fallback Sell performs', /Sell tool → Jita/.test(dialog), dialog);
+      check('...the one Mine performs', /Mine tool → NPC station/.test(dialog), dialog);
       check('...and that an Industry facility instead stops computing',
-        /Industry facility cannot be computed until this structure is added back/.test(dialog), dialog);
+        /Industry: the facility cannot be computed until this structure is added back/.test(dialog), dialog);
       eq('the record really is gone', await s.page.evaluate(() => EveStructures.saved().length), 0);
       eq('...from storage too', await storedRec(s.page, RAITARU), null);
       await s.close();
@@ -902,14 +902,14 @@ H.run('structures-manager', async () => {
       const page = await context.newPage();
       H.watchPage(page, 'mine');
       await page.goto(server.url + '/mine.html');
-      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+      await page.waitForFunction(() => /per-ore refine — Miquel Dreamer/.test(document.body.textContent),
         null, { timeout: 25000 });
       await page.waitForFunction(() => !document.getElementById('facRigNote').hidden,
         null, { timeout: 15000 });
       check('with nothing recorded the rig line warns instead of staying silent',
-        /no reprocessing rig set/.test(await page.$eval('#facRigNote', el => el.textContent)));
+        /no rig set/.test(await page.$eval('#facRigNote', el => el.textContent)));
       check('...and names the manager as the place to fix it',
-        /structure manager/.test(await page.$eval('#facRigNote', el => el.textContent)));
+        /set it on the structure record/i.test(await page.$eval('#facRigNote', el => el.title)));
       check('...and it is flagged, not a plain hint',
         (await page.$eval('#facRigNote', el => el.className)).includes('warn'));
       eq('...and the manage link points at this structure’s record',
@@ -921,7 +921,7 @@ H.run('structures-manager', async () => {
 
       // an edit made in the manager (or another tab) has to reach this page live
       await page.evaluate(id => EveStructures.update(id, { reproRig: 't2' }), TATARA);
-      await page.waitForFunction(() => !/no reprocessing rig set/.test(
+      await page.waitForFunction(() => !/no rig set/.test(
         document.getElementById('facRigNote').textContent), null, { timeout: 15000 });
       check('recording a rig centrally updates the line here',
         /T2 reprocessing rig/.test(await page.$eval('#facRigNote', el => el.textContent)));
@@ -936,7 +936,7 @@ H.run('structures-manager', async () => {
         1e-9);
       // ...and back again, to prove the page is reading rather than caching
       await page.evaluate(id => EveStructures.update(id, { reproRig: 'none' }), TATARA);
-      await page.waitForFunction(() => /no reprocessing rig set/.test(
+      await page.waitForFunction(() => /no rig set/.test(
         document.getElementById('facRigNote').textContent), null, { timeout: 15000 });
       near('clearing the rig centrally removes the bonus here again',
         await page.evaluate(() => facilityBasePct()), 55, 1e-9);
@@ -1427,7 +1427,7 @@ H.run('structures-manager', async () => {
       await s.page.click('#btnAdd');
       await s.page.waitForSelector('#structPicker #structMsg.err', { timeout: 15000 });
       const msg = await s.page.$eval('#structPicker #structMsg', el => el.textContent);
-      check('it still says a login is needed', /log in with EVE first/.test(msg), msg);
+      check('it still says a login is needed', /log in with EVE — the search runs as your character/.test(msg), msg);
       check('...and now carries the action itself',
         await s.page.evaluate(() => !!document.getElementById('structLogin')));
       await s.page.click('#structLogin');
@@ -1498,7 +1498,7 @@ H.run('structures-manager', async () => {
       const page = await context.newPage();
       H.watchPage(page, 'mine-list');
       await page.goto(server.url + '/mine.html');
-      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+      await page.waitForFunction(() => /per-ore refine — Miquel Dreamer/.test(document.body.textContent),
         null, { timeout: 25000 });
       await page.waitForFunction(() => !document.getElementById('facStruct').disabled,
         null, { timeout: 15000 });
@@ -1548,7 +1548,7 @@ H.run('structures-manager', async () => {
       const page = await context.newPage();
       H.watchPage(page, 'mine-band');
       await page.goto(server.url + '/mine.html');
-      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+      await page.waitForFunction(() => /per-ore refine — Miquel Dreamer/.test(document.body.textContent),
         null, { timeout: 25000 });
       near('with no security recorded the rig is scaled by the highsec ×1',
         await page.evaluate(() => facilityBasePct()), 55 * (1 + 0.03 * 1), 1e-9);
@@ -1775,7 +1775,7 @@ H.run('structures-manager', async () => {
       const page = await context.newPage();
       H.watchPage(page, 'mine-band-text');
       await page.goto(server.url + '/mine.html');
-      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+      await page.waitForFunction(() => /per-ore refine — Miquel Dreamer/.test(document.body.textContent),
         null, { timeout: 25000 });
       await page.waitForFunction(() => /nullsec/.test(document.getElementById('facNote').textContent),
         null, { timeout: 15000 });
@@ -1784,7 +1784,7 @@ H.run('structures-manager', async () => {
       const note = await page.$eval('#facNote', el => el.textContent);
       check('...and the band it displayed is stated in the facility note',
         /nullsec/.test(note) && /×1\.12/.test(note), note);
-      check('...with where it was detected from in the title', /security -0\.42/.test(
+      check('...with where it was detected from in the title', /security: -0\.42 at TEST-1/.test(
         await page.$eval('#facNote', el => el.title)), await page.$eval('#facNote', el => el.title));
       await context.close();
     }

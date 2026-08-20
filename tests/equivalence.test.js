@@ -291,7 +291,7 @@ async function captureMine(browser, server) {
   const page = await context.newPage();
   H.watchPage(page, 'mine@' + server.url);
   await page.goto(server.url + '/mine.html');
-  await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+  await page.waitForFunction(() => /per-ore refine (from|—) Miquel Dreamer/.test(document.body.textContent),
     null, { timeout: 20000 });
   // the legacy blob's open fleet section lands the page in profit mode
   await page.waitForFunction(() => document.body.dataset.mode === 'fleet', null, { timeout: 20000 });
@@ -305,12 +305,24 @@ async function captureMine(browser, server) {
     const { rows } = fleetCompute(parseSurvey(document.getElementById('fleetScan').value).rows);
     const tbl = document.querySelector('#fleetTable table');
     const keys = [...tbl.querySelectorAll('thead th')].map(th => th.dataset.sort);
+    // Flag WORDING is presentation and has deliberately been shortened to chips; what
+     // must be identical across builds is which flags fired and what the cells say, so the
+     // flag text is lifted out of the cell text and compared as a canonical code.
+    const flagKind = t => /^ice/.test(t) ? 'ice' : /^deep-core/.test(t) ? 'deep-core'
+      : /^excl/.test(t) ? 'excl' : /^fetch failed/.test(t) ? 'fetch-failed'
+      : /^volume\?/.test(t) ? 'volume?' : /^unpriced/.test(t) ? 'unpriced'
+      : /^no compressed variant/.test(t) ? 'no-compressed'
+      : /^no refine outputs/.test(t) ? 'no-refine' : 'other:' + t;
     const table = [...tbl.querySelectorAll('tbody tr')].map(tr => {
       const cells = [...tr.children];
-      const row = { total: tr.classList.contains('total'), copy: {}, text: {} };
+      const row = { total: tr.classList.contains('total'), copy: {}, text: {},
+                    flags: [...tr.querySelectorAll('.flag')].map(f => flagKind(f.textContent)) };
       keys.forEach((k, i) => {
         row.copy[k] = cells[i] ? (cells[i].dataset.copy != null ? cells[i].dataset.copy : null) : null;
-        row.text[k] = cells[i] ? cells[i].textContent : null;
+        if (!cells[i]){ row.text[k] = null; return; }
+        const c = cells[i].cloneNode(true);
+        for (const f of c.querySelectorAll('.flag')) f.remove();
+        row.text[k] = c.textContent;
       });
       return row;
     });
@@ -594,7 +606,7 @@ H.run('equivalence', async () => {
     const mp = await mctx.newPage();
     H.watchPage(mp, 'mine-rig');
     await mp.goto(serverNew.url + '/mine.html');
-    await mp.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+    await mp.waitForFunction(() => /per-ore refine (from|—) Miquel Dreamer/.test(document.body.textContent),
       null, { timeout: 20000 });
     check('the local rig control is gone', await mp.evaluate(() => !document.getElementById('facRig')));
     eq('the facility line mirrors the record instead',
@@ -606,9 +618,11 @@ H.run('equivalence', async () => {
     section('a structure with no reprocessing rig recorded says so, and costs no yield');
     await mp.evaluate(id => EveStructures.update(id, { reproRig: 'none' }), TATARA.id);
     await mp.waitForFunction(() => document.getElementById('facRigNote').textContent !== 'T2 reprocessing rig +3%');
-    eq('the line names the manager as the place to fix it',
-      await mp.$eval('#facRigNote', el => el.textContent),
-      'no reprocessing rig set — configure it in the structure manager');
+    eq('the line states the gap in one chip', await mp.$eval('#facRigNote', el => el.textContent),
+      'no rig set');
+    check('...naming the record as the place to fix it, on hover',
+      /fix: set it on the structure record/.test(await mp.$eval('#facRigNote', el => el.title)),
+      await mp.$eval('#facRigNote', el => el.title));
     check('...and it is flagged, not silent', await mp.$eval('#facRigNote', el => el.className.includes('warn')));
     const bareBase = await mp.evaluate(() => facilityBasePct());
     check('the yield falls back to the plain Tatara base, no invented rig bonus',

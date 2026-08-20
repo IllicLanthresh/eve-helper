@@ -136,7 +136,7 @@ H.run('permissions', async () => {
     await s.page.waitForFunction(() => {
       const lab = document.getElementById('fltOwned').closest('label');
       const n = lab.querySelector('.evePermLink');
-      return !!n && /can't be trusted/.test(n.textContent);
+      return !!n && /needs the blueprints permission/.test(n.textContent);
     }, null, { timeout: 15000 });
     check('the "only owned BPs" filter is flagged as untrustworthy', true);
     await s.close();
@@ -167,7 +167,7 @@ H.run('permissions', async () => {
       await s.page.waitForSelector('#structPicker #structMsg.err');
       const msg = await s.page.$eval('#structPicker #structMsg', el => el.textContent);
       check('adding a structure says the search is unavailable',
-        /structure search is unavailable/.test(msg), msg);
+        /^search unavailable · missing scope: /.test(msg), msg);
       check('...naming both missing scopes',
         SEARCH_SCOPES.every(sc => msg.includes(sc)), msg);
       check('...and the search box is disabled rather than silently useless',
@@ -207,7 +207,8 @@ H.run('permissions', async () => {
     await s.page.click('#btnAdd');
     await s.page.waitForSelector('#structPicker #structMsg.err');
     check('the picker asks for a login',
-      /log in with EVE first/.test(await s.page.$eval('#structPicker #structMsg', el => el.textContent)));
+      /log in with EVE — the search runs as your character/
+        .test(await s.page.$eval('#structPicker #structMsg', el => el.textContent)));
     check('...and the search box is disabled',
       await s.page.$eval('#structSearch', el => el.disabled));
     await s.page.keyboard.press('Escape');
