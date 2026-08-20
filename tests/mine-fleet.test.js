@@ -469,7 +469,7 @@ async function openMine(browser, server, opts) {
 }
 
 const waitSkillsNote = page => page.waitForFunction(
-  () => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+  () => /per-ore refine — Miquel Dreamer/.test(document.body.textContent),
   null, { timeout: 15000 });
 const waitOreDB = page => page.waitForFunction(
   () => typeof oreDB !== 'undefined' && oreDB !== null, null, { timeout: 15000 });
@@ -496,6 +496,8 @@ const tableData = page => page.evaluate(() => {
       name: tr.classList.contains('total') ? cells[0].textContent
         : (cells[0].querySelector('.orename') || cells[0]).textContent,
       flags: [...tr.querySelectorAll('.flag')].map(f => f.textContent),
+      // chips are short by design: their numbers live on the chip's own tooltip
+      flagTitles: [...tr.querySelectorAll('.flag')].map(f => f.title),
       copy: {}, text: {}, title: {},
     };
     keys.forEach((k, i) => {
@@ -542,9 +544,13 @@ H.run('mine-fleet', async () => {
       [...document.querySelectorAll('main > section')]
         .filter(s => getComputedStyle(s).display !== 'none')
         .map(s => ({ id: s.id, h2: s.querySelector('h2').textContent.trim() })));
+    // the intro is now a one-line fact plus a ? that carries the long form; both live
+    // in the same .subhead, so this reads what the mode actually shows
     const visibleIntro = page => page.evaluate(() =>
-      [...document.querySelectorAll('header p')]
-        .filter(p => getComputedStyle(p).display !== 'none').map(p => p.textContent).join(' | '));
+      [...document.querySelectorAll('header .subhead')]
+        .filter(p => getComputedStyle(p).display !== 'none')
+        .map(p => ({ line: p.firstChild.textContent.trim(), help: p.querySelector('.helpbody').textContent,
+                     open: p.querySelector('details').open }))[0]);
     eq('first-time users land in production mode',
       await sParse.page.$eval('body', b => b.dataset.mode), 'prod');
     let secs = await visibleSections(sParse.page);
@@ -558,8 +564,11 @@ H.run('mine-fleet', async () => {
       secs.every(x => !/^5 ·/.test(x.h2) && !/Fleet mode/.test(x.h2)), JSON.stringify(secs));
     eq('the shared section reads "Prices & refine" in production',
       await sParse.page.$eval('#pricesTitle', el => el.textContent), 'Prices & refine');
-    check('the production intro line is the shopping-list one',
-      /production line needs/.test(await visibleIntro(sParse.page)), await visibleIntro(sParse.page));
+    const prodIntro = await visibleIntro(sParse.page);
+    check('the production intro line states the flow in one line',
+      /^shopping list → densest rocks and moon ores → m³ to dig/.test(prodIntro.line), prodIntro.line);
+    check('...with the long form behind a ? that starts closed',
+      prodIntro.open === false && /production line needs/.test(prodIntro.help), JSON.stringify(prodIntro));
 
     // switch: an instant view swap into the paste-first profit flow. The USER-FACING
     // name is "Profit mode" — only internal ids/state keep the old 'fleet' naming
@@ -588,8 +597,11 @@ H.run('mine-fleet', async () => {
     check('...targets, plan, arrays and moons are all hidden',
       await sParse.page.evaluate(() => ['secTargets', 'secMine', 'secArrays', 'secMoons']
         .every(id => getComputedStyle(document.getElementById(id)).display === 'none')));
-    check('the fleet intro line replaces the production one',
-      /no shopping list/.test(await visibleIntro(sParse.page)), await visibleIntro(sParse.page));
+    const fleetIntro = await visibleIntro(sParse.page);
+    check('the profit-mode intro line replaces the production one',
+      /^survey scan → refined vs compressed vs raw/.test(fleetIntro.line), fleetIntro.line);
+    check('...its long form still saying no shopping list is needed',
+      fleetIntro.open === false && /No shopping list needed/.test(fleetIntro.help), JSON.stringify(fleetIntro));
     eq('the refine section is ONE shared DOM instance, not a copy: one #facStruct',
       await sParse.page.evaluate(() => document.querySelectorAll('#facStruct').length), 1);
     eq('...one #priceGrid', await sParse.page.evaluate(() => document.querySelectorAll('#priceGrid').length), 1);
@@ -727,14 +739,17 @@ H.run('mine-fleet', async () => {
       'Veldspar\t1000\t7431\nVeldspar\tabc\nQuafe Zero\t5\nQuafe Zero\t7');
     await waitSettled(sParse.page);
     let note = await sParse.page.$eval('#fleetNote', el => el.textContent);
-    check('the note reports the skipped numberless row', /1 row without readable numbers skipped/.test(note), note);
+    check('the note reports the skipped numberless row', /1 row skipped/.test(note), note);
+    check('...with the reason on the line\u2019s tooltip',
+      /skipped: 1 recognized row without a readable number/
+        .test(await sParse.page.$eval('#fleetNote', el => el.title)),
+      await sParse.page.$eval('#fleetNote', el => el.title));
     check('...and the ignored volume cell', /1 volume cell ignored/.test(note), note);
     const unk = await sParse.page.$eval('#fleetUnknown', el => ({ hidden: el.hidden, text: el.textContent }));
     eq('the unrecognized note is visible', unk.hidden, false);
     check('...listing the name with its ×2 count', /Quafe Zero ×2/.test(unk.text), unk.text);
     check('...with the softened wording — no SDE assertion, just "unrecognized ore names"',
-      /^unrecognized ore names \(rows kept out of the ranking\): /.test(unk.text)
-      && !/SDE/.test(unk.text), unk.text);
+      /^unrecognized ores · not ranked: /.test(unk.text) && !/SDE/.test(unk.text), unk.text);
 
     // recognized names whose rows all lack numbers must not read as "not recognized"
     await sParse.page.fill('#fleetScan', 'Veldspar\tabc\nDense Veldspar\txyz');
@@ -742,7 +757,7 @@ H.run('mine-fleet', async () => {
       () => /no usable rows/.test(document.getElementById('fleetTable').textContent));
     note = await sParse.page.$eval('#fleetTable', el => el.textContent);
     check('an all-numberless paste says what actually kept the table empty',
-      /no usable rows — 2 recognized ore rows without a readable quantity or volume/.test(note), note);
+      /no usable rows · 2 recognized ore rows without a readable quantity or volume/.test(note), note);
 
     // ...and a paste of nothing but group headers says THAT, not "no usable rows"
     await sParse.page.fill('#fleetScan', 'Cobaltite\nChromite');
@@ -750,14 +765,14 @@ H.run('mine-fleet', async () => {
       () => /group header/.test(document.getElementById('fleetTable').textContent));
     note = await sParse.page.$eval('#fleetTable', el => el.textContent);
     check('a headers-only paste is called out as such',
-      /no data rows — only 2 group headers \(bare ore-type names\)/.test(note), note);
+      /no data rows · only 2 group headers \(bare ore-type names\)/.test(note), note);
 
     // the full real scan: headers surface in the parse-status note, nothing is dropped
     await sParse.page.fill('#fleetScan', REAL_SCAN);
     await waitSettled(sParse.page);
     note = await sParse.page.$eval('#fleetNote', el => el.textContent);
     check('the real scan summarizes 5 ore types · 46 rocks', /5 ore types · 46 rocks/.test(note), note);
-    check('...and mentions the ignored group headers', /2 group headers ignored/.test(note), note);
+    check('...and mentions the ignored group headers', /2 headers ignored/.test(note), note);
     check('...with no numberless-row or ignored-volume complaint',
       !/without readable numbers|volume cell/.test(note), note);
     eq('...and the unrecognized note stays hidden',
@@ -770,7 +785,9 @@ H.run('mine-fleet', async () => {
     check('the sample scan parses to 8 ore types from 9 rocks', /8 ore types · 9 rocks/.test(note), note);
     eq('...with nothing unrecognized', await sParse.page.$eval('#fleetUnknown', el => el.hidden), true);
     check('logged out, a visible note declares the flat-refine basis of the whole column',
-      /refined values use the flat 75% refine — log in with EVE/.test(note), note);
+      /flat 75% refine/.test(note)
+      && /refined values: the flat 75% refine — log in with EVE for per-ore yields/
+        .test(await sParse.page.$eval('#fleetNote', el => el.title)), note);
     let raw = await rawRows(sParse.page);
     const concS = raw.find(r => r.name === 'Concentrated Veldspar');
     eq('the two Concentrated Veldspar rows aggregate to 2 rocks', concS && concS.rocks, 2);
@@ -1036,7 +1053,7 @@ H.run('mine-fleet', async () => {
       /· 100%/.test(T('Clear Icicle').text.comp), T('Clear Icicle').text.comp);
     check('...while its unpriced raw cell carries no %', !/%/.test(T('Clear Icicle').text.raw),
       T('Clear Icicle').text.raw);
-    check('...and carries the ice flag', T('Clear Icicle').flags.some(f => /^ice — unit-based/.test(f)),
+    check('...and carries the ice flag', T('Clear Icicle').flags.includes('ice'),
       JSON.stringify(T('Clear Icicle').flags));
     check('Dense Veldspar’s refined % = dense ÷ Brimful',
       new RegExp('· ' + Math.round(EXP.refDense / EXP.refBrim * 100) + '%').test(T('Dense Veldspar').text.ref),
@@ -1059,7 +1076,8 @@ H.run('mine-fleet', async () => {
       cp(T('Clear Icicle').copy.cm3), 120400, 0.006);
     eq('...and Banidine’s shows —', T('Banidine').text.cm3, '—');
     check('Clear Icicle refined is flagged with the excluded output',
-      T('Clear Icicle').flags.some(f => f === 'excl. Strontium Clathrates'),
+      T('Clear Icicle').flags.includes('excl 1')
+      && T('Clear Icicle').flagTitles.some(t => /excluded outputs: Strontium Clathrates/.test(t)),
       JSON.stringify(T('Clear Icicle').flags));
     check('no compressed-volume-pattern warning fires on SDE-consistent volumes',
       tbl.rows.every(r => !r.flags.includes('volume?')));
@@ -1068,8 +1086,11 @@ H.run('mine-fleet', async () => {
     check('...with no flat-refine disclaimer while logged in', !/flat \d+% refine/.test(note), note);
     // minerals have no mocked books here, so their placeholder fallback must be declared
     check('placeholder-priced refine outputs get a visible note, not just tooltips',
-      /section-2 placeholders/.test(await s.page.$eval('#fleetPriceNote', el => el.textContent)),
+      /some outputs on placeholders/.test(await s.page.$eval('#fleetPriceNote', el => el.textContent)),
       await s.page.$eval('#fleetPriceNote', el => el.textContent));
+    check('...naming section 2 as the fix, on hover',
+      /use section 2's Fetch prices/.test(await s.page.$eval('#fleetPriceNote', el => el.title)),
+      await s.page.$eval('#fleetPriceNote', el => el.title));
 
     // field totals: Σ value × m³ over priced rows only, per basis
     const totalRow = tbl.rows.find(r => r.total);
@@ -1276,7 +1297,7 @@ H.run('mine-fleet', async () => {
 
     await sRole.page.selectOption('#reproChar', String(CHAR2.id));
     await sRole.page.waitForFunction(
-      () => /per-ore refine from Nakiri Ayame/.test(document.body.textContent));
+      () => /per-ore refine — Nakiri Ayame/.test(document.body.textContent));
     raw = await rawRows(sRole.page);
     near('switching the reprocessor to Nakiri gives HER yield: 400×5 × 61.7344% ÷ 10',
       raw[0].ref, REF_VELD2, 1e-9);
@@ -1286,7 +1307,8 @@ H.run('mine-fleet', async () => {
       await sRole.page.evaluate(() => EveAuth.active()), CHAR.id);
     const skillsSum = await sRole.page.$eval('#skillsSummary', el => el.textContent);
     check('the imported-skills panel names the reprocessor',
-      /skills imported from Nakiri Ayame \(reprocessor\)/.test(skillsSum), skillsSum);
+      /— Nakiri Ayame$/.test(skillsSum)
+      && /role: reprocessor/.test(await sRole.page.$eval('#skillsSummary', el => el.title)), skillsSum);
     check('...with her levels', /Reprocessing 4 · Efficiency 3/.test(skillsSum), skillsSum);
 
     // the role lives in the SHARED section — production planning uses the same skills
@@ -1302,7 +1324,7 @@ H.run('mine-fleet', async () => {
     eq('the "sold by" select defaults to gross',
       await sRole.page.$eval('#sellChar', el => el.value), '');
     eq('...and the table area says so',
-      await sRole.page.$eval('#fleetSellNote', el => el.textContent), 'gross — no seller selected');
+      await sRole.page.$eval('#fleetSellNote', el => el.textContent), 'gross · no seller');
     const sellOpts = await sRole.page.$eval('#sellChar', el => [...el.options].map(o => o.textContent));
     check('...its options are gross + both characters',
       JSON.stringify(sellOpts) === JSON.stringify(['gross (no seller)', 'Nakiri Ayame', 'Miquel Dreamer']),
@@ -1313,7 +1335,7 @@ H.run('mine-fleet', async () => {
 
     await sRole.page.selectOption('#sellChar', String(CHAR.id));
     await sRole.page.waitForFunction(() =>
-      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 3\.38% — Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
     raw = await rawRows(sRole.page);
     near('refined ISK/m³ scales by exactly (1 − 3.375%) — Accounting 5',
       raw[0].ref, REF_VELD2 * (1 - TAX1 / 100), 1e-9);
@@ -1346,12 +1368,12 @@ H.run('mine-fleet', async () => {
 
     await sRole.page.selectOption('#sellChar', String(CHAR2.id));
     await sRole.page.waitForFunction(() =>
-      /net of Nakiri Ayame’s 7\.50% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 7\.50% — Nakiri Ayame/.test(document.getElementById('fleetSellNote').textContent));
     raw = await rawRows(sRole.page);
     near('an Accounting-0 seller nets the full 7.5%', raw[0].ref, REF_VELD2 * (1 - TAX2 / 100), 1e-9);
     await sRole.page.selectOption('#sellChar', '');
     await sRole.page.waitForFunction(() =>
-      document.getElementById('fleetSellNote').textContent === 'gross — no seller selected');
+      document.getElementById('fleetSellNote').textContent === 'gross · no seller');
     raw = await rawRows(sRole.page);
     near('back to gross restores the un-netted value', raw[0].ref, REF_VELD2, 1e-9);
     near('...raw included', raw[0].raw, EXP.rawVeld, 1e-9);
@@ -1359,7 +1381,7 @@ H.run('mine-fleet', async () => {
     section('role persistence across reload');
     await sRole.page.selectOption('#sellChar', String(CHAR.id));
     await sRole.page.waitForFunction(() =>
-      /net of Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 3\.38% — Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
     const storedRoles = await sRole.page.evaluate(
       () => JSON.parse(localStorage.getItem('eveHelper.mine.v1')).roles);
     check('both roles persist in the stored state',
@@ -1367,9 +1389,9 @@ H.run('mine-fleet', async () => {
       JSON.stringify(storedRoles));
     await sRole.page.reload();
     await sRole.page.waitForFunction(
-      () => /per-ore refine from Nakiri Ayame/.test(document.body.textContent));
+      () => /per-ore refine — Nakiri Ayame/.test(document.body.textContent));
     await sRole.page.waitForFunction(() =>
-      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 3\.38% — Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
     eq('the reprocessor select restores', await sRole.page.$eval('#reproChar', el => el.value), String(CHAR2.id));
     eq('the seller select restores', await sRole.page.$eval('#sellChar', el => el.value), String(CHAR.id));
     await waitSettled(sRole.page);
@@ -1395,14 +1417,14 @@ H.run('mine-fleet', async () => {
     const reproWarn = await sFall.page.$eval('#reproWarn', el => ({ hidden: el.hidden, text: el.textContent }));
     eq('the reprocessor warning is visible', reproWarn.hidden, false);
     eq('...naming the fallback (industry.html precedent)',
-      reproWarn.text, 'reprocessor character logged out — using Miquel Dreamer');
+      reproWarn.text, 'reprocessor logged out → Miquel Dreamer');
     eq('...and the select shows the fallback',
       await sFall.page.$eval('#reproChar', el => el.value), String(CHAR.id));
     const sellWarn = await sFall.page.$eval('#sellWarn', el => ({ hidden: el.hidden, text: el.textContent }));
     eq('the seller warning is visible too', sellWarn.hidden, false);
-    eq('...naming its fallback', sellWarn.text, 'seller character logged out — using Miquel Dreamer');
+    eq('...naming its fallback', sellWarn.text, 'seller logged out → Miquel Dreamer');
     await sFall.page.waitForFunction(() =>
-      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 3\.38% — Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
     check('...with the note carrying the fallback seller’s tax', true);
     raw = await rawRows(sFall.page);
     near('values use the fallback character on both roles: Miquel’s refine net of Miquel’s tax',
@@ -1424,7 +1446,7 @@ H.run('mine-fleet', async () => {
     eq('the seller select is disabled at gross',
       await sOut.page.$eval('#sellChar', el => el.disabled && el.value === ''), true);
     eq('...the note says gross', await sOut.page.$eval('#fleetSellNote', el => el.textContent),
-      'gross — no seller selected');
+      'gross · no seller');
     check('no stale logged-out warnings with nobody to fall back to',
       await sOut.page.evaluate(() =>
         document.getElementById('reproWarn').hidden && document.getElementById('sellWarn').hidden));
@@ -1456,7 +1478,7 @@ H.run('mine-fleet', async () => {
     near('...and prices it compressed at the derived 1:1 ratio: 900 ÷ 10', chro.comp, COMP_CHROMITE, 1e-9);
     eq('the parse status names the detection and the chunk',
       await sExt.page.$eval('#fleetNote', el => el.textContent),
-      'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+      'Auth extraction · 3 ores · 25.2M m³');
     tbl = await tableData(sExt.page);
     check('every rocks cell shows — (no scanned rocks in a forecast)',
       tbl.rows.filter(r => !r.total).every(r => r.text.rocks === '—'),
@@ -1479,7 +1501,7 @@ H.run('mine-fleet', async () => {
     // seller netting still applies exactly once on the extraction path
     await sExt.page.selectOption('#sellChar', String(CHAR.id));
     await sExt.page.waitForFunction(() =>
-      /net of Miquel Dreamer’s 3\.38% sales tax/.test(document.getElementById('fleetSellNote').textContent));
+      /tax 3\.38% — Miquel Dreamer/.test(document.getElementById('fleetSellNote').textContent));
     rp = await rawProfit(sExt.page);
     const chroNet = rp.rows.find(r => r.name === 'Chromite') || {};
     near('refined nets by exactly (1 − 3.375%), once', chroNet.ref, REF_CHROMITE * (1 - TAX1 / 100), 1e-9);
@@ -1490,7 +1512,7 @@ H.run('mine-fleet', async () => {
       REF_CHROMITE * (1 - TAX1 / 100) * 100000, 0.01);
     await sExt.page.selectOption('#sellChar', '');
     await sExt.page.waitForFunction(() =>
-      document.getElementById('fleetSellNote').textContent === 'gross — no seller selected');
+      document.getElementById('fleetSellNote').textContent === 'gross · no seller');
 
     section('Auth pastes: several moons, %-only copies, survey detection intact');
     await sExt.page.fill('#fleetScan', EXTRACTION_PASTE_2MOONS);
@@ -1500,8 +1522,12 @@ H.run('mine-fleet', async () => {
     near('...Chromite aggregating across the moons: 7,954,858 + 1,000,000',
       (rp.rows.find(r => r.name === 'Chromite') || {}).m3, 8954858, 1e-9);
     note = await sExt.page.$eval('#fleetNote', el => el.textContent);
-    check('...and the status says so', /· 2 moons combined\)$/.test(note), note);
-    check('...still as one chunk-contents summary', /^Auth extraction paste — expected chunk contents \(3 ores, /.test(note), note);
+    check('...and the status says so', /· 2 moons$/.test(note), note);
+    check('...still as one chunk-contents summary', /^Auth extraction · 3 ores · /.test(note), note);
+    check('...with "expected chunk contents" spelled out on hover',
+      /the expected contents of one chunk, not scanned rocks/
+        .test(await sExt.page.$eval('#fleetNote', el => el.title)),
+      await sExt.page.$eval('#fleetNote', el => el.title));
 
     // the %-only "Moon details" copy carries no quantities — honest decline (choice (a))
     await sExt.page.fill('#fleetScan', DETAILS_PASTE);
@@ -1530,7 +1556,7 @@ H.run('mine-fleet', async () => {
       (rp.rows.find(r => r.name === 'Cobaltite') || {}).cm3, 84896.4, 1e-9);
     note = await sExt.page.$eval('#fleetNote', el => el.textContent);
     eq('the status is the clean chunk summary — Auth’s Total being 1 m³ off (its own rounding) earns no checksum note',
-      note, 'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+      note, 'Auth extraction · 3 ores · 25.2M m³');
     tbl = await tableData(sExt.page);
     near('the ranked total m³ is the ore-row sum', cp(tbl.rows.find(r => r.total).copy.m3), 25199034, 0.006);
     near('...and the totals compressed m³ is the chunk’s haul-planning number: 2,519,903.4 ÷ 10',
@@ -1559,19 +1585,23 @@ H.run('mine-fleet', async () => {
 
     await sExt.page.fill('#fleetScan', MODAL_PASTE.replace('25,199,033', '30,000,000'));
     await sExt.page.waitForFunction(
-      () => /Total row says/.test(document.getElementById('fleetNote').textContent));
+      () => /Total row ≠ ore rows/.test(document.getElementById('fleetNote').textContent));
     note = await sExt.page.$eval('#fleetNote', el => el.textContent);
     check('a Total row disagreeing with its ore rows earns a status note — never an error',
-      /the Auth Total row says 30,000,000 m³ but the ore rows sum to 25,199,034 m³/.test(note), note);
+      /Total row ≠ ore rows ×1/.test(note)
+      && /the Auth Total row says 30,000,000 m³ but the ore rows sum to 25,199,034 m³/
+        .test(await sExt.page.$eval('#fleetNote', el => el.title)), note);
     tbl = await tableData(sExt.page);
     eq('...while the three ores still rank', tbl.rows.filter(r => !r.total).length, 3);
 
     await sExt.page.fill('#fleetScan', MODAL_PASTE.replace('R64', 'R32'));
     await sExt.page.waitForFunction(
-      () => /data wins/.test(document.getElementById('fleetNote').textContent));
+      () => /rarity tag ≠ data/.test(document.getElementById('fleetNote').textContent));
     note = await sExt.page.$eval('#fleetNote', el => el.textContent);
     check('an Auth rarity tag disagreeing with the SDE tier is noted, the data winning',
-      /Auth rarity tags disagree with the ore data \(data wins\): Loparite tagged R32, data says R64/.test(note), note);
+      /rarity tag ≠ data ×1/.test(note)
+      && /rarity tags \(data wins\): Loparite tagged R32, data says R64/
+        .test(await sExt.page.$eval('#fleetNote', el => el.title)), note);
     rp = await rawProfit(sExt.page);
     near('...with the volume untouched by the bad tag',
       (rp.rows.find(r => r.name === 'Loparite') || {}).m3, 9285110, 1e-9);
@@ -1600,7 +1630,7 @@ H.run('mine-fleet', async () => {
       JSON.stringify(rp.rows.map(r => [r.name, r.m3])));
     eq('...and a clean status — every info line skipped gracefully',
       await sExt.page.$eval('#fleetNote', el => el.textContent),
-      'Auth extraction paste — expected chunk contents (3 ores, 25.2M m³ total)');
+      'Auth extraction · 3 ores · 25.2M m³');
     await sExt.page.fill('#fleetScan', FULL_MODAL_PASTE.replace('Status: started', 'Status: completed'));
     rp = await rawProfit(sExt.page);
     check('a completed-status (past) extraction is the same layout and parses identically',
@@ -1674,14 +1704,19 @@ H.run('mine-fleet', async () => {
       return f ? f.title : null;
     });
     check('...whose tooltip names the error and the retry path',
-      /network\/ESI error/.test(failTitle || '') && /refresh profit-mode prices/.test(failTitle || ''), failTitle);
+      /network\/ESI error/.test(failTitle || '') && /"Refresh prices"/.test(failTitle || ''), failTitle);
     check('the ice refined cell names exactly the failed output',
-      iceRow2.flags.some(f => f === 'fetch failed: Helium Isotopes'), JSON.stringify(iceRow2.flags));
-    check('...separately from the bookless one', iceRow2.flags.some(f => f === 'excl. Strontium Clathrates'),
-      JSON.stringify(iceRow2.flags));
+      iceRow2.flags.includes('fetch failed')
+      && iceRow2.flagTitles.some(t => /failed outputs: Helium Isotopes/.test(t)),
+      JSON.stringify(iceRow2.flagTitles));
+    check('...separately from the bookless one',
+      iceRow2.flags.includes('excl 1')
+      && iceRow2.flagTitles.some(t => /excluded outputs: Strontium Clathrates/.test(t)),
+      JSON.stringify(iceRow2.flagTitles));
     note = await sErr.page.$eval('#fleetPriceNote', el => el.textContent);
     check('the completion note carries the failure count instead of reading as success',
-      /2 price fetches failed/.test(note), note);
+      /· 2 failed/.test(note)
+      && /failed price fetches: 2/.test(await sErr.page.$eval('#fleetPriceNote', el => el.title)), note);
 
     const stored = await sErr.page.evaluate(
       () => JSON.parse(localStorage.getItem('eveHelper.mine.v1')).fleet.prices);
@@ -1726,7 +1761,7 @@ H.run('mine-fleet', async () => {
     await waitSettled(sFac.page);
     const facNote = await sFac.page.$eval('#facNote', el => el.textContent);
     eq('the facility row shows the structure, its detected band and rig multiplier',
-      facNote, 'Tatara · TEST-1 (nullsec) — rig ×1.12');
+      facNote, 'Tatara · TEST-1 · nullsec · rig ×1.12');
     // base = 55% Tatara × (1 + 3% T2 rig × 1.12 nullsec) = 56.848%, then skills + implant
     const pTatara = PCT(55 * (1 + 0.03 * 1.12), 5, 4, 5, 4);
     const expDenseTatara = 2200 * (pTatara / 100) / (100 * 0.1);

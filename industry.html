@@ -72,6 +72,18 @@
   code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
   details.notes{margin-top:10px;color:var(--dim);font-size:13px}
   details.notes summary{cursor:pointer;color:var(--text)}
+  /* section help: the one-line fact stays on screen, the long form hides behind a ?
+     that is CLOSED by default. Long-form reference lives in the README. */
+  details.help{display:inline-block;margin:0 0 0 6px;vertical-align:baseline;font-size:12px}
+  details.help>summary{list-style:none;display:inline-block;min-width:16px;height:16px;line-height:14px;
+    text-align:center;border:1px solid var(--line);border-radius:9px;color:var(--dim);font-size:11px;
+    cursor:pointer;user-select:none;padding:0 4px}
+  details.help>summary::-webkit-details-marker{display:none}
+  details.help>summary:hover{color:var(--text);border-color:var(--cyan)}
+  details.help[open]>summary{color:var(--cyan);border-color:var(--cyan)}
+  details.help .helpbody{display:block;margin:8px 0 0;color:var(--dim);font-size:12px;
+    max-width:960px;line-height:1.5}
+  .subhead{margin:4px 0 0;color:var(--dim);font-size:13px}
   ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
   #esiStatus,#sdeStatus,#compStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)} .warn{color:var(--amber)}
@@ -147,9 +159,10 @@
 </nav>
 <header>
   <h1>Industry Helper</h1>
-  <p>Full-market build-vs-buy scan: every blueprint product priced against the live Jita book with your
-     facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI and ISK/h, with a
-     per-item cost drilldown.</p>
+  <div class="subhead">every blueprint product · live Jita book · your facilities, rigs, skills, BPs and
+    shipping → profit · ROI · ISK/h<details class="help"><summary>?</summary><span class="helpbody">A full-market
+    build-vs-buy scan. Each product is priced depth-aware against the live Jita order book at batch scale, with
+    a per-item cost drilldown down the whole build tree. Long-form reference: README.</span></details></div>
 </header>
 <main>
 
@@ -157,7 +170,7 @@
   <h2>1 · Data &amp; prices</h2>
   <div id="sdeStatus">loading static blueprint data…</div>
   <div class="rowline">
-    <button id="btnEsi" type="button" class="primary">Update ESI data</button>
+    <button id="btnEsi" type="button" class="primary" title="refresh the order book, adjusted prices, cost indices and owned blueprints">Update ESI</button>
     <span id="esiStatus"></span>
   </div>
   <div id="fetchBar" hidden><div id="fetchFill"></div></div>
@@ -174,18 +187,18 @@
     <button id="btnProfRen" class="mini" type="button">rename</button>
     <button id="btnProfDup" class="mini" type="button">duplicate</button>
     <button id="btnProfDel" class="mini" type="button">delete</button>
-    <span class="hint">everything below is stored per profile (in your browser)</span>
+    <span class="hint" title="storage: this browser only, never sent anywhere">stored per profile, in this browser</span>
   </div>
 
   <div id="facList"></div>
   <div class="rowline">
     <button id="btnAddStruct" type="button">+ structure…</button>
     <button id="btnAddNpc" type="button">+ NPC station</button>
-    <span class="hint">ordered list — jobs run at the FIRST facility that offers the activity (and whose
-      product scope covers the end product). A structure facility is a REFERENCE: its hull, rigs,
-      role bonuses and owner-set job tax come from
-      <a href="structures.html" style="color:var(--cyan)">Structures</a> and are the same in every
-      profile; this list only decides what THIS profile sends there.</span>
+    <span class="hint">ordered · a job runs at the first facility offering the activity in scope<details
+      class="help"><summary>?</summary><span class="helpbody">A structure facility here is a <b>reference</b>: its hull, rigs,
+      role bonuses and owner-set job tax come from <a href="structures.html" style="color:var(--cyan)">Structures</a>
+      and read the same in every profile. This list only decides what <em>this</em> profile sends
+      there.</span></details></span>
   </div>
 
   <div class="rowline" style="align-items:stretch">
@@ -200,11 +213,11 @@
         <label class="inl"><input type="radio" name="outSide" id="outInstant"> instant to buy orders</label>
       </div>
       <div class="grow">
-        <label class="inl" title="pays the broker fee when placing input BUY orders (inputSide = buy)">buyer
+        <label class="inl" title="pays the broker fee on input BUY orders (input side = buy)">buyer
           <select id="roleBuyer" class="roleSel" style="width:150px"></select></label>
         <label class="inl" title="pays sales tax and the sell-order broker fee on the product">seller
           <select id="roleSeller" class="roleSel" style="width:150px"></select></label>
-        <label class="inl" title="their full skill list drives job times, invention, the skilled filter and job-slot counts; their owned blueprints win merge ties">manufacturer
+        <label class="inl" title="skills drive job times · invention · the skilled filter · slot counts&#10;their owned blueprints win merge ties">manufacturer
           <select id="roleManuf" class="roleSel" style="width:150px"></select></label>
       </div>
       <div class="grow">
@@ -230,7 +243,7 @@
         <label class="inl"><input type="checkbox" id="shipIn"> inbound (materials to home)</label>
         <label class="inl"><input type="checkbox" id="shipOut"> outbound (products to Jita)</label>
       </div>
-      <div class="grow"><span class="hint">reward = round-up(base + ISK/m³ × volume + collateral% × value)</span></div>
+      <div class="grow"><span class="hint" title="round-up applies only with the checkbox above">reward = base + ISK/m³ × volume + collateral% × value</span></div>
     </fieldset>
     <fieldset class="grp">
       <legend>assumptions</legend>
@@ -269,16 +282,16 @@
 <section>
   <h2>3 · Profitability</h2>
   <div class="rowline">
-    <button id="btnCompute" type="button" class="primary">Compute all products</button>
+    <button id="btnCompute" type="button" class="primary" title="price every sellable blueprint product">Compute all</button>
     <button id="btnCancel" type="button" hidden>Cancel</button>
     <span id="compStatus"></span>
     <span class="sep"></span>
-    <button id="btnTsv" type="button">Copy table TSV</button>
+    <button id="btnTsv" type="button" title="the ranked table, tab-separated">Copy TSV</button>
     <span id="tsvStatus" class="hint"></span>
   </div>
   <div id="compBar" hidden><div id="compFill"></div></div>
   <div id="staleBanner" hidden>
-    <span>results are stale — the profile, ESI data or active character changed since the last compute.</span>
+    <span title="changed since the last compute: the profile, the ESI data, or the active character">stale results</span>
     <button id="btnRecompute" class="mini" type="button">Recompute</button>
   </div>
   <div class="rowline">
@@ -300,23 +313,23 @@
         <th data-key="name">Item</th>
         <th data-key="cat">Category</th>
         <th data-key="meta">Meta</th>
-        <th data-key="cost" class="num" title="full build cost per item: materials + job fees + shipping (both directions), invention amortized">Cost/Item</th>
-        <th data-key="rev" class="num" title="net revenue per item after broker + sales tax at Jita">Revenue/Item</th>
+        <th data-key="cost" class="num" title="materials + job fees + shipping both ways&#10;invention amortized">Cost/Item</th>
+        <th data-key="rev" class="num" title="net of broker + sales tax at Jita">Revenue/Item</th>
         <th data-key="profit" class="num">Profit/Item</th>
         <th data-key="margin" class="num" title="profit ÷ revenue">Margin %</th>
         <th data-key="roi" class="num" title="profit ÷ cost">ROI %</th>
-        <th data-key="iskh" class="num" title="pipeline: profit/unit × steady-state units/hour — min of the manufacturing / copying / invention stage rates for the planned batch">ISK/h</th>
-        <th data-key="batch" class="num" title="planned batch: runs per job × parallel jobs (bounded by BPC runs / ~24h jobs / slots / demand / capital)">Batch</th>
+        <th data-key="iskh" class="num" title="profit/unit × steady-state units/h&#10;rate = the slowest stage: manufacturing / copying / invention">ISK/h</th>
+        <th data-key="batch" class="num" title="runs per job × parallel jobs&#10;bounded by: BPC runs · ~24h jobs · slots · demand · capital">Batch</th>
         <th data-key="profitday" class="num" title="pipeline profit per day (ISK/h × 24)">Profit/Day</th>
-        <th data-key="capused" class="num" title="working capital the batch ties up: depth-priced inputs + job fees + invention overhead + inbound hauls">Capital Used</th>
-        <th data-key="ship" class="num" title="batch shipping (both directions, haul-split), amortized per item">Shipping/Item</th>
+        <th data-key="capused" class="num" title="inputs + job fees + invention overhead + inbound hauls&#10;working capital the batch ties up">Capital Used</th>
+        <th data-key="ship" class="num" title="batch shipping both ways, haul-split, amortized per item">Shipping/Item</th>
         <th data-key="tax" class="num" title="sales tax per item">Sales tax/Item</th>
         <th data-key="m3" class="num" title="packaged volume">m³</th>
         <th data-key="iskm3" class="num" title="profit per packaged m³">ISK/m³</th>
-        <th data-key="demand" class="num" title="The Forge daily traded units, mean of the last 30 days (fetched lazily for visible rows)">Demand/Day</th>
-        <th data-key="dos" class="num" title="days of stock — Jita sell-side depth ÷ demand/day">D.O.S.</th>
-        <th data-key="bp" title="blueprint situation: owned research, invent, or buy a BPO">BP</th>
-        <th data-key="nodes" class="num" title="build/buy node counts in the chosen tree">Build/Buy</th>
+        <th data-key="demand" class="num" title="The Forge daily traded units, mean of 30d&#10;fetched lazily for visible rows">Demand/Day</th>
+        <th data-key="dos" class="num" title="days of stock = Jita sell depth ÷ demand/day">D.O.S.</th>
+        <th data-key="bp" title="owned research · invent · buy a BPO">BP</th>
+        <th data-key="nodes" class="num" title="build / buy node counts in the chosen tree">Build/Buy</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
     </table>

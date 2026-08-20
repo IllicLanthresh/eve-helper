@@ -47,11 +47,24 @@
   .rowline .sep{flex:1}
   .hint{color:var(--dim);font-size:12px}
   .hint.warn{color:var(--amber)}
-  .flag{display:inline-block;font-size:11px;color:var(--red)}
+  .flag{display:inline-block;font-size:11px;color:var(--red);cursor:help}
   .flag.warn{color:var(--amber)}
   code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
   details{margin-top:10px;color:var(--dim);font-size:13px}
   details summary{cursor:pointer;color:var(--text)}
+  /* section help: the one-line fact stays on screen, the long form hides behind a ?
+     that is CLOSED by default. Long-form reference lives in the README. */
+  details.help{display:inline-block;margin:0 0 0 6px;vertical-align:baseline;font-size:12px}
+  details.help>summary{list-style:none;display:inline-block;min-width:16px;height:16px;line-height:14px;
+    text-align:center;border:1px solid var(--line);border-radius:9px;color:var(--dim);font-size:11px;
+    cursor:pointer;user-select:none;padding:0 4px}
+  details.help>summary::-webkit-details-marker{display:none}
+  details.help>summary:hover{color:var(--text);border-color:var(--cyan)}
+  details.help[open]>summary{color:var(--cyan);border-color:var(--cyan)}
+  details.help .helpbody{display:block;margin:8px 0 0;color:var(--dim);font-size:12px;
+    max-width:960px;line-height:1.5}
+  details.help .helpbody code{font-size:11px}
+  .subhead{margin:4px 0 0;color:var(--dim);font-size:13px}
   #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)}
   #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
@@ -212,19 +225,22 @@
 </nav>
 <header>
   <h1>Mining Production Console</h1>
-  <p class="prod-only">Paste the materials your production line needs and get the answer in mining terms: which asteroid
-     rocks and moon ores carry them densest, how many m³ of what to dig at your refine rate, and which
-     of your alliance moons are worth opening. Prices pull live from Jita via ESI (no login).</p>
-  <p class="fleet-only">Sitting in a belt with a survey scanner and no shopping list? Paste the scan, set your
-     refine and price basis, and see which rocks to shoot for max value — refined vs compressed ISK per m³
-     (and per hour). Also takes an Alliance Auth extraction copy, to plan an upcoming moon pop before it
-     happens. Prices pull live from Jita via ESI (no login).</p>
+  <div class="subhead prod-only">shopping list → densest rocks and moon ores → m³ to dig → which of your moons cover it<details
+    class="help"><summary>?</summary><span class="helpbody">Paste what your production line needs and get the answer in mining
+    terms: which asteroid rocks and moon ores carry those materials densest, how many m³ of each to dig at your
+    refine rate, and which alliance moons are worth opening. Jita prices pull live from ESI, no login. Long-form
+    reference: README.</span></details></div>
+  <div class="subhead fleet-only">survey scan → refined vs compressed vs raw ISK/m³ (and ISK/h)<details
+    class="help"><summary>?</summary><span class="helpbody">No shopping list needed: paste a survey scan, set the refine and
+    price basis, and every rock in the field gets a value. Also reads an Alliance Auth <em>Extraction details</em> copy,
+    to plan an upcoming moon pop before it happens. Jita prices pull live from ESI, no login. Long-form reference:
+    README.</span></details></div>
   <div class="rowline" id="modeRow">
     <span class="seg">
       <button id="modeProd" type="button" aria-pressed="true"
-        title="the shopping-list workflow: targets → prices &amp; refine → what to mine → your moons">Plan production</button>
+        title="targets → prices &amp; refine → what to mine → your moons">Plan production</button>
       <button id="modeFleet" type="button" aria-pressed="false"
-        title="no shopping list: paste a survey scan → refine &amp; prices → what to shoot">Profit mode</button>
+        title="survey scan → refine &amp; prices → what to shoot">Profit mode</button>
     </span>
   </div>
 </header>
@@ -232,8 +248,8 @@
 
 <section id="secTargets" class="prod-only">
   <h2>1 · What you need</h2>
-  <label for="need">Materials needed — one per line: <code>Name</code>, <code>Name&#9;qty</code>,
-    <code>Name x1,000</code> or <code>Name 1000</code> (EU/US number formats both fine)</label>
+  <label for="need" title="EU 1.234.567 and US 1,234,567 both parse">Materials needed — one per line:
+    <code>Name</code> · <code>Name&#9;qty</code> · <code>Name x1,000</code> · <code>Name 1000</code></label>
   <textarea id="need" spellcheck="false" style="height:110px"
     placeholder="Tritanium&#9;1,000,000&#10;Dysprosium x10,000&#10;Mexallon 50000&#10;Atmospheric Gases"></textarea>
   <div class="rowline" style="margin-top:6px">
@@ -241,21 +257,23 @@
   </div>
   <div id="unknownNote" class="hint" style="margin-top:6px" hidden></div>
   <div id="chips" style="margin-top:4px"></div>
-  <p class="hint" style="margin:10px 0 0">The paste and the chips are two views of one selection —
-    parsing the paste sets chips and quantities; toggling a chip adds or removes a quantity-less target.</p>
+  <p class="hint" style="margin:10px 0 0">paste and chips are one selection<details class="help"><summary>?</summary><span
+    class="helpbody">Parsing the paste sets the chips and their quantities; toggling a chip adds or removes a
+    quantity-less target.</span></details></p>
 </section>
 
 <section id="secScan" class="fleet-only">
   <h2>1 · Paste your survey scan <span class="subttl">· no shopping list — every rock in the field gets a value</span></h2>
-  <label for="fleetScan" style="margin-top:4px">Paste the in-game survey scanner results — rows of
-    <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> (tab or multi-space separated; EU
-    <code>1.234.567</code> and US <code>1,234,567</code> numbers both fine; the distance column is
-    ignored; header lines are skipped) — or an Alliance&nbsp;Auth <em>Extraction details</em> copy to
-    plan an upcoming moon chunk (auto-detected; several moons rank combined)</label>
+  <label for="fleetScan" style="margin-top:4px">Survey scan rows —
+    <code>Ore&#9;Quantity&#9;Volume&#9;Distance</code> — or an Alliance&nbsp;Auth <em>Extraction details</em>
+    copy<details class="help"><summary>?</summary><span class="helpbody">Tab or multi-space separated. EU
+    <code>1.234.567</code> and US <code>1,234,567</code> numbers both parse; the distance column is ignored and
+    header lines are skipped. An Auth <em>Extraction details</em> copy is auto-detected and plans an upcoming moon
+    chunk; several moons in one paste rank combined.</span></details></label>
   <textarea id="fleetScan" spellcheck="false" style="height:120px"
     placeholder="Concentrated Veldspar&#9;64,213&#9;6,421 m3&#9;7,431 m&#10;Magma Mercoxit&#9;402&#9;16,080 m3&#9;44 km"></textarea>
   <div class="rowline">
-    <button id="btnFleetSample" type="button">Load sample scan</button>
+    <button id="btnFleetSample" type="button" title="load a sample survey scan">Sample scan</button>
     <button id="btnFleetClear" type="button">Clear</button>
     <span id="fleetNote" class="hint"></span>
   </div>
@@ -269,17 +287,17 @@
     <span class="hint">rank by</span>
     <span class="seg">
       <button id="basisIsk" type="button" aria-pressed="true"
-        title="weight each material by its ISK price — comparable across materials">ISK</button>
+        title="weight by ISK price — comparable across materials">ISK</button>
       <button id="basisUnits" type="button" aria-pressed="false"
-        title="count raw units — only meaningful for a single material">raw units</button>
+        title="count raw units — meaningful for one material only">raw units</button>
     </span>
-    <span id="basisWarn" class="flag warn" hidden>raw-units basis with several targets over-weights bulk
-      materials — 1 Tritanium counts as much as 1 Dysprosium; ISK compares fairly</span>
+    <span id="basisWarn" class="flag warn" hidden
+      title="raw units + several targets: 1 Tritanium counts as much as 1 Dysprosium&#10;ISK compares fairly">raw units over-weights bulk</span>
     <span class="sep"></span>
     <label for="facStruct" style="margin:0">refine at</label>
-    <select id="facStruct" style="width:170px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility"></select>
+    <select id="facStruct" style="width:170px" disabled title="log in with EVE for per-ore refine yields from your skills and this facility"></select>
     <button id="facPick" type="button" disabled
-      title="log in with EVE, then search a player structure — Athanor/Tatara refinery bases and system security are auto-detected">choose structure…</button>
+      title="log in, then search a player structure&#10;Athanor/Tatara base and system security are auto-detected">structure…</button>
     <select id="facImp" style="width:112px" disabled title="Zainou 'Beancounter' RX reprocessing implant">
       <option value="0">no implant</option>
       <option value="1">RX-801 +1%</option>
@@ -288,21 +306,21 @@
     </select>
     <label for="reproChar" style="margin:0">reprocessed by</label>
     <select id="reproChar" style="width:150px" disabled
-      title="whose skills compute the per-ore refine yields on this page — a page-local role, the topbar's site-wide active character is not touched"></select>
+      title="whose skills compute the per-ore refine yields here&#10;page-local role — the topbar's active character is not touched"></select>
     <span id="reproWarn" class="flag warn" hidden></span>
     <span id="facNote" class="hint"></span>
     <span id="facRigNote" class="hint" hidden></span>
     <a id="facManage" class="hint" href="structures.html" hidden
-      title="the Structure Manager — the reprocessing rig, tax, broker rate and notes for this structure">manage structure</a>
+      title="Structure Manager&#10;this structure's rig · tax · broker rate · notes">record ↗</a>
     <label for="refine" style="margin:0">flat refine %</label>
     <input id="refine" type="number" min="30" max="95" step="1" value="75" style="width:70px"
-      title="fallback yield used when not logged in — once logged in, refine is computed per ore from your actual skills and the facility selectors">
+      title="fallback yield while logged out&#10;logged in: refine is computed per ore from skills + facility">
     <label for="priceBasis" style="margin:0">price basis</label>
-    <select id="priceBasis" style="width:110px" title="which side of the Jita book a fetch feeds into the prices">
+    <select id="priceBasis" style="width:110px" title="which side of the Jita book feeds the prices">
       <option value="sell">Jita sell</option>
       <option value="buy">Jita buy</option>
     </select>
-    <button id="btnEsi" type="button" class="primary">Fetch Jita prices (ESI)</button>
+    <button id="btnEsi" type="button" class="primary" title="pull Jita 4-4 prices from ESI (public, no login)">Fetch prices</button>
     <span id="esiStatus"></span>
   </div>
   <details id="skillsBox" hidden style="margin-top:8px">
@@ -311,12 +329,11 @@
   </details>
   <div id="fetchBar" hidden><div id="fetchFill"></div></div>
   <details id="priceBox">
-    <summary>Prices per unit — <span id="priceSrcNote" class="hint">placeholders until fetched</span></summary>
+    <summary>Prices per unit · <span id="priceSrcNote" class="hint">placeholders until fetched</span></summary>
     <div id="priceGrid"></div>
     <div class="rowline">
       <button id="btnResetPrices" type="button">Reset edits</button>
-      <span class="hint">an edited field (amber border) keeps your value until the next fetch ·
-        untouched fields follow the price-basis selector once fetched, placeholders before that</span>
+      <span class="hint" title="edited (amber border): your value, kept until the next fetch&#10;untouched: follows the price-basis selector once fetched, placeholder before">amber = your edit, kept until the next fetch</span>
     </div>
   </details>
 </section>
@@ -332,10 +349,10 @@
 
   <h3 class="planttl">Mining plan</h3>
   <div id="planBox"></div>
-  <p class="hint" style="margin:8px 0 0">m³ to mine = needed ÷ (units per m³ × refine&nbsp;%); drill hours
-    assume 30,000&nbsp;m³ of chunk per hour. The best ore may not exist in your alliance's moons — hunt
-    these ore names in your alliance moon list, then paste the candidates in section 4. Click any number
-    to copy its raw value.</p>
+  <p class="hint" style="margin:8px 0 0">m³ = needed ÷ (units per m³ × refine %) · drill hours at 30,000 m³/h
+    · click a number to copy<details class="help"><summary>?</summary><span class="helpbody">The best ore may not exist in
+    your alliance's moons — hunt these ore names in your alliance moon list, then paste the candidates into
+    section 4.</span></details></p>
 </section>
 
 <section id="secArrays" class="prod-only">
@@ -343,18 +360,18 @@
   <div class="rowline" style="margin-top:0">
     <span class="seg">
       <button id="viewSite" type="button" aria-pressed="true"
-        title="total targeted-mineral haul from clearing the whole deposit">per site</button>
+        title="total targeted-mineral haul from clearing the deposit">per site</button>
       <button id="viewM3" type="button" aria-pressed="false"
-        title="haul per m³ of ore mined — better when your hold, not the site, is the limit">per m³</button>
+        title="haul per m³ mined — for hold-limited trips">per m³</button>
     </span>
     <span class="hint" id="arraysHint"></span>
   </div>
   <div class="ranks" id="arraysList"></div>
-  <p class="hint" style="margin:10px 0 0">Sites are the 7 signature Sov-Hub Ore Prospecting Array
-    deposits (tier-2, 4 h 20 m respawn); small sites are tier-1 and large ones take 10 h, but their
-    compositions scale proportionally, so the ranking holds. Totals are gross — multiply by your net
-    refine rate. Compositions: EVE University Wiki (spawn info is in no CCP export); per-ore
-    volumes and yields: exact SDE data.</p>
+  <p class="hint" style="margin:10px 0 0">7 signature Sov-Hub arrays · tier-2 · gross totals<details
+    class="help"><summary>?</summary><span class="helpbody">Tier-2 deposits respawn in 4 h 20 m; small sites are tier-1 and
+    large ones take 10 h, but their compositions scale proportionally, so the ranking holds. Totals are gross —
+    multiply by your net refine rate. Compositions come from the EVE University Wiki (no CCP export carries spawn
+    info); per-ore volumes and yields are exact SDE data.</span></details></p>
 </section>
 
 <section id="secShoot" class="fleet-only">
@@ -368,20 +385,20 @@
     </span>
     <label for="sellChar" style="margin:0">sold by</label>
     <select id="sellChar" style="width:150px" disabled
-      title="whose sales tax nets the refined and compressed values — tax only, 7.5% × (1 − 0.11 × Accounting); no broker fee: the loot valuation assumes instant-style disposal"></select>
+      title="whose sales tax nets every value column&#10;tax only: 7.5% × (1 − 0.11 × Accounting)&#10;no broker fee — the loot valuation assumes instant-style disposal"></select>
     <span id="sellWarn" class="flag warn" hidden></span>
     <span id="fleetSellNote" class="hint"></span>
     <span id="fleetPriceNote" class="hint"></span>
     <span class="sep"></span>
     <button id="btnFleetPrices" type="button" hidden
-      title="drop the cached compressed/extra Jita prices and fetch them again">refresh profit-mode prices</button>
+      title="drop the cached compressed/extra Jita prices and fetch them again">Refresh prices</button>
   </div>
   <div class="rowline" id="fleetYieldRow" hidden>
     <span class="hint">ship yield</span>
     <span class="seg">
       <button id="fleetYRate" type="button" aria-pressed="true" title="enter the yield directly">m³/h</button>
       <button id="fleetYCycle" type="button" aria-pressed="false"
-        title="enter m³ per mining cycle and the cycle time — the hourly rate is computed live">per cycle</button>
+        title="enter m³ per cycle and the cycle time&#10;the hourly rate is computed live">per cycle</button>
     </span>
     <label for="fleetRate" id="fleetRateLab" style="margin:0">m³ per hour</label>
     <input id="fleetRate" type="number" min="1" step="any" placeholder="e.g. 45000">
@@ -392,38 +409,38 @@
     <span id="fleetRateNote" class="hint"></span>
   </div>
   <div id="fleetTable" style="margin-top:4px"></div>
-  <p class="hint" style="margin:8px 0 0">Three price bases, side by side. <em>Refined</em> ISK/m³ prices
-    each variant's exact reprocessing outputs (SDE data) at the section-2 prices and <em>your</em> per-ore
-    refine yield from the facility row above; <em>compressed</em> ISK/m³ prices the “Compressed …” type at
-    Jita (fetched on demand, section-2 sell/buy basis) per m³ of raw rock — compression is 1:1 by units
-    (one compressed unit per ore unit; only the volume shrinks, ~100:1 for ore and ~10:1 for ice), with the
-    per-type unit ratio derived from CCP's own reprocessing data rather than assumed; <em>raw</em> ISK/m³
-    prices the untouched ore itself at its own Jita book. The small percentage in each value cell is that
-    row's share of the best row <em>on that basis</em>; toggling ISK/h swaps the per-m³ columns for hourly
-    ones (same ranking, scaled by your yield). Compressed m³ is the haul volume after compression. Ice is
-    unit-harvested and only ranks against other ice. With a <em>sold by</em> character chosen, every value
-    column and everything derived from them is net of that character's sales tax (tax only — the loot
-    valuation assumes instant-style disposal, so no broker fee); the note by the selector says which basis
-    is showing. Click any number to copy its raw value.</p>
+  <p class="hint" style="margin:8px 0 0">three bases side by side · % in a cell = share of the best row on
+    <em>that</em> basis · click a number to copy<details class="help"><summary>?</summary><span class="helpbody">
+    <b>Refined</b> ISK/m³ prices each variant's exact reprocessing outputs (SDE data) at the section-2 prices and
+    <em>your</em> per-ore refine yield from the facility row above. <b>Compressed</b> ISK/m³ prices the
+    “Compressed …” type at Jita (fetched on demand, section-2 sell/buy basis) per m³ of raw rock; compression is
+    1:1 by units — one compressed unit per ore unit, only the volume shrinks (~100:1 ore, ~10:1 ice) — and the
+    per-type unit ratio is derived from CCP's own reprocessing data rather than assumed. <b>Raw</b> ISK/m³ prices
+    the untouched ore at its own Jita book. Toggling ISK/h swaps the per-m³ columns for hourly ones: same ranking,
+    scaled by your yield. Compressed m³ is the haul volume after compression. Ice is unit-harvested and only ranks
+    against other ice. With a <em>sold by</em> character chosen, every value column and everything derived from it
+    is net of that character's sales tax — tax only, no broker fee, because the loot valuation assumes
+    instant-style disposal.</span></details></p>
 </section>
 
 <section id="secMoons" class="prod-only">
   <h2>4 · Your moons <span class="subttl">· the final check — which of them cover the shopping list</span></h2>
-  <label for="moons">Paste moons — in-game survey scan, Alliance&nbsp;Auth “Moon details” copy, or
-    Alliance&nbsp;Auth “Extraction details” copy (format auto-detected per moon, several moons per paste)</label>
+  <label for="moons" title="format auto-detected per moon&#10;several moons per paste">Paste moons — survey scan ·
+    Auth “Moon details” · Auth “Extraction details”</label>
   <textarea id="moons" spellcheck="false"
     placeholder="Moon name&#10;&#9;Ore&#9;0.3925…&#9;typeID&#9;systemID&#9;planetID&#9;moonID&#10;&#10;Name:&#9;GMLH-K VIII - 4&#10;Chromite&#9;R16&#9;2,072 ISK per unit&#10;32%&#10;…"></textarea>
   <div class="rowline">
-    <button id="btnDemoMoons" type="button">Load demo (one of each format)</button>
+    <button id="btnDemoMoons" type="button" title="one moon in each of the three formats">Demo</button>
     <button id="btnClearMoons" type="button">Clear</button>
     <span class="hint" id="moonNote"></span>
     <span class="sep"></span>
     <span class="hint">click a moon to expand</span>
   </div>
   <div id="moonList" class="ranklist"></div>
-  <p class="hint" style="margin:10px 0 0">Fraction-based moons (survey scan / Moon details) are rated in
-    output per drill-hour at 30,000&nbsp;m³ of chunk per hour; Extraction pastes describe one finite chunk,
-    so those show totals for the chunk instead. Yields are gross, basic-quality ore at base rates.</p>
+  <p class="hint" style="margin:10px 0 0">gross yields · basic-quality ore at base rates<details
+    class="help"><summary>?</summary><span class="helpbody">Fraction-based moons (survey scan / Moon details) are rated in
+    output per drill-hour at 30,000 m³ of chunk per hour. An Extraction paste describes one finite chunk, so those
+    show totals for the chunk instead.</span></details></p>
 </section>
 
 </main>
@@ -799,12 +816,13 @@ function renderRoles(){
   // logged out, the selects' own state already says what the page falls back to
   const rLost = chars.length && state.roles.repro != null && reproCharId() !== state.roles.repro;
   $('reproWarn').hidden = !rLost;
-  $('reproWarn').textContent = rLost
-    ? `reprocessor character logged out — using ${charNameOf(reproCharId())}` : '';
+  $('reproWarn').textContent = rLost ? `reprocessor logged out → ${charNameOf(reproCharId())}` : '';
+  $('reproWarn').title = rLost
+    ? `chosen reprocessor: logged out\nusing: ${charNameOf(reproCharId())}` : '';
   const sLost = chars.length && state.roles.seller != null && sEff !== state.roles.seller;
   $('sellWarn').hidden = !sLost;
-  $('sellWarn').textContent = sLost
-    ? `seller character logged out — using ${charNameOf(sEff)}` : '';
+  $('sellWarn').textContent = sLost ? `seller logged out → ${charNameOf(sEff)}` : '';
+  $('sellWarn').title = sLost ? `chosen seller: logged out\nusing: ${charNameOf(sEff)}` : '';
 }
 
 /* ---------- facility controls (structure picked via the shared modal) ---------- */
@@ -816,8 +834,8 @@ function facNoteText(){
   const band = state.fac.sec;
   const bandName = band === 'hs' ? 'highsec' : band === 'ls' ? 'lowsec' : 'nullsec';
   const typeLabel = st.refinery === 'tatara' ? 'Tatara' : st.refinery === 'athanor' ? 'Athanor' : (st.typeName || 'structure');
-  let t = `${typeLabel} · ${st.systemName || '?'} (${bandName}) — rig ×${SEC_MULT[band]}`;
-  if (!st.refinery) t += ' (no refinery bonus — not a refinery)';
+  let t = `${typeLabel} · ${st.systemName || '?'} · ${bandName} · rig ×${SEC_MULT[band]}`;
+  if (!st.refinery) t += ' · no refinery bonus';
   return t;
 }
 
@@ -835,9 +853,10 @@ function renderRigNote(isStruct){
   if (!isStruct && facGoneName && facSkillsOn()){
     el.hidden = false;
     el.className = 'hint warn';
-    el.textContent = `“${facGoneName}” is no longer in the Structure Manager — refining fell back to `
-      + 'the NPC station (50%). Add it back there to refine at it again.';
-    el.title = 'the structure manager holds every fact about a structure; this page only selects one';
+    el.textContent = `“${facGoneName}” removed → NPC station (50%)`;
+    el.title = `structure: “${facGoneName}” is no longer in the Structure Manager`
+      + '\nrefining: fell back to the NPC station, 50%'
+      + '\nfix: add it back in the manager — this page only selects structures';
     return;
   }
   if (!isStruct) return;
@@ -845,13 +864,14 @@ function renderRigNote(isStruct){
   const labels = (window.EveStructures && EveStructures.REPRO_RIGS) || {};
   if (rig === 'none'){
     el.className = 'hint warn';
-    el.textContent = 'no reprocessing rig set — configure it in the structure manager';
-    el.title = 'rig fittings are not in ESI, so the manager is where they are recorded — '
-      + 'until one is, the yield is computed with no rig bonus';
+    el.textContent = 'no rig set';
+    el.title = 'rig: none recorded — the yield carries no rig bonus'
+      + '\nwhy here: rig fittings are not in ESI, so the manager records them'
+      + '\nfix: set it on the structure record';
   } else {
     el.className = 'hint';
     el.textContent = labels[rig] || rig;
-    el.title = `recorded on ${st.name}'s central record — edit it in the Structure Manager`;
+    el.title = `rig: ${labels[rig] || rig}\nsource: ${st.name}'s record in the Structure Manager`;
   }
 }
 
@@ -887,18 +907,20 @@ function renderFacControls(){
   if (isStruct) $('facManage').href = 'structures.html#s' + st.id;
   renderRigNote(on && isStruct);
   if (on){
-    sel.title = 'refine at the NPC station or any structure on the shared saved list — '
-      + '“choose structure…” adds one';
-    $('facPick').title = 'search a player structure — Athanor/Tatara refinery bases and system security are auto-detected';
-    $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant (clone implants are not in ESI — set manually)";
+    sel.title = 'refine at the NPC station or any structure on the shared saved list'
+      + '\n“structure…” adds one';
+    $('facPick').title = 'search a player structure'
+      + '\nAthanor/Tatara base and system security are auto-detected';
+    $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant"
+      + '\nclone implants are not in ESI — set it manually';
   }
   // the security band was a three-option dropdown that renderFacControls disabled on every
   // pass — a control the user could never earn. It is detected, never picked, so it is
   // stated as text in the facility note (“… (nullsec) — rig ×1.12”) like the rig line
   $('facNote').textContent = on ? facNoteText() : '';
   $('facNote').title = on && isStruct
-    ? `security band detected from ${st.systemName || 'the system'} security `
-      + `${st.security != null ? st.security.toFixed(2) : '?'} — it scales the reprocessing rig bonus`
+    ? `security: ${st.security != null ? st.security.toFixed(2) : '?'} at ${st.systemName || 'the system'}`
+      + '\neffect: the security band scales the reprocessing rig bonus'
     : '';
 }
 
@@ -926,7 +948,9 @@ function renderSkillsPanel(){
   if (!SOURCES) loadOreDB();   // the governs column derives from the exact ore data
   const rid = reproCharId();   // the panel shows the REPROCESSOR role's skills
   $('skillsSummary').textContent =
-    `⚡ skills imported from ${rid != null ? charNameOf(rid) : 'EVE'} (reprocessor): Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency}`;
+    `⚡ Reprocessing ${charSkills.reprocessing} · Efficiency ${charSkills.reprocessingEfficiency} — ${rid != null ? charNameOf(rid) : 'EVE'}`;
+  $('skillsSummary').title = `role: reprocessor\nsource: skills imported from EVE`
+    + `\nopen for the per-ore-group levels and the yield each gives`;
   const tb = $('skillsTblBody');
   tb.textContent = '';
   const facLabel = state.fac.struct === 'npc' ? 'NPC station' : ((state.fac.structInfo || {}).name || 'structure');
@@ -1330,12 +1354,13 @@ function renderNeeds(){
   }
   const withQty = [...state.targets.values()].filter(q => q > 0).length;
   $('needNote').textContent = state.targets.size
-    ? state.targets.size + ' target material' + (state.targets.size > 1 ? 's' : '') + ' · ' + withQty + ' with a quantity'
-    : 'nothing targeted yet — paste a list above or click chips below';
+    ? state.targets.size + ' target' + (state.targets.size > 1 ? 's' : '') + ' · ' + withQty + ' with qty'
+    : 'nothing targeted — paste a list or click a chip';
   $('unknownNote').hidden = !state.unknown.length;
   $('unknownNote').textContent = state.unknown.length
-    ? 'not a raw mining material (reaction intermediates not modelled): ' + state.unknown.join(', ')
-    : '';
+    ? 'not raw mining materials: ' + state.unknown.join(', ') : '';
+  $('unknownNote').title = state.unknown.length
+    ? 'reaction intermediates are not modelled here' : '';
   $('basisWarn').hidden = !(state.basis === 'units' && state.targets.size > 1);
 }
 
@@ -1403,10 +1428,11 @@ function renderRanks(){
   box.textContent = '';
   const btn = $('btnRanksAll');
   $('rankHint').textContent = state.basis === 'isk'
-    ? 'ISK per m³ mined · gross, before refining · every rock and moon ore that carries a target'
-    : 'target units per m³ mined · gross, before refining';
+    ? 'ISK/m³ mined · gross' : 'target units/m³ mined · gross';
+  $('rankHint').title = 'gross: before refining'
+    + '\ncovers: every rock and moon ore that carries a target';
   if (!state.targets.size){
-    box.appendChild(el('div', 'hint empty', 'Pick at least one target material above.'));
+    box.appendChild(el('div', 'hint empty', 'pick a target material above'));
     btn.hidden = true;
     return;
   }
@@ -1554,8 +1580,10 @@ function renderArrays(){
     return;
   }
   $('arraysHint').textContent = state.arrayView === 'site'
-    ? 'total haul from clearing the deposit'
-    : 'haul per m³ mined — for hold-limited trips';
+    ? 'total haul per deposit' : 'haul per m³ mined';
+  $('arraysHint').title = state.arrayView === 'site'
+    ? 'total targeted-mineral haul from clearing the whole deposit'
+    : 'haul per m³ of ore mined — better when your hold, not the site, is the limit';
   const rows = arrayRows(sel);
   const metric = r => state.arrayView === 'm3' ? r.perM3 : r.value;
   const max = rows.reduce((s, r) => Math.max(s, metric(r)), 0);
@@ -1959,7 +1987,7 @@ async function runFleetFetch(){
       }
       let done = 0, failed = 0;
       const queue = tids.slice();
-      note.textContent = `fetching ${tids.length} Jita price${tids.length > 1 ? 's' : ''}…`;
+      note.textContent = `${tids.length} price${tids.length > 1 ? 's' : ''}…`;
       const workers = Array.from({ length: 4 }, async () => {
         for (;;){
           const t = queue.shift();
@@ -1967,7 +1995,7 @@ async function runFleetFetch(){
           try{ state.fleet.prices[t] = await fetchJita(Number(t)); }
           catch(_e){ state.fleet.prices[t] = { sell: null, buy: null, err: 1 }; failed++; }
           done++;
-          note.textContent = `fetching Jita prices… ${done}/${tids.length}${failed ? ` (${failed} failed)` : ''}`;
+          note.textContent = `Jita prices · ${done}/${tids.length}${failed ? ` · ${failed} failed` : ''}`;
         }
       });
       await Promise.all(workers);
@@ -2099,10 +2127,16 @@ function renderFleet(){
   // of exactly whose tax at exactly what rate
   const seller = fleetSellerInfo();
   $('fleetSellNote').textContent = seller == null
-    ? 'gross — no seller selected'
+    ? 'gross · no seller'
     : seller.taxPct == null
-      ? `fetching ${seller.name}’s skills for their sales tax…`
-      : `net of ${seller.name}’s ${seller.taxPct.toFixed(2)}% sales tax`;
+      ? `tax… — ${seller.name}`
+      : `⚡ net · tax ${seller.taxPct.toFixed(2)}% — ${seller.name}`;
+  $('fleetSellNote').title = seller == null
+    ? 'values: gross — pick a "sold by" character to net them of sales tax'
+    : seller.taxPct == null
+      ? `seller: ${seller.name}\nskills: fetching, for the sales tax`
+      : `tax: ${seller.taxPct.toFixed(2)}% = 7.5% × (1 − 0.11 × Accounting)\nseller: ${seller.name}`
+        + '\nbroker fee: none — instant-style disposal assumed';
   const netSuffix = seller && seller.taxPct != null
     ? ` · net of ${seller.name}’s ${seller.taxPct.toFixed(2)}% sales tax` : '';
   const box = $('fleetTable');
@@ -2114,14 +2148,16 @@ function renderFleet(){
     // the completion note must not read as success when types failed — carry the count
     const nFail = Object.values(state.fleet.prices).filter(p => p && p.err).length;
     $('fleetPriceNote').textContent = state.fleet.fetchedAt
-      ? 'compressed/extra prices fetched ' + new Date(state.fleet.fetchedAt).toLocaleTimeString()
-        + (nFail ? ` — ${nFail} price fetch${nFail > 1 ? 'es' : ''} failed (refresh profit-mode prices to retry)` : '')
+      ? 'compressed/extra prices · ' + new Date(state.fleet.fetchedAt).toLocaleTimeString()
+        + (nFail ? ` · ${nFail} failed` : '')
       : '';
+    $('fleetPriceNote').title = state.fleet.fetchedAt && nFail
+      ? `failed price fetches: ${nFail}\nretry: the "Refresh prices" button` : '';
   }
   const text = $('fleetScan').value;
   if (!text.trim()){
     $('fleetNote').textContent = '';
-    box.appendChild(el('div', 'hint', 'paste a survey scan or load the sample — every rock gets a value per m³, refined vs compressed'));
+    box.appendChild(el('div', 'hint', 'paste a survey scan, or load the sample'));
     return;
   }
   if (!oreDB){
@@ -2129,8 +2165,10 @@ function renderFleet(){
     dn.hidden = false;
     if (oreDBErr){
       dn.className = 'hint warn';
-      dn.textContent = 'ore data unavailable (' + oreDBErr + ') — data/ores.json is generated at deploy '
-        + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally to use profit mode. ';
+      dn.textContent = 'ore data unavailable (' + oreDBErr + ') · build data/ores.json with '
+        + 'tools/build-industry-data.mjs from the SDE — see data/README.md ';
+      dn.title = 'data/ores.json is generated at deploy time from the SDE'
+        + '\nprofit mode needs it — build it locally';
       const retry = el('button', null, 'retry');
       retry.type = 'button';
       retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderFleet(); });
@@ -2145,11 +2183,10 @@ function renderFleet(){
   const parsed = parseProfitPaste(text);
   if (parsed.kind === 'details'){
     // percentages carry no absolute quantities — be honest instead of inventing a chunk
-    $('fleetNote').textContent = 'Auth “Moon details” paste — percentages only';
+    $('fleetNote').textContent = 'Auth “Moon details” · percentages only';
     box.appendChild(el('div', 'hint',
-      'this Auth copy lists ore percentages, not quantities — there is nothing to value here. '
-      + 'Paste the Auth “Extraction details” copy instead (m³ per ore — the expected chunk contents), '
-      + 'or rank the moon by value density in production mode’s “Your moons” section.'));
+      'percentages, not quantities — nothing to value. Use the Auth “Extraction details” copy '
+      + '(m³ per ore), or rank the moon in production mode’s “Your moons”.'));
     return;
   }
   if (parsed.unknown.size){
@@ -2157,42 +2194,63 @@ function renderFleet(){
     // resolve it (a stale ores.json build once made that assertion factually wrong)
     const list = [...parsed.unknown].map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(', ');
     $('fleetUnknown').hidden = false;
-    $('fleetUnknown').textContent = 'unrecognized ore names (rows kept out of the ranking): ' + list;
+    $('fleetUnknown').textContent = 'unrecognized ores · not ranked: ' + list;
+    $('fleetUnknown').title = 'these names did not resolve against this page\'s ore data'
+      + '\ntheir rows are kept out of the ranking';
   }
   const { rows, need, usedPlaceholder } = fleetCompute(parsed.rows);
   if (need.size) queueFleetPrices([...need]);
   const totRocks = rows.reduce((s, r) => s + (r.rocks || 0), 0);
   const totM3 = rows.reduce((s, r) => s + r.m3, 0);
-  const bits = [];
+  // the status line is a fact string: counts and magnitudes, dot-separated. Anything
+  // that needs a sentence to be understood puts that sentence on the line's tooltip.
+  const bits = [], tips = [];
   if (rows.length) bits.push(parsed.kind === 'extraction'
     // a chunk forecast, not scanned rocks — say what was detected and what it holds
-    ? `Auth extraction paste — expected chunk contents (${rows.length} ore${rows.length > 1 ? 's' : ''}, `
-      + `${fmtBig(totM3)} m³ total${parsed.moons > 1 ? ` · ${parsed.moons} moons combined` : ''})`
+    ? `Auth extraction · ${rows.length} ore${rows.length > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`
+      + (parsed.moons > 1 ? ` · ${parsed.moons} moons` : '')
     : `${rows.length} ore type${rows.length > 1 ? 's' : ''} · ${totRocks} rock${totRocks > 1 ? 's' : ''} · ${fmtBig(totM3)} m³`);
-  if (parsed.tagOff && parsed.tagOff.length)
-    bits.push('Auth rarity tags disagree with the ore data (data wins): ' + parsed.tagOff.join('; '));
-  if (parsed.checkOff && parsed.checkOff.length) bits.push(parsed.checkOff.join('; '));
-  if (parsed.headers) bits.push(`${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} ignored`);
-  if (parsed.numberless) bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} without readable numbers skipped`);
-  if (parsed.volFixed) bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored (≠ quantity × unit m³)`);
+  if (rows.length && parsed.kind === 'extraction')
+    tips.push('source: an Auth extraction copy — the expected contents of one chunk, not scanned rocks');
+  if (parsed.tagOff && parsed.tagOff.length){
+    bits.push(`rarity tag ≠ data ×${parsed.tagOff.length}`);
+    tips.push('rarity tags (data wins): ' + parsed.tagOff.join('; '));
+  }
+  if (parsed.checkOff && parsed.checkOff.length){
+    bits.push(`Total row ≠ ore rows ×${parsed.checkOff.length}`);
+    tips.push(parsed.checkOff.join('; '));
+  }
+  if (parsed.headers) bits.push(`${parsed.headers} header${parsed.headers > 1 ? 's' : ''} ignored`);
+  if (parsed.numberless){
+    bits.push(`${parsed.numberless} row${parsed.numberless > 1 ? 's' : ''} skipped`);
+    tips.push(`skipped: ${parsed.numberless} recognized row${parsed.numberless > 1 ? 's' : ''} without a readable number`);
+  }
+  if (parsed.volFixed){
+    bits.push(`${parsed.volFixed} volume cell${parsed.volFixed > 1 ? 's' : ''} ignored`);
+    tips.push('ignored volume cells: the cell ≠ quantity × unit m³, so the quantity was used');
+  }
   // the flat-fallback basis of the whole refined column deserves more than a hover tooltip
-  if (rows.length && !(charSkills && charSkills.groups && Object.keys(charSkills.groups).length))
-    bits.push(`refined values use the flat ${state.refine}% refine — log in with EVE for per-ore yields`);
+  if (rows.length && !(charSkills && charSkills.groups && Object.keys(charSkills.groups).length)){
+    bits.push(`flat ${state.refine}% refine`);
+    tips.push(`refined values: the flat ${state.refine}% refine — log in with EVE for per-ore yields`);
+  }
   $('fleetNote').textContent = bits.join(' · ');
+  $('fleetNote').title = tips.join('\n');
   if (!rows.length){
     // recognized names whose rows carried no readable numbers must not masquerade as
     // "not recognized" — say what actually kept the table empty
     box.appendChild(el('div', 'hint', parsed.numberless
-      ? `no usable rows — ${parsed.numberless} recognized ore row${parsed.numberless > 1 ? 's' : ''} without a readable quantity or volume`
+      ? `no usable rows · ${parsed.numberless} recognized ore row${parsed.numberless > 1 ? 's' : ''} without a readable quantity or volume`
       : parsed.headers
-        ? `no data rows — only ${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} (bare ore-type names)`
+        ? `no data rows · only ${parsed.headers} group header${parsed.headers > 1 ? 's' : ''} (bare ore-type names)`
         : 'no recognized ore rows in the paste'));
     return;
   }
   if (usedPlaceholder && !fleetFetching){
     const pn = $('fleetPriceNote');
-    pn.textContent = (pn.textContent ? pn.textContent + ' · ' : '')
-      + 'some refine outputs are priced from section-2 placeholders — hit “Fetch Jita prices” there for live refined values';
+    pn.textContent = (pn.textContent ? pn.textContent + ' · ' : '') + 'some outputs on placeholders';
+    pn.title = (pn.title ? pn.title + '\n' : '')
+      + 'placeholders: some refine outputs are not priced live — use section 2\'s Fetch prices';
   }
 
   // per-basis % of best: every ISK/m³ cell carries its own share of THAT basis's best
@@ -2296,14 +2354,15 @@ function renderFleet(){
       // 'failed' is a network/ESI error, not a market fact — it must not claim "no book"
       td.appendChild(st === 'failed'
         ? fleetFlag('fetch failed', true,
-          'the Jita price fetch failed (network/ESI error) — “refresh profit-mode prices” retries now; failures are not kept across reloads')
+          'reason: network/ESI error on the Jita price fetch'
+          + '\nretry: the "Refresh prices" button — failures are not kept across reloads')
         : fleetFlag(st === 'none' ? (side === 'comp' ? 'no compressed variant' : 'no refine outputs') : 'unpriced', false,
           side === 'comp'
-            ? (st === 'none' ? 'this ore has no “Compressed …” type — sell it raw or refined instead'
+            ? (st === 'none' ? 'no “Compressed …” type exists — sell it raw or refined'
               : 'the compressed type has no Jita ' + state.priceBasis + ' book')
             : side === 'raw'
-              ? 'the ore itself has no Jita ' + state.priceBasis + ' book'
-              : 'none of this ore’s refine outputs could be priced'));
+              ? 'the ore has no Jita ' + state.priceBasis + ' book'
+              : 'none of the refine outputs could be priced'));
       return td;
     }
     if (perHour){
@@ -2339,15 +2398,19 @@ function renderFleet(){
     pctTag(td);
     if (side === 'ref' && r.refState === 'partial'){
       if (r.unpriced.length)
-        td.appendChild(fleetFlag('excl. ' + r.unpriced.join(', '), true,
-          'these refine outputs have no Jita ' + state.priceBasis + ' book — the value shown excludes them'));
+        td.appendChild(fleetFlag('excl ' + r.unpriced.length, true,
+          'excluded outputs: ' + r.unpriced.join(', ')
+          + '\nreason: no Jita ' + state.priceBasis + ' book'));
       if (r.failed.length)
-        td.appendChild(fleetFlag('fetch failed: ' + r.failed.join(', '), true,
-          'the price fetch for these refine outputs failed (network/ESI error) — the value shown excludes them; “refresh profit-mode prices” retries now'));
+        td.appendChild(fleetFlag('fetch failed', true,
+          'failed outputs: ' + r.failed.join(', ')
+          + '\nreason: network/ESI error — the value shown excludes them'
+          + '\nretry: the "Refresh prices" button'));
     }
     if (side === 'comp' && r.cvOdd)
       td.appendChild(fleetFlag('volume?', true,
-        'the compressed type’s m³ does not follow the usual volume shrink (ore ~1/100, ice ~1/10 of the raw m³) — double-check this type in game'));
+        'compressed m³: does not follow the usual shrink (ore ~1/100, ice ~1/10 of raw m³)'
+        + '\ndouble-check this type in game'));
     return td;
   };
 
@@ -2357,10 +2420,12 @@ function renderFleet(){
     const tdn = el('td');
     tdn.appendChild(el('span', 'orename', r.o.n));
     if (r.o.b && r.o.b !== r.o.n) tdn.appendChild(el('span', 'famtag', r.o.b));
-    if (r.merc) tdn.appendChild(fleetFlag('deep-core — needs Mercoxit crystals, separate yield', true,
-      'Mercoxit takes deep-core mining crystals and mines at its own (lower) yield — ISK/h and clear time from your normal yield do not apply'));
-    if (r.ice) tdn.appendChild(fleetFlag('ice — unit-based harvesting, compare only against other ice', true,
-      'ice harvesters cycle per unit, not per m³ — the per-basis % ranks ice against other ice only'));
+    if (r.merc) tdn.appendChild(fleetFlag('deep-core', true,
+      'Mercoxit: needs deep-core mining crystals and mines at its own lower yield'
+      + '\nISK/h and clear time from your normal yield do not apply'));
+    if (r.ice) tdn.appendChild(fleetFlag('ice', true,
+      'ice: harvesters cycle per unit, not per m³'
+      + '\nranking: the per-basis % ranks ice against other ice only'));
     tr.appendChild(tdn);
     tr.appendChild(r.rocks != null ? numTd(r.rocks, String(r.rocks))
       : numTd(null, '—', 'an expected chunk forecast — no scanned rocks'));
@@ -2574,7 +2639,7 @@ async function runEsi(){
   bar.hidden = false; fill.classList.add('ind');
   let failed = 0;
   try{
-    status.textContent = `resolving ${MATS.length} type names…`;
+    status.textContent = `${MATS.length} names…`;
     const res = await esiFetch(ESI + '/universe/ids/?datasource=tranquility', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2607,14 +2672,15 @@ async function runEsi(){
         }
         done++;
         fill.style.width = Math.round(done / total * 100) + '%';
-        status.textContent = `fetching Jita 4-4 orders… ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
+        status.textContent = `Jita 4-4 · ${done}/${total}${failed ? ` · ${failed} failed` : ''}`;
       }
     });
     await Promise.all(workers);
     if (token !== state.esiToken) return;
     state.fetchedAt = Date.now();
-    status.textContent = `Jita 4-4 prices loaded ${new Date().toLocaleTimeString()}`
-      + (failed ? ` — ${failed} lookups failed (old values kept)` : '');
+    status.textContent = `Jita 4-4 · ${MATS.length} items · ${new Date().toLocaleTimeString()}`
+      + (failed ? ` · ${failed} failed` : '');
+    status.title = failed ? `failed lookups: ${failed}\nthose prices keep their old values` : '';
     status.className = failed ? 'err' : 'ok';
   }catch(e){
     if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
@@ -2757,7 +2823,7 @@ function restore(){
     if (typeof f.fetchedAt === 'number') state.fleet.fetchedAt = f.fetchedAt;
   }
   if (state.fetchedAt)
-    $('esiStatus').textContent = 'using Jita prices fetched ' + new Date(state.fetchedAt).toLocaleString();
+    $('esiStatus').textContent = 'Jita prices · ' + new Date(state.fetchedAt).toLocaleString();
 }
 
 /* ---------- wiring ---------- */
@@ -2905,6 +2971,7 @@ renderAll();
       // logged out live: degrade to the flat refine fallback
       charSkills = null;
       note.textContent = '';
+      note.title = '';
       renderFacControls();
       renderSkillsPanel();
       $('refine').disabled = false;
@@ -2926,6 +2993,7 @@ renderAll();
       renderSkillsPanel();
       $('refine').disabled = false;
       $('refine').title = 'skills unavailable — set the refine rate by hand';
+      note.title = '';
       renderPlan(); renderFleet();
       return;
     }
@@ -2940,8 +3008,11 @@ renderAll();
       renderFacControls();
       renderSkillsPanel();
       $('refine').disabled = true;
-      $('refine').title = 'not used while logged in — refine is computed per ore from the reprocessor’s skills and the facility selectors';
-      note.textContent = ` ⚡ per-ore refine from ${charNameOf(rid)}'s skills (Reprocessing ${sk.reprocessing}/Efficiency ${sk.reprocessingEfficiency} + ore-group skills) at the selected facility`;
+      $('refine').title = 'unused while logged in'
+        + '\nrefine: computed per ore from the reprocessor’s skills and the facility selectors';
+      note.textContent = ` ⚡ per-ore refine — ${charNameOf(rid)}`;
+      note.title = `skills: Reprocessing ${sk.reprocessing} · Efficiency ${sk.reprocessingEfficiency} + ore-group levels`
+        + `\nfacility: the selection in the row above\nreprocessor: ${charNameOf(rid)}`;
       renderPlan(); renderFleet();
     }catch(e){
       console.error('skill auto-fill failed:', e);
