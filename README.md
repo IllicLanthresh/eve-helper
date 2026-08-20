@@ -9,6 +9,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
 | **Mine** | `mine.html` | Two modes over one page. **Plan production**: paste the materials you need → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). **Profit mode**: paste a survey scan at the belt — or an Alliance Auth extraction copy, to plan a moon pop ahead — and rank the contents by refined vs compressed ISK/m³. Live Jita prices. |
 | **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
+| **Structures** | `structures.html` | The one place player structures are managed: one record per structure with its identity (auto-detected) plus the facts ESI never publishes — owner-set market broker %, facility job tax, installed Standup rigs (with the rig-inference wizard), reprocessing rig, industry activities and notes. Every other tool just *selects* a structure. |
 
 ## EVE login (optional)
 
@@ -20,8 +21,9 @@ processing skills → per-ore refine yields** (Mine tool — for the page's chos
 default (flat 50% base — stations have no rigs, so no rig or security bonuses apply) or a
 player structure found through the shared **structure picker**: its type (Athanor 52% /
 Tatara 55% / anything else 50%) and its system's security band are **auto-detected**,
-while the reprocessing **rig and implant stay manual** — ESI exposes neither structure
-fittings nor clone implants. An **imported-skills panel** under the facility row lists
+while the reprocessing **rig** is read from the structure's central record (managed on the
+**Structures** page — ESI exposes no fittings) and the **implant stays manual** on the Mine
+page, because it is the pilot's, not the structure's. An **imported-skills panel** under the facility row lists
 every reprocessing skill that was pulled, what it governs, and the resulting yield % at
 the current facility. Everything stays client-side: it's the OAuth2 **PKCE** flow, so
 there is no server, no database, and no secret — tokens live in your browser's
@@ -53,7 +55,7 @@ live client.
 The note under the fee inputs shows which character, skills and standings produced the
 numbers. Both fee inputs stay hand-editable — anything you type wins until the next
 auto-fill. Player structures are different: their broker fee is owner-set, entered
-directly and remembered per structure (see *Player structure markets*).
+directly and kept on the structure's own record (see *Player structure markets*).
 
 The deployed site at `illiclanthresh.github.io` ships with its own registered app, so login
 just works there. Running a fork on another domain needs a one-time app registration
@@ -149,9 +151,10 @@ Sell where your alliance actually trades: the market selector's **+ add structur
 option opens the structure picker — a modal with live search that runs **as your
 logged-in character** (so it only finds structures that character has access to). Results
 show name, system and structure type; pick with the mouse or ↑/↓ + Enter. Saved
-structures are listed in the same modal with a remove **×** each (the **manage
-structures** link next to the selector opens it too; removing the currently selected
-structure falls back to Jita), and the saved list is **shared with the Mine tool**. This
+structures are listed in the same modal with a remove **×** each (removing the currently
+selected structure falls back to Jita); the **manage structures** link next to the selector
+opens the [Structure Manager](#structure-manager-structureshtml) on that structure's record.
+The saved list is **shared with every tool**. This
 needs the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
 `esi-search.search_structures.v1` scopes — if your character logged in before these were
 requested, log in again ("+ alt" on the same character works).
@@ -167,9 +170,11 @@ With a structure selected, a price run fetches:
   fallbacks are region-wide, and the status line says so).
 
 The **owner-set broker fee is not in ESI** (there is no endpoint for it): read it once
-from the in-game sell window and type it into the broker % field — it is remembered per
-structure and switching back to an NPC hub restores the skills/standings-derived rate.
-Sales tax (Accounting) applies everywhere and keeps auto-filling.
+from the in-game sell window and type it into the broker % field — typing it here writes it
+onto the **structure's central record** (it can equally be entered on the Structures page,
+and a change there reaches an open Sell tab immediately), and switching back to an NPC hub
+restores the skills/standings-derived rate. Sales tax (Accounting) applies everywhere and
+keeps auto-filling.
 
 ## Flags
 
@@ -369,33 +374,24 @@ Each holds:
   product scope covers the end product): player structures via the shared picker (system,
   security and structure type auto-detected; Raitaru/Azbel/Sotiyo/Athanor/Tatara role
   bonuses pre-filled as editable presets marked *verify in game*) or NPC stations (type
-  the system name for its cost index). Per facility: activity checkboxes, owner-set
-  facility tax, optional cost-index override, and **rigs from the real Standup catalog**
-  (extracted from the SDE at build time): the picker lists exactly the rigs the hull
-  accepts (M/L/XL-Set by structure size, up to its 3 rig slots), grouped by domain and
-  showing the effective bonus at the structure's security band (engineering rigs HS ×1.0,
-  LS ×1.9, NS/WH ×2.1; reactor rigs LS ×1.0, NS/WH ×1.1). A single L/XL *Manufacturing
-  Efficiency* rig grants **both** ME and TE (e.g. XL T1 in null: 4.2% / 42%); M-size
-  structures use separate ME and TE rigs, exactly as in game. Each rig applies only to
-  its real product scope (ship classes, equipment, ammo, drones, components, structures,
-  reaction families) and its own activity (Thukker rigs keep their lowsec-only enhanced
-  capital-component ME). Old profiles with the former generic T1/T2 presets are migrated
-  best-effort — unmappable rows are dropped with a one-time inline notice.
-
-  **Not the structure owner?** ESI never exposes a structure's fitting — but the in-game
-  industry window shows anyone who can use the facility the bonused material quantities
-  and the job duration. The per-facility **"infer rigs…" wizard** picks a probe blueprint
-  per rig domain (your own blueprints first — their ME/TE are known; unresearched-BPC
-  toggle otherwise), tells you what to look up in game, then strips blueprint ME/TE, the
-  structure role bonuses and the manufacturer's Industry/Advanced Industry/Reactions
-  skills from the numbers you enter. The residual is matched against the rig catalog for
-  that hull size and security band using the exact in-game rounding (quantities are
-  rounded to 2 decimals then ceiled, so each shown integer pins an ME interval — a second
-  material or the job time disambiguates T1 vs T2). Verdicts are exact / ambiguous
-  (pick one) / no rig / conflict, ME and TE tiers are cross-checked (one Efficiency rig
-  carries both), and one click installs the detected rigs into the facility's slots,
-  merging with rigs inferred for other domains. Everything runs client-side on data
-  already loaded; nothing is stored until the install click.
+  the system name for its cost index). Per facility this profile keeps its **preferences**:
+  activity checkboxes, product scope, optional cost-index override and the role-bonus
+  overrides. What belongs to the *structure* — its **rigs** and the **owner-set facility
+  tax** — lives on the structure's record instead and is shown here read-only with a link
+  into the [Structure Manager](#structure-manager-structureshtml); every profile pointing
+  at the same structure therefore computes with the same fitting, and an edit there
+  re-renders the facility list and marks the table stale. Rigs come from the **real
+  Standup catalog** (extracted from the SDE at build time): the manager lists exactly the
+  rigs the hull accepts (M/L/XL-Set by structure size, up to its 3 rig slots), grouped by
+  domain and showing the effective bonus at the structure's security band (engineering
+  rigs HS ×1.0, LS ×1.9, NS/WH ×2.1; reactor rigs LS ×1.0, NS/WH ×1.1). A single L/XL
+  *Manufacturing Efficiency* rig grants **both** ME and TE (e.g. XL T1 in null: 4.2% /
+  42%); M-size structures use separate ME and TE rigs, exactly as in game. Each rig
+  applies only to its real product scope (ship classes, equipment, ammo, drones,
+  components, structures, reaction families) and its own activity (Thukker rigs keep their
+  lowsec-only enhanced capital-component ME). Old profiles with the former generic T1/T2
+  presets are migrated best-effort — unmappable rows are dropped with a one-time inline
+  notice — and whatever survives is handed to the structure's record.
 - **Market settings**: buy inputs instantly vs at buy order; sell output via sell order
   vs instant — and **three market roles**, each a dropdown of your logged-in characters
   (defaulting to whoever was active when the profile was created, persisted per profile;
@@ -479,3 +475,92 @@ and TSV export of the tree or the whole table.
 - Structure ROLE bonus presets (ME 1% / TE 15-30% / cost) are hardcoded — verify in game
   and override per facility if needed. Rig bonuses are real SDE dogma values, applied to
   each rig's real product scope and activity.
+
+# Structure Manager (`structures.html`)
+
+Every tool needs the same handful of facts about a player structure, and none of them are
+in ESI. They used to be smeared across three tools — the Sell page kept a broker rate per
+structure id, the Mine page kept a refinery snapshot with its rig, and every Industry
+profile kept its own copy of the same structure's rigs and tax. Now there is **one record
+per structure**, edited in one place; the tools only *select* a structure.
+
+| Lives on the record (about the STRUCTURE) | Stays in the tool (about YOU) |
+| --- | --- |
+| identity: name, hull type, system, security, region, rig size/slots (auto-detected) | which market/facility a page currently points at |
+| owner-set **market broker %** | the NPC-hub broker rate from your skills and standings |
+| owner-set **facility tax %** | per-profile cost-index override, role-bonus overrides |
+| installed **Standup rigs** (catalog type ids) | which activities a profile routes here, product scopes |
+| **reprocessing rig** tier | your reprocessing implant |
+| **industry activities** the structure can run | profile-level ordering and preferences |
+| free-text **notes**, migration conflict notes | — |
+
+## The manager
+
+The saved list is one card per structure: name, system, security band, hull and rig size,
+plus tags summarizing what is recorded (broker, tax, rigs, repro rig, activities, open
+conflicts). Clicking a card opens its editor:
+
+- **Identity** is read-only — it comes from ESI — with a **re-resolve** button that
+  re-reads it (bypassing the identity cache).
+- **Owner-set rates**: market broker % and facility tax %. Blank means *not known*, and
+  the tools fall back to their own defaults rather than to an invented 0%.
+- **Rigs**: one dropdown per fitted rig, listing exactly the catalog rigs the hull accepts
+  (size + fitting group), grouped by domain, each showing its **security-adjusted**
+  effective %s. `+ rig` offers the first rig that is not already fitted and stops at the
+  hull's rig slot count. A separate selector holds the **reprocessing rig** tier the Mine
+  tool's refine yield uses (the Standup reprocessing rigs are not part of the industry
+  catalog, so they are a tier rather than a type id).
+- **Industry activities**: what the structure is *capable* of, defaulted from the hull
+  kind (engineering complexes manufacture/invent/copy/research, refineries react, citadels
+  neither) and overridable, with a reset to the default.
+- **Notes**, and a **used by** line naming the tools and profiles currently pointing at
+  the structure. Removing a structure asks for confirmation and names exactly that.
+
+Everything saves the moment it changes. `structures.html#s<id>` opens straight to one
+record — that is what the *manage* links on the Sell, Mine and Industry pages use.
+
+## Inferring rigs you can't see
+
+ESI never exposes a structure's fitting, and most industrialists are not the owner — but
+the in-game industry window shows anyone who can use the facility the bonused material
+quantities and the job duration. The **"infer rigs…" wizard** (it used to live on the
+Industry page; it now edits the central record) picks a probe blueprint per rig domain —
+blueprints the Industry tool knows you own come first, since their ME/TE are known, with
+an unresearched-BPC toggle otherwise — tells you what to look up in game, then strips
+blueprint ME/TE, the hull's role bonuses and the chosen character's Industry / Advanced
+Industry / Reactions skills from the numbers you enter. The residual is matched against
+the rig catalog for that hull size and security band using the exact in-game rounding
+(quantities are rounded to 2 decimals then ceiled, so each shown integer pins an ME
+interval — a second material or the job time disambiguates T1 vs T2). Verdicts are exact /
+ambiguous (pick one) / no rig / conflict, ME and TE tiers are cross-checked (one
+Efficiency rig carries both), and one click writes the detected rigs onto the record,
+merging with rigs inferred for other domains. Everything runs client-side on data already
+loaded; nothing is stored until that click.
+
+## Storage, schema and the one-time import
+
+The store is `localStorage["eveHelper.structures.v1"]`, bumped to **schema v2**:
+`{ v: 2, structures: [record, …] }`. A v1 store (a bare array of identities) is read,
+normalized — every managed fact gets its default — and rewritten in the v2 shape on first
+load. `structures.js` exposes the record API (`get`, `facts`, `update`, `addConflict`,
+`dismissConflict`, `refresh`, `roleBonuses`, `defaultActivities`) next to the unchanged
+`pick` / `info` / `saved` / `remember` / `remove`, plus **`subscribe(fn)`**: it fires on
+every mutation made through the API on this page *and* on a `storage` event from another
+tab, which is how an edit in the manager re-prices an open Mine or Industry tab live.
+
+Rig size and slot count come from `data/industry.json`'s structure map; the pages that
+load that file (Industry, the manager) hand it to the store with `useTypeMap()`, which
+caches a compact copy so the Sell and Mine pages get sizes without fetching 2 MB.
+
+On any page, `structures.js` imports the old per-tool copies **once** (a marker key makes
+it idempotent, so later hand edits are never clobbered) and logs a summary to the console:
+
+- Sell's `structBroker` map → `marketBroker`;
+- Mine's facility snapshot rig → `reproRig` (the structure is created from the snapshot if
+  it was never in the saved list);
+- every Industry profile's per-facility rigs and tax → `rigs` / `facilityTax`.
+
+When two profiles disagree about the same structure, the **most recently saved** wins —
+read as: the active profile last, the rest in store order — and a **conflict note** naming
+both profiles and what was kept is stored on the record. The manager shows it on the card
+with a **dismiss** button. Nothing is ever dropped silently.

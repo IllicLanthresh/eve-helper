@@ -25,6 +25,7 @@ anywhere but here.
 | `sell.test.js` | the Sell tool: paste parsing, price ticks, plan selection, the 100 ISK order floor, import list, filters | yes |
 | `auth.test.js` | `auth.js`: PKCE callback, multi-character login, v1→v2 migration, logout, scope dropping, degraded standings | yes |
 | `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on all three pages | yes |
+| `structures.test.js` | the central structure store and the Structure Manager: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors, the moved rig-inference solver, and the Industry page reading rigs/tax from the record | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
 | `mine-fleet.test.js` | the Mine page: the two modes (plan production / fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
 
@@ -43,9 +44,9 @@ anywhere but here.
 ## Fixtures
 
 `data/industry.json` is generated from the EVE SDE at deploy time and is gitignored, so
-it is usually absent. `industry-ui.test.js` intercepts the page's fetch of it with
-`page.route` and serves a small hand-written fixture, so it never needs the real file
-and never writes into `data/`. The engine suite builds its data inline — it needs no
+it is usually absent. `industry-ui.test.js` and `structures.test.js` intercept the page's fetch of it with
+`page.route` and serve a small hand-written fixture, so they never need the real file
+and never write into `data/`. The engine suite builds its data inline — it needs no
 fixture at all.
 
 ## Adding checks

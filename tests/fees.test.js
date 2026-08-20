@@ -173,9 +173,13 @@ H.run('fees', async () => {
       JSON.parse(localStorage.getItem('eveSellHelper.v2') || '{}'));
     check('a re-save drops obsBroker', persisted.obsBroker === undefined, JSON.stringify(persisted.obsBroker));
     check('...and obsTax', persisted.obsTax === undefined, JSON.stringify(persisted.obsTax));
-    check('...while keeping the per-structure owner-set rates',
-      persisted.structBroker && persisted.structBroker['1035466617946'] === '3.75',
+    // the per-structure owner-set rate is not a Sell-tool setting any more: it moved onto
+    // the central structure record, so the blob drops it and nothing is lost
+    check('...and the old per-structure rate map', persisted.structBroker === undefined,
       JSON.stringify(persisted.structBroker));
+    const moved = await s.page.evaluate(() => EveStructures.facts(1035466617946));
+    check('the owner-set rate landed on the central structure record',
+      moved && moved.marketBroker === 3.75, JSON.stringify(moved));
     await s.close();
 
     /* ---------- structures keep their own behaviour ---------- */
@@ -192,7 +196,6 @@ H.run('fees', async () => {
       // the market switch is settled once syncBrokerForMarket has claimed the structure
       // AND the auto-fill has finished writing its note — then typing cannot be clobbered
       await s.page.waitForFunction(() => hub().structure === 1035466617946
-        && structBroker[1035466617946] != null
         && /set by its owner/.test(
           [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')),
         null, { timeout: 15000 });
@@ -204,6 +207,9 @@ H.run('fees', async () => {
       await s.page.waitForFunction(() => document.getElementById('brokerFee').value === '3.75', null, { timeout: 15000 });
       eq('the owner-set structure rate is still remembered per structure',
         await val(s.page, 'brokerFee'), '3.75');
+      const rec = await s.page.evaluate(() => EveStructures.facts(1035466617946));
+      check('...on the structure\'s own central record, not in the Sell blob',
+        rec && rec.marketBroker === 3.75, JSON.stringify(rec));
     }
     await s.close();
   } finally {

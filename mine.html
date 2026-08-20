@@ -208,6 +208,7 @@
   <a href="index.html">Sell</a>
   <a href="mine.html" class="active">Mine</a>
   <a href="industry.html">Industry</a>
+  <a href="structures.html">Structures</a>
 </nav>
 <header>
   <h1>Mining Production Console</h1>
@@ -279,11 +280,14 @@
     <select id="facStruct" style="width:170px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility"></select>
     <button id="facPick" type="button" disabled
       title="log in with EVE, then search a player structure — Athanor/Tatara refinery bases and system security are auto-detected">choose structure…</button>
-    <select id="facRig" style="width:105px" disabled title="reprocessing rig on the structure">
+    <select id="facRig" style="width:105px" disabled
+      title="reprocessing rig recorded on the structure — edit it in the Structure Manager">
       <option value="none">no rig</option>
       <option value="t1">T1 rig +1%</option>
       <option value="t2">T2 rig +3%</option>
     </select>
+    <a id="facManage" class="hint" href="structures.html" hidden
+      title="the Structure Manager — rigs, tax, broker rate and notes for this structure">manage</a>
     <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier — auto-detected from the chosen structure's system">
       <option value="hs">highsec ×1.00</option>
       <option value="ls">lowsec ×1.06</option>
@@ -604,8 +608,11 @@ const state = {
   fetchedAt: null,
   refine: 75,                // flat fallback yield % — used only when not logged in
   // refining facility (skill mode): struct is 'npc' or 's:<structureId>' with structInfo
-  // holding the picked structure's cached identity (type/security/system)
-  fac: { struct: 'npc', rig: 'none', sec: 'hs', imp: 0, structInfo: null },
+  // holding the picked structure's cached identity (type/security/system). The fitted
+  // reprocessing rig is NOT stored here — it is a fact about the structure and lives on
+  // its central record (structures.js / the Structure Manager); the implant is the
+  // pilot's, so that one stays.
+  fac: { struct: 'npc', sec: 'hs', imp: 0, structInfo: null },
   // page-local role characters (persisted ids): REPRO's skills drive every refine
   // yield on the page; SELLER's sales tax nets fleet mode's displayed values
   // (null = follow the active character / gross). Neither touches EveAuth.setActive.
@@ -640,11 +647,25 @@ const secBandOf = sec => {
   const r = Math.round(sec * 10) / 10;
   return r >= 0.5 ? 'hs' : r >= 0.1 ? 'ls' : 'ns';
 };
+// only the IDENTITY is snapshotted here — the managed facts stay on the central record so
+// this page can never hold a stale copy of them
+const identOf = s => s ? {
+  id: s.id, name: s.name, typeId: s.typeId, typeName: s.typeName, refinery: s.refinery,
+  systemId: s.systemId, systemName: s.systemName, security: s.security, regionId: s.regionId,
+} : null;
+// the fitted reprocessing rig comes from the structure's central record — this page
+// selects a structure, it does not manage one
+function reproRig(){
+  const st = state.fac.structInfo;
+  if (state.fac.struct === 'npc' || !st) return 'none';
+  const f = window.EveStructures ? EveStructures.facts(st.id) : null;
+  return f && RIG_BONUS[f.reproRig] != null ? f.reproRig : 'none';
+}
 function facilityBasePct(){
   if (state.fac.struct === 'npc') return FACILITY_BASE.npc;
   const st = state.fac.structInfo;
   const typeBase = FACILITY_BASE[(st && st.refinery) || 'npc'];
-  return typeBase * (1 + RIG_BONUS[state.fac.rig] * SEC_MULT[state.fac.sec]);
+  return typeBase * (1 + RIG_BONUS[reproRig()] * SEC_MULT[state.fac.sec]);
 }
 let charSkills = null;   // set once EVE login + skills are available
 
@@ -780,6 +801,8 @@ function facNoteText(){
 
 // keeps the facility widgets consistent: options, enabled states, titles, note.
 // Rig + security only ever apply to player structures — NPC stations have no rigs.
+// The rig itself is never edited here: it belongs to the structure, so the select only
+// shows what the central record says and the "manage" link opens that record.
 function renderFacControls(){
   const on = !!(charSkills && charSkills.groups && Object.keys(charSkills.groups).length);
   const st = state.fac.structInfo;
@@ -797,15 +820,18 @@ function renderFacControls(){
   sel.disabled = !on;
   $('facPick').disabled = !on;
   $('facImp').disabled = !on;
-  $('facRig').disabled = !on || !isStruct;
+  $('facRig').disabled = true;   // never hand-picked here: it lives on the structure record
+  $('facRig').value = reproRig();
   $('facSec').disabled = true;   // never hand-picked: detected from the structure's system
   $('facSec').value = state.fac.sec;
+  $('facManage').hidden = !isStruct;
+  if (isStruct) $('facManage').href = 'structures.html#s' + st.id;
   if (on){
     sel.title = '';
     $('facPick').title = 'search a player structure — Athanor/Tatara refinery bases and system security are auto-detected';
     $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant (clone implants are not in ESI — set manually)";
     if (isStruct){
-      $('facRig').title = 'reprocessing rig fitted to the structure (fittings are not in ESI — set manually)';
+      $('facRig').title = 'reprocessing rig recorded on this structure (fittings are not in ESI) — edit it in the Structure Manager';
       $('facSec').title = `detected from ${st.systemName || 'the system'} security ${st.security != null ? st.security.toFixed(2) : '?'} — not editable`;
     } else {
       $('facRig').title = 'NPC stations cannot fit rigs — rig bonuses only exist on player structures';
@@ -2616,7 +2642,8 @@ function restore(){
     // 'npc' or 's:<structureId>'; the pre-picker type values (athanor/tatara) carried
     // no structure identity, so they fall back to the NPC default
     if (s.fac.struct === 'npc' || /^s:\d+$/.test(String(s.fac.struct))) state.fac.struct = s.fac.struct;
-    if (RIG_BONUS[s.fac.rig] != null) state.fac.rig = s.fac.rig;
+    // s.fac.rig is legacy: the fitted reprocessing rig moved onto the structure's central
+    // record, which structures.js imports from exactly this key before the page runs
     if (SEC_MULT[s.fac.sec] != null) state.fac.sec = s.fac.sec;
     if ([0, 1, 2, 4].includes(s.fac.imp)) state.fac.imp = s.fac.imp;
     if (s.fac.structInfo && typeof s.fac.structInfo === 'object' && s.fac.structInfo.id)
@@ -2627,12 +2654,12 @@ function restore(){
     state.roles.repro = numOrNull(s.roles.repro);
     state.roles.seller = numOrNull(s.roles.seller);
   }
-  $('facRig').value = state.fac.rig;
+  $('facRig').value = reproRig();
   $('facImp').value = String(state.fac.imp);
   // refresh the cached structure identity (instant when already cached; needs login otherwise)
   if (state.fac.structInfo && window.EveStructures)
     EveStructures.info(state.fac.structInfo.id).then(info => {
-      state.fac.structInfo = info;
+      state.fac.structInfo = identOf(info);
       if (info.security != null) state.fac.sec = secBandOf(info.security);
       renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet();
     }).catch(() => { /* keep the persisted snapshot */ });
@@ -2698,14 +2725,15 @@ $('facPick').addEventListener('click', async () => {
   const s = await EveStructures.pick({ title: 'Refining structure', manage: true });
   if (s){
     state.fac.struct = 's:' + s.id;
-    state.fac.structInfo = s;
+    state.fac.structInfo = identOf(s);
     if (s.security != null) state.fac.sec = secBandOf(s.security);
   }
   renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
-$('facRig').addEventListener('change', () => {
-  if (RIG_BONUS[$('facRig').value] != null) state.fac.rig = $('facRig').value;
-  renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
+// the rig is edited on the structure record, not here — but a change made in the manager
+// (or another tab) must re-price this page immediately
+if (window.EveStructures) EveStructures.subscribe(() => {
+  renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet();
 });
 $('facImp').addEventListener('change', () => {
   const v = Number($('facImp').value);

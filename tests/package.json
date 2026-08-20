@@ -9,7 +9,8 @@
     "test:auth": "node auth.test.js",
     "test:industry": "node industry.test.js",
     "test:industry-ui": "node industry-ui.test.js",
-    "test:mine-fleet": "node mine-fleet.test.js"
+    "test:mine-fleet": "node mine-fleet.test.js",
+    "test:structures": "node structures.test.js"
   },
   "devDependencies": {
     "playwright-core": "^1.62.1"

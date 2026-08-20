@@ -94,6 +94,7 @@
   <a href="index.html" class="active">Sell</a>
   <a href="mine.html">Mine</a>
   <a href="industry.html">Industry</a>
+  <a href="structures.html">Structures</a>
 </nav>
 <header>
   <h1>Sell Helper</h1>
@@ -113,7 +114,8 @@
     <span class="sep"></span>
     <label for="market" style="margin:0">market</label>
     <select id="market" style="width:210px"></select>
-    <a href="#" id="manageStructs" class="hint" hidden title="remove saved player structures">manage structures</a>
+    <a href="structures.html" id="manageStructs" class="hint" hidden
+      title="the Structure Manager — one record per structure: owner-set broker rate, tax, rigs, notes">manage structures</a>
     <button id="btnEsi" type="button" class="primary">Fetch prices (ESI)</button>
     <span id="esiStatus"></span>
   </div>
@@ -1224,7 +1226,16 @@ async function resolveTypeIds(names){
 }
 
 /* ---------- markets: the NPC hubs + saved player structures (shared picker) ---------- */
-let structBroker = {};      // owner-set broker % remembered per structure id
+// A structure's owner-set broker % is a fact about the STRUCTURE, not about this tool, so
+// it lives on the central record (structures.js / the Structure Manager). This page reads
+// it for the selected market and writes back whatever you type into the broker box.
+const structBrokerOf = id => {
+  const f = window.EveStructures ? EveStructures.facts(id) : null;
+  return f ? f.marketBroker : null;
+};
+const setStructBroker = (id, pct) => {
+  if (window.EveStructures && Number.isFinite(pct)) EveStructures.update(id, { marketBroker: pct });
+};
 let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don't share it)
 let marketWasStructure = false;
 let lastMarket = 'jita';    // real market behind the select ('+ add structure…' is an action)
@@ -1245,6 +1256,9 @@ function renderMarketOptions(){
   add('__add', '+ add structure…');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'jita';
   $('manageStructs').hidden = !savedStructures().length;
+  // deep-link straight to the selected structure's record when there is one
+  const sid = sel.value.startsWith('s:') ? sel.value.slice(2) : null;
+  $('manageStructs').href = sid ? 'structures.html#s' + sid : 'structures.html';
 }
 
 function hub(){
@@ -1257,13 +1271,13 @@ function hub(){
 }
 
 // the broker input is per-market: the NPC hubs share one skills/standings-driven value,
-// each structure remembers its own owner-set rate (ESI has no endpoint for it)
+// each structure carries its own owner-set rate on its central record (no ESI endpoint)
 function syncBrokerForMarket(){
   const h = hub();
   if (h.structure){
     if (!marketWasStructure) hubBrokerFee = $('brokerFee').value;
-    if (structBroker[h.structure] != null) $('brokerFee').value = structBroker[h.structure];
-    structBroker[h.structure] = $('brokerFee').value;
+    const pct = structBrokerOf(h.structure);
+    if (pct != null) $('brokerFee').value = String(pct);
   } else if (marketWasStructure && hubBrokerFee != null){
     $('brokerFee').value = hubBrokerFee;
   }
@@ -1464,11 +1478,10 @@ function persist(){
     if (!hub().structure) hubBrokerFee = $('brokerFee').value;
     localStorage.setItem(LS_KEY, JSON.stringify({
       inv: $('inv').value,
-      // brokerFee always holds the NPC-hub value; structures keep theirs in structBroker
-      // (the saved structure list itself lives in EveStructures' shared storage)
+      // brokerFee always holds the NPC-hub value; a structure's owner-set rate lives on
+      // its central record, together with the saved structure list (EveStructures)
       brokerFee: hubBrokerFee != null ? hubBrokerFee : $('brokerFee').value,
       salesTax: $('salesTax').value,
-      structBroker,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
@@ -1488,18 +1501,19 @@ function restore(){
   $('undercut').checked = !!saved.undercut;
   if (saved.decSep) $('decSep').value = saved.decSep;
   if (saved.topN) $('topN').value = saved.topN;
-  structBroker = (saved.structBroker && typeof saved.structBroker === 'object') ? saved.structBroker : {};
   // NOTE: state saved by an older build may still carry obsBroker/obsTax from the
-  // short-lived observed-rate override. Those keys are simply not read — the next
-  // persist() drops them, silently and without touching anything else.
+  // short-lived observed-rate override, and structBroker from before the owner-set rates
+  // moved onto the central structure records (structures.js imports that map on load).
+  // Those keys are simply not read — the next persist() drops them, silently and
+  // without touching anything else.
   renderMarketOptions();
   if (saved.market && saved.market !== '__add'
       && [...$('market').options].some(o => o.value === saved.market))
     $('market').value = saved.market;
   lastMarket = $('market').value;
   marketWasStructure = !!hub().structure;
-  if (marketWasStructure && structBroker[hub().structure] != null)
-    $('brokerFee').value = structBroker[hub().structure];
+  const savedPct = marketWasStructure ? structBrokerOf(hub().structure) : null;
+  if (savedPct != null) $('brokerFee').value = String(savedPct);
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
@@ -1513,13 +1527,23 @@ function restore(){
 /* ---------- wiring ---------- */
 renderMarketOptions();
 
-// remember the owner-set broker rate per structure the moment it is edited
-// (registered before the generic rebuild listener so persist() sees the new value)
+// write the owner-set broker rate onto the structure's central record the moment it is
+// edited (registered before the generic rebuild listener so the record is current first)
 $('brokerFee').addEventListener('change', () => {
   const h = hub();
-  if (h.structure) structBroker[h.structure] = $('brokerFee').value;
+  if (h.structure) setStructBroker(h.structure, Number($('brokerFee').value));
 });
-$('manageStructs').addEventListener('click', e => { e.preventDefault(); pickStructureMarket(); });
+// a record edited in the manager (another tab) must reach this page live
+if (window.EveStructures) EveStructures.subscribe(ev => {
+  if (ev.reason !== 'storage') return;
+  renderMarketOptions();
+  const h = hub();
+  const pct = h.structure ? structBrokerOf(h.structure) : null;
+  if (pct != null && $('brokerFee').value !== String(pct)){
+    $('brokerFee').value = String(pct);
+    rebuild();
+  }
+});
 
 $('inv').addEventListener('input', () => rebuild());
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays', 'waitPct'])
@@ -1709,7 +1733,7 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
         // player structure: the broker fee is owner-set (no ESI endpoint, skills and
         // standings don't apply) — only the sales tax comes from the character
         if (my !== seq) return;
-        note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (remembered per structure). Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
+        note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (kept on the structure's record, editable in Structures). Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
         rebuild();
         return;
       }
