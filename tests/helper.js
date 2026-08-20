@@ -207,6 +207,7 @@ const NAMED_IDS = {
 /* Install ESI/SSO routes.
    opts: { skills:{name:level}, standings:{fromId:value}, stationOwner:{corp,faction},
            books:{typeName:{buys:[{p,v,minv}], sells:[{p,v}]}}, typeIds:{name:id},
+           charOrders:{charId:[esiOrder]}, namedIds:{id:name},
            ssoScopes:[...] | null, onStandings:fn } */
 async function mockEsi(context, opts) {
   opts = opts || {};
@@ -214,7 +215,7 @@ async function mockEsi(context, opts) {
   const typeIds = Object.assign({}, NAMED_IDS, opts.typeIds || {});
   const books = opts.books || {};
   const owner = opts.stationOwner || { corp: 1000035, faction: 500001 };
-  const counters = { standings: 0, skills: 0, orders: 0 };
+  const counters = { standings: 0, skills: 0, orders: 0, charOrders: 0 };
 
   // SSO metadata (which scopes still exist)
   await context.route('**/login.eveonline.com/.well-known/**', route => {
@@ -288,17 +289,46 @@ async function mockEsi(context, opts) {
     const book = (name && books[name]) || { buys: [], sells: [] };
     const orders = [];
     let oid = typeId * 1000;
+    // a fixture level may pin its own order_id — that is how a suite puts the user's
+    // OWN order into the book it is about to be compared against
     for (const b of book.buys) orders.push({
-      order_id: oid++, type_id: typeId, is_buy_order: true, price: b.p,
+      order_id: b.id != null ? b.id : oid++, type_id: typeId, is_buy_order: true, price: b.p,
       volume_remain: b.v, min_volume: b.minv || 1, location_id: b.loc || 60003760,
       system_id: 30000142, range: b.range || 'station',
     });
     for (const s of book.sells) orders.push({
-      order_id: oid++, type_id: typeId, is_buy_order: false, price: s.p,
+      order_id: s.id != null ? s.id : oid++, type_id: typeId, is_buy_order: false, price: s.p,
       volume_remain: s.v, min_volume: 1, location_id: s.loc || 60003760,
       system_id: 30000142, range: 'station',
     });
     route.fulfill(json(orders));
+  });
+
+  // a character's own open market orders (My orders mode). opts.charOrders is
+  // {charId: [order, ...]}; a character absent from it answers 403, which is what ESI
+  // does for a token without the scope.
+  await context.route('**/characters/*/orders/**', route => {
+    counters.charOrders++;
+    const id = Number((route.request().url().match(/characters\/(\d+)/) || [])[1]);
+    const list = (opts.charOrders || {})[id];
+    if (!list) return route.fulfill({ status: 403, body: '{}' });
+    route.fulfill(json(list));
+  });
+
+  // ids -> names (the mirror of /universe/ids). Resolves type ids out of typeIds and
+  // anything else out of opts.namedIds; an id in neither is left out of the reply, which
+  // is what ESI does for an id it cannot name.
+  await context.route('**/universe/names/**', route => {
+    let ids = [];
+    try { ids = JSON.parse(route.request().postData() || '[]'); } catch (_e) {}
+    const extra = opts.namedIds || {};
+    const out = [];
+    for (const id of ids) {
+      const type = Object.keys(typeIds).find(n => typeIds[n] === id);
+      if (type) out.push({ id, name: type, category: 'inventory_type' });
+      else if (extra[id]) out.push({ id, name: extra[id], category: 'station' });
+    }
+    route.fulfill(json(out));
   });
 
   // price history (optional)

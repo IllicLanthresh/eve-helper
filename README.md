@@ -32,6 +32,11 @@ the current facility. Everything stays client-side: it's the OAuth2 **PKCE** flo
 there is no server, no database, and no secret — tokens live in your browser's
 localStorage only.
 
+**Your own market orders** (Sell tool): `esi-markets.read_character_orders.v1` is what the
+**My orders** mode reads. It is per character, so every logged-in character that carries it
+is fetched and a character that does not is *listed* with the inline permissions note — a
+missing scope shows up as a named gap, never as quietly missing orders and wrong totals.
+
 **Multiple characters**: log more in with the **+ alt** link in the top bar (the SSO page
 lets you pick a different character). A selector — in the top bar, and next to the values
 it drives ("fees from" on Sell) — chooses the **active** character; **log out** removes
@@ -69,8 +74,10 @@ just works there. Running a fork on another domain needs a one-time app registra
 3. Scopes — tick everything the portal still offers of: `esi-skills.read_skills.v1`,
    `esi-characters.read_standings.v1` (standings-aware broker fee),
    `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1`,
-   `esi-search.search_structures.v1` (player structure markets) and
-   `esi-characters.read_blueprints.v1` (owned blueprints for the Industry tool);
+   `esi-search.search_structures.v1` (player structure markets),
+   `esi-characters.read_blueprints.v1` (owned blueprints for the Industry tool) and
+   `esi-markets.read_character_orders.v1` (your open market orders and the stalled-order
+   triage in the Sell tool's *My orders* mode);
    callback URL —
    exactly your deployed index page, e.g.
    `https://your-name.github.io/eve-helper/index.html`. An app registered before these
@@ -111,6 +118,12 @@ when all permissions are granted the site says nothing at all.
 ---
 
 # Sell Helper (`index.html`)
+
+Two modes over one page, switched in the header the same way the Mine tool switches its
+own: **Sell loot** — everything below, from a hangar paste to a ranked plan — and
+**My orders**, which triages the orders that are already on the market. The switch is a
+pure view swap: same state, same fees, same patience, same machinery, and it is
+remembered.
 
 ## Workflow
 
@@ -317,6 +330,117 @@ in-game sell window and type it into the broker % field: typing it here writes i
 restores the skills/standings-derived rate. Sales tax (Accounting) applies everywhere and
 keeps auto-filling.
 
+## My orders — the stalled-order triage
+
+*"I have a bunch of orders I placed a while ago based on the tool's pricing. They seem to
+be stalled, I've been overbid and the price has come down, and I don't think waiting three
+months would move them."*
+
+That is what this mode is for. It reads the orders you already have and answers, per order,
+whether it is ever going to sell — and if not, what to do about it.
+
+**What it fetches.** `GET /characters/{id}/orders/` for **every logged-in character** that
+carries `esi-markets.read_character_orders.v1` (a character without it is listed with the
+permissions link instead of being skipped). Type names come from `POST /universe/names`
+(chunked, and retried one id at a time so a single unknown id can't lose a whole chunk),
+NPC station names from `GET /universe/stations/{id}` (cached — stations do not move), and
+player structures from your structure records or `GET /universe/structures/{id}`. Anything
+that cannot be resolved is shown as its **raw id**, not as a guess.
+
+Then, per order, the book at **its** location and that type's history: NPC stations through
+the same region fetch the Sell mode uses, filtered to the station; player structures through
+the structure-market path. Orders are grouped by location first, so a structure's whole book
+is pulled **once** however many orders sit in it, and history the price fetch already pulled
+for the same region is reused. The error-limit handling, the retries and the progress bar are
+the price fetch's own.
+
+**Sell orders are the default view.** Buy orders arrive behind a toggle, in their own group,
+labelled as what they are: the economics run the other way round (you are waiting for someone
+to sell *to* you, and the ISK is in escrow), so none of the sell-side triage is applied to them.
+
+### The numbers, per order
+
+| Column | What it is |
+| --- | --- |
+| **Queue ahead** | Units listed at or below your price at that location, **with your own units taken back out**. Your order is a public sell order like any other and *is* in the book that was just fetched; counting it inflates every wait, and when you happen to be cheapest it tells you that you are undercutting yourself. Own orders are matched by **order id** (exact), falling back to price only for an order the book does not carry. |
+| **vs best %** | How far your price sits above the best **competing** sell — again, your own orders excluded. |
+| **Fill est. (d)** | Queue ahead ÷ daily traded volume, the same `daysToFillAt` the Sell table uses, with the same caveat: regional volume mixes buy and sell sides and every station in the region, so it is an optimistic order of magnitude. |
+| **Trend %/wk** | The same Theil–Sen slope over 30 days of daily average price the Sell mode ranks with. |
+| **Chance %** | The same **trend-adjusted hit rate**: the share of past windows whose daily high reached your price, every past day first carried to today's price level at the item's own trend, then tempered by the queue already ahead of you. The window is whichever runs out first — your patience setting, or the days left on the order. |
+| **History** | The Sell table's sparkline, with a marker at **your** asking price and at the best competing sell. A price the market has left behind is a picture, not a number. |
+
+### Stalled, and why
+
+An order is **stalled** when any of these is true, and the row says which in words:
+
+- the **chance** of filling at your price is under your patience mode's floor (75 / 55 / 35%);
+- the **queue** at your price cannot clear before the order expires (fill est. > days left);
+- you sit **above the best sell on a falling market**, where the gap only widens — this one
+  needs the chance to be under 90% as well, because an order that is going to fill anyway is
+  not stalled whatever the trend does.
+
+The header states the total the way you would ask it: *N orders stalled, X ISK frozen, of
+which Y recoverable now by dumping* — and the table sorts by the ISK frozen in stalled
+orders, worst first.
+
+### The verdict
+
+Three futures over the days that are actually left, all net of sales tax:
+
+| Verdict | Arithmetic (shown on hover) |
+| --- | --- |
+| **HOLD** | `chance × units × your price × (1 − tax) + (1 − chance) × (dumping at the end of the window, carried by the trend)` |
+| **REPRICE to X** | the same at the competitive price X (the best competing sell, one tick under if you have that ticked), **minus the relist fee** |
+| **CANCEL & DUMP** | what the buy book pays for the remaining units **right now**, walked depth-first with `min_volume` respected, minus tax |
+
+The highest number wins; a tie goes to the option that **frees the market slot**, exactly as
+the Sell mode refuses to list unless a listing strictly beats selling now. Slots, not ISK,
+are the thing that runs out.
+
+**The broker fee you already paid is sunk.** It left your wallet when the order went up and
+is never refunded, so it is charged against **none** of the three — and least of all against
+cancelling. Charging it there is the classic error that keeps dead orders alive ("I already
+paid for this listing"); a sunk cost cannot be recovered by waiting. The only fee anywhere
+in the comparison is the **relist fee**, because that one is a payment you have not made yet.
+
+### The relist fee is UNVERIFIED
+
+EVE charges a broker fee to **modify** an open order's price, and **Advanced Broker
+Relations** reduces it. There is no client-verified formula for it here, so none is asserted.
+It is modelled as
+
+```
+relist %   = broker % × (1 − 5% × Advanced Broker Relations)
+relist fee = max(100 ISK, relist % × units × the new price)
+```
+
+with the skill resolved **by name** through the same `/universe/ids` lookup the rest of the
+site uses (no hardcoded type id), and the same flat 100 ISK per-order floor the broker fee
+has. Following the precedent set by the broker-fee work, the resulting % is shown in a box
+above the table, is **hand-editable**, asks you to check it against your client's own
+modify-order dialog, and your correction is **saved** and used everywhere. Neither number is
+verified — yours at least came from a client.
+
+### Honest caveats
+
+- No diagnosis without a book: where the book cannot be fetched — no market scope at a
+  structure, no docking access, a failed request — the row says so and gets **no verdict**,
+  rather than a verdict built on nothing. Same for an item with no price history.
+- The fill estimate and the chance carry exactly the caveats they carry in the Sell mode.
+  Past behaviour is not a promise, and a 14-day window is not a forecast.
+- Nothing here cancels, reprices or places anything. EVE has no write API for market orders,
+  and this tool would not use one: it tells you what to do in the client.
+- The diagnosis needs a fetch each session. The orders themselves are remembered between
+  visits (that is what the duplicate-order flag reads), but books and odds are not — stale
+  odds are worse than none.
+
+### Prevention, back in Sell loot mode
+
+The other half of the problem is not creating stalled orders in the first place. When you are
+about to list something you **already have an order for at that market**, the row is flagged
+`already listed here ×N @ price`. A second order competes with your own, in the same queue,
+for a second broker fee.
+
 ## Flags
 
 | Flag | Meaning |
@@ -326,6 +450,7 @@ keeps auto-filling.
 | `depth x/y` | The buy book can only absorb x of your y units at any price. |
 | `↓ x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `no history — using current sell` / `no sell orders — using history price` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `already listed here ×N @ price` | You already have an open sell order for this item at this market (from *My orders*' last pull). A second order competes with your own. |
 | `unsellable?` | Ice Storm / Expired filaments the market refuses. Auto-excluded from the export (re-tickable). |
 
 Items with no orders and no history at the hub are listed separately and never pollute the ranking.
@@ -344,13 +469,18 @@ Items with no orders and no history at the hub are listed separately and never p
   average, high and low.
 - ESI usage: `POST /universe/ids`, `GET /markets/{region}/orders?type_id=…` (paginated,
   filtered to the hub station; buy orders count if their range covers it), and optionally
-  `GET /markets/{region}/history?type_id=…`. Error-limit headers are honoured, transient
+  `GET /markets/{region}/history?type_id=…`. *My orders* adds `GET /characters/{id}/orders/`,
+  `POST /universe/names`, `GET /universe/stations/{id}` and, for structures,
+  `GET /markets/structures/{id}/`. Error-limit headers are honoured, transient
   errors retried; failed items are listed as unpriced.
 - Prices respect EVE's 4-significant-digit rule; the one-tick undercut steps into the finer
   band below round numbers (1 000 000 → 999 900).
 - Number parsing accepts both `1.234.567,89` (EVE client, EU locale) and `1234567.89`
   formats; the export decimal separator is switchable.
-- Inputs, fees, market, pricing options, and row selections persist in `localStorage`.
+- Inputs, fees, market, pricing options, row selections, the page mode, the buy-order
+  toggle and the relist-fee override persist in `localStorage`; the last order pull is kept
+  under its own key, so *My orders* is not empty on a reload and the duplicate-order flag
+  keeps working.
 
 ## Development
 

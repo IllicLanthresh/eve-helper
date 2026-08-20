@@ -6,6 +6,7 @@
     "test": "node run-all.js",
     "test:fees": "node fees.test.js",
     "test:sell": "node sell.test.js",
+    "test:orders": "node orders.test.js",
     "test:auth": "node auth.test.js",
     "test:industry": "node industry.test.js",
     "test:industry-ui": "node industry-ui.test.js",

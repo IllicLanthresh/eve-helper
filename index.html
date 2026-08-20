@@ -2252,7 +2252,8 @@ async function fetchBook(typeId, h, structBook){
     for (const o of data){
       if (!orderCoversHub(o, h)) continue;
       if (o.is_buy_order) buys.set(o.order_id ?? 'x' + unk++, { p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
-      else if (!h.structure && o.location_id === h.station) sells.push({ p: o.price, v: o.volume_remain });
+      else if (!h.structure && o.location_id === h.station)
+        sells.push({ p: o.price, v: o.volume_remain, id: o.order_id ?? null });
     }
     const pages = Number(res.headers.get('x-pages') || '1');
     if (page >= pages) break;
@@ -2266,7 +2267,7 @@ async function fetchBook(typeId, h, structBook){
     const e = sBook.get(typeId);
     if (e){
       for (const b of e.buys) buys.set(b.id ?? 'sx' + unk++, { p: b.p, v: b.v, minv: b.minv });
-      for (const s of e.sells) sells.push({ p: s.p, v: s.v });
+      for (const s of e.sells) sells.push({ p: s.p, v: s.v, id: s.id ?? null });
     }
   }
   const buyLevels = [...buys.values()].sort((a, b) => b.p - a.p);
@@ -2978,29 +2979,36 @@ function ordEntry(o){
   return e;
 }
 
-function ownVolumesAt(typeId, locationId){
-  const m = new Map();
-  for (const o of state.orders.list){
-    if (o.isBuy || o.typeId !== typeId || o.locationId !== locationId) continue;
-    m.set(o.price, (m.get(o.price) || 0) + o.volumeRemain);
-  }
-  return m;
-}
-/* The sell book at a location with YOUR OWN units taken back out, level by level.
+const ownSellsAt = (typeId, locationId) => state.orders.list
+  .filter(o => !o.isBuy && o.typeId === typeId && o.locationId === locationId);
+
+/* The sell book at a location with YOUR OWN units taken back out.
    Your order is a public sell order like any other, so it IS in the book that was just
    fetched — and counting it makes every number wrong in the same direction: the queue
    ahead of you gains your own stack, and if you happen to be the cheapest, "the best
-   sell" is your own price and you look like you are undercutting yourself. The levels
-   carry no order ids, so own volume is matched by price, and several of your own orders
-   at one price are deducted together. */
-function competitorSells(levels, own){
-  const left = new Map(own);
+   sell" is your own price and you look like you are undercutting yourself.
+
+   Orders are matched by ORDER ID, which is exact: the id in your character's order list
+   is the same id the market book carries, so a level of yours is dropped whole, whatever
+   the two feeds disagree about its remaining size. Only an order the book does not carry
+   at all (a book fetched a moment before a fill, say) falls back to matching by price —
+   never both, or one order would be deducted twice. */
+function competitorSells(levels, ownOrders){
+  const lv = levels || [];
+  const bookIds = new Set(lv.map(x => x.id).filter(x => x != null));
+  const mineById = new Set();
+  const mineByPrice = new Map();
+  for (const o of (ownOrders || [])){
+    if (o.orderId != null && bookIds.has(o.orderId)) mineById.add(o.orderId);
+    else mineByPrice.set(o.price, (mineByPrice.get(o.price) || 0) + o.volumeRemain);
+  }
   const out = [];
-  for (const lv of levels || []){
-    let v = lv.v;
-    const mine = left.get(lv.p) || 0;
-    if (mine > 0){ const take = Math.min(mine, v); left.set(lv.p, mine - take); v -= take; }
-    if (v > 0) out.push({ p: lv.p, v });
+  for (const x of lv){
+    if (x.id != null && mineById.has(x.id)) continue;
+    let v = x.v;
+    const mine = mineByPrice.get(x.p) || 0;
+    if (mine > 0){ const take = Math.min(mine, v); mineByPrice.set(x.p, mine - take); v -= take; }
+    if (v > 0) out.push({ p: x.p, v });
   }
   return out;
 }
@@ -3038,8 +3046,7 @@ function diagnoseOne(o, cfg){
         : 'Fetch your orders to pull the book and history behind this row.');
     return d;
   }
-  const own = ownVolumesAt(o.typeId, o.locationId);
-  const comp = competitorSells(book.sellLevels, own);
+  const comp = competitorSells(book.sellLevels, ownSellsAt(o.typeId, o.locationId));
   d.bestOther = comp.length ? comp[0].p : null;
   d.aboveBestPct = (d.bestOther != null && d.bestOther > 0)
     ? (o.price - d.bestOther) / d.bestOther * 100 : null;
@@ -3541,6 +3548,8 @@ if (state.orders.fetched){
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 applyMode();
 renderOrders();
+// the relist % needs Advanced Broker Relations, and the box is shown before any fetch
+if (window.EveAuth) EveAuth.ready.then(() => resolveAdvBroker()).catch(() => {});
 
 // fees from the ACTIVE character, computed with the constants at the top of this script
 // from Accounting, Broker Relations and the UNMODIFIED standings toward the hub
@@ -3621,6 +3630,9 @@ renderOrders();
     try{
       let sk = EveAuth.skills();
       if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
+      // the relist % is built on this character's Advanced Broker Relations, so it is
+      // refreshed wherever the fees are — by then the full skill list is certainly loaded
+      resolveAdvBroker();
       const hNow = hub();
       const tax = salesTaxPctFor(sk);
       const taxBit = `tax ${tax.toFixed(2)}% (Accounting ${sk.accounting}, base unverified against the client)`;

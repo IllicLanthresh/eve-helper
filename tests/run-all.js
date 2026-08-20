@@ -7,8 +7,8 @@ const fs = require('fs');
 const path = require('path');
 
 // deliberate order: cheapest and most fundamental first
-const ORDER = ['industry.test.js', 'fees.test.js', 'sell.test.js', 'auth.test.js',
-  'structures.test.js', 'structures-manager.test.js', 'industry-ui.test.js'];
+const ORDER = ['industry.test.js', 'fees.test.js', 'sell.test.js', 'orders.test.js',
+  'auth.test.js', 'structures.test.js', 'structures-manager.test.js', 'industry-ui.test.js'];
 
 const found = fs.readdirSync(__dirname).filter(f => f.endsWith('.test.js'));
 const suites = ORDER.filter(f => found.includes(f)).concat(found.filter(f => !ORDER.includes(f)));
