@@ -114,6 +114,8 @@
   .badge.dump{background:#3a1a1e;color:var(--red);border:1px solid #6b2f36}
   .badge.buy{background:#12303c;color:var(--cyan);border:1px solid #23566b}
   tbody tr.stalled td:first-child{box-shadow:inset 3px 0 0 var(--red)}
+  #ordTbl td.stalledcell{max-width:300px;white-space:normal}
+  #ordTbl td.stalledcell .hint{line-height:1.3;margin-top:2px}
   tbody tr.buyrow td{background:#0f1620}
   /* patience: a segmented control, because it gets flipped constantly */
   .seg{display:inline-flex;border:1px solid #2e3b52;border-radius:8px;overflow:hidden;background:var(--panel2)}
@@ -294,6 +296,9 @@
       <li><span class="flag warn">suspect price</span> = top buy above best sell (thin/odd market) ·
           <span class="flag warn">≫/≪ history</span> = current sell far from the history statistic ·
           <span class="flag warn">depth x/y</span> = the buy book can only absorb x of your y units.</li>
+      <li><span class="flag warn">already listed here</span> = you already have an open sell order for this
+          item at this market (from the <b>My orders</b> mode's last pull). A second order competes with
+          your own, in the same queue, for a second broker fee.</li>
       <li><span class="flag">unsellable?</span> = Ice Storm / Expired filaments the market won't accept;
           auto-excluded from the export (you can re-tick them).</li>
       <li>All ESI endpoints used are public — no login, nothing leaves your machine except the price queries.</li>
@@ -407,17 +412,40 @@
     <span class="sep"></span>
     <span class="hint">· click a cell to copy its value</span>
   </div>
+  <div class="rowline">
+    <span class="seg" role="group" aria-label="how long you are willing to wait">
+      <button id="ordPatRush" type="button" data-pat="rush" title="7-day window">in a rush</button>
+      <button id="ordPatBalanced" type="button" data-pat="balanced" title="14-day window">balanced</button>
+      <button id="ordPatPatient" type="button" data-pat="patient" title="30-day window">patient</button>
+    </span>
+    <span class="hint" id="ordPatNote"></span>
+  </div>
+  <div class="rowline">
+    <label for="relistPct" style="margin:0">relist fee %</label>
+    <input id="relistPct" type="number" step="0.01" min="0" max="20" style="width:80px"
+      title="the broker fee EVE charges to MODIFY an order's price — type your client's number here if it disagrees">
+    <button id="relistReset" type="button" title="go back to the computed value">reset</button>
+    <span class="hint" id="relistSrc" style="flex:1 1 300px"></span>
+  </div>
   <div class="tablewrap">
     <table id="ordTbl">
       <thead><tr>
         <th data-key="charName">Character</th>
         <th data-key="name">Item</th>
+        <th title="the last 120 days of daily average price, with a marker at your order's price and at the best competing sell — a price the market has left behind is visible at a glance">History</th>
         <th data-key="price" class="num" title="the price your order is asking (sell) or offering (buy)">Your price</th>
         <th data-key="volumeRemain" class="num" title="units left on the order, against the size it went up as">Qty left / total</th>
         <th data-key="locName">Location</th>
         <th data-key="ageDays" class="num" title="days since the order was issued">Age (d)</th>
         <th data-key="daysLeft" class="num" title="days before the order expires: its duration minus its age">Days left</th>
         <th data-key="iskTied" class="num" title="price × units remaining — the ISK sitting on the market instead of in your wallet">ISK tied up</th>
+        <th data-key="queueAhead" class="num" title="units listed at or below your price at this location, with your OWN remaining units taken back out — the line you are actually standing behind">Queue ahead</th>
+        <th data-key="aboveBestPct" class="num" title="how far your price sits above the best competing sell at this location (your own orders excluded)">vs best %</th>
+        <th data-key="daysToFill" class="num" title="days to work through the queue ahead of you at your price: units ahead ÷ daily traded volume. Regional volume mixes buy and sell sides and every station in the region — an optimistic order-of-magnitude number, not a forecast">Fill est. (d)</th>
+        <th data-key="trendPctWk" class="num" title="the item's own price trend, %/week — the same Theil–Sen slope the Sell mode ranks with">Trend %/wk</th>
+        <th data-key="chance" class="num" title="chance this order fills at your price before it expires: the share of past windows whose daily high reached your price, each past day carried to today's price level at the item's own trend, then tempered by the queue already ahead of you">Chance %</th>
+        <th data-key="stalledIsk" title="stalled = the odds are under your patience floor, or the queue cannot clear before the order expires, or you are above the best sell on a market that is sliding away. Sorts by the ISK frozen in stalled orders">Stalled?</th>
+        <th data-key="verdict" title="hold it, reprice it, or cancel and dump it — hover a badge for the arithmetic">Verdict</th>
       </tr></thead>
       <tbody id="ordBody"></tbody>
     </table>
@@ -438,6 +466,36 @@
           is shown as its raw id rather than a guess.</li>
       <li>ISK tied up is <code>price × units remaining</code>. For a buy order that is the ISK
           committed to it; the actual escrow can be lower on a partly-filled order.</li>
+      <li><b>Queue ahead</b> is the units listed at or below your price at that location, with your own
+          remaining units taken back out — a mistake that would otherwise make every order look one
+          stack worse than it is. <b>vs best %</b> compares your price to the best <i>competing</i>
+          sell, your own orders excluded, so being the cheapest reads as 0% and not as "you are
+          beating yourself".</li>
+      <li><b>Fill est.</b> is the queue ahead of you ÷ the daily traded volume, exactly as in the Sell
+          table, and carries exactly the same caveat: regional volume mixes buy and sell sides and
+          every station in the region, so treat it as an optimistic order of magnitude.</li>
+      <li><b>Chance %</b> is the same trend-adjusted hit rate the Sell mode recommends with — the share
+          of past windows in which the daily high reached your price, every past day first carried to
+          today's price level at the item's own trend, then tempered by the queue. The window is
+          whichever is shorter: your patience setting or the days left on the order.</li>
+      <li><b>Stalled</b> fires when the chance is under your patience mode's floor, or the queue at
+          your price cannot clear before the order expires, or you sit above the best sell on a
+          falling market (where the gap only widens). The Stalled column says which.</li>
+      <li><b>The verdicts</b> compare three futures over the days left, all net of sales tax:
+          <b>HOLD</b> = <code>chance × (units × your price) + (1 − chance) × (dumping at the end,
+          carried by the trend)</code>; <b>REPRICE</b> = the same at the competitive price, minus the
+          relist fee; <b>CANCEL &amp; DUMP</b> = what the buy book pays right now, walked depth-first.
+          The broker fee you already paid to put the order up is <b>sunk</b> — it is not charged
+          against any of the three, and in particular not against cancelling, which is the classic way
+          to talk yourself into keeping a dead order.</li>
+      <li>The <b>relist fee</b> is <span style="color:var(--amber)">not verified against the client</span>.
+          It is modelled as the broker % from the fees box reduced by 5% per level of Advanced Broker
+          Relations (resolved by name from your skills). Check it against your own modify-order dialog
+          and type the real number into the box — it is saved.</li>
+      <li>Books and history are fetched per location and per type, grouped so a structure's book is
+          pulled once no matter how many orders you have in it. Where a book or a history is missing —
+          no market scope at a structure, no docking access, a type with no history — the row says so
+          and gets no verdict, rather than a verdict built on nothing.</li>
     </ul>
   </details>
 </section>
@@ -763,7 +821,7 @@ const state = {
   // --- "My orders" mode (the block near the bottom of this script) ---
   mode: 'sell',            // sell | orders — a pure view swap over this same state
   orders: { list: [], chars: [], names: {}, locs: {}, diag: {}, fetched: null, running: false },
-  ordSortKey: 'iskTied', ordSortDir: -1,
+  ordSortKey: 'stalledIsk', ordSortDir: -1,   // ISK frozen in stalled orders, worst first
   ordShowBuy: false, ordFilter: '',
 };
 
@@ -882,6 +940,10 @@ function planOrder(levels, qty, L, tax, brokerFrac){
   }
   return best;
 }
+
+// the history window the whole page works over (the history-reference control)
+const currentHistDays = () =>
+  Math.min(400, Math.max(1, Math.round(parseFloat($('histDays').value) || 30)));
 
 function quantile(sorted, q){
   if (!sorted.length) return null;
@@ -1140,7 +1202,7 @@ function rebuild(keepChecks = true){
   const useUndercut = $('undercut').checked;
   const priceSrc = $('srcHist').checked ? 'hist' : 'sell';
   const histMode = $('histMode').value;
-  const histDays = Math.min(400, Math.max(1, Math.round(parseFloat($('histDays').value) || 30)));
+  const histDays = currentHistDays();
   state.patience = $('patRush').checked ? 'rush' : $('patPatient').checked ? 'patient' : 'balanced';
   const pat = PATIENCE[state.patience];
 
@@ -1327,6 +1389,14 @@ function rebuild(keepChecks = true){
     if (L != null && bestSell != null && L > bestSell) flags.push({t:'above best sell', cls:'info'});
     if (bestBuy == null) flags.push({t:'no buy orders', cls:'info'});
     if (bestSell == null) flags.push({t:'no sell orders', cls:'info'});
+    /* PREVENTION — the other half of the stalled-order problem. Listing a second order
+       for something you already have up at this very market means competing with
+       yourself: the two orders sit in one queue, the older one is usually the one in
+       front, and you pay a second broker fee for the privilege. The "My orders" mode's
+       last pull is what this reads, so it survives a reload. */
+    const dupOrders = openOrdersHere(e.typeId);
+    if (dupOrders.length && strategy !== 'imm')
+      flags.push({ t: `already listed here ×${dupOrders.length} @ ${fmtIsk(dupOrders[0].price)}`, cls: 'warn' });
 
     const row = {
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit, typeId: e.typeId ?? null,
@@ -1338,7 +1408,7 @@ function rebuild(keepChecks = true){
       histRows: e.hist || null,
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
                  window: pat.days, minFill: pat.minFill, label: pat.label },
-      flags, unsellable,
+      flags, unsellable, dupOrders,
       // latent tick state — survives strategy flips; instants are excluded from the
       // import list at use-time (inImport) so a transient flip never wipes a tick.
       // Default is UNTICKED: the import list only ever contains deliberate picks.
@@ -1381,6 +1451,8 @@ function syncControls(){
   else if ($('histOn').checked && state.esi.size && !state.fetchedHist) note = ' — fetch prices again to pull history';
   else if (!histUsable) note = ' — off';
   $('histNote').textContent = note;
+  syncOrdPatience();
+  syncRelist();
 }
 
 /* ---------- rendering ---------- */
@@ -1483,6 +1555,9 @@ function markersOf(r){
   if (r.bestSell != null) out.push({ key: 'sell', price: r.bestSell, colour: 'var(--cyan)', label: 'best sell' });
   if (r.L != null && (r.bestSell == null || Math.abs(r.L - r.bestSell) > tickFor(r.bestSell) / 2))
     out.push({ key: 'list', price: r.L, colour: 'var(--amber)', label: 'competitive list' });
+  // an order row's own asking price — the marker that makes a hopeless price obvious
+  if (r.yourPrice != null) out.push({ key: 'yours', price: r.yourPrice, colour: 'var(--amber)', label: 'your order' });
+  if (r.repriceTo != null) out.push({ key: 'reprice', price: r.repriceTo, colour: 'var(--violet)', label: 'reprice to' });
   const pp = r.metrics ? r.metrics.patientPrice : null;
   if (pp != null && (r.L == null || Math.abs(pp - r.L) > tickFor(pp) / 2))
     out.push({ key: 'patient', price: pp, colour: 'var(--violet)', label: 'patient price' });
@@ -1506,7 +1581,7 @@ function priceScale(vals, markers, top, bottom){
   return { lo, hi, y: v => span > 0 ? bottom - (v - lo) / span * (bottom - top) : (top + bottom) / 2 };
 }
 
-function buildSparkline(r){
+function buildSparkline(r, clickable){
   const rows = chartRows(r, SPARK_DAYS);
   if (rows.length < 2) return null;
   const marks = markersOf(r);
@@ -1521,7 +1596,8 @@ function buildSparkline(r){
     + (r.trendPctWk != null ? `, trend ${pctSigned(r.trendPctWk)} per week` : '')
     + marks.map(m => `; ${m.label} ${fmtIsk(m.price)}`).join('');
   svg.setAttribute('aria-label', label);
-  svg.appendChild(svgEl('title', {})).textContent = label + ' — click for the full chart';
+  svg.appendChild(svgEl('title', {})).textContent =
+    label + (clickable === false ? '' : ' — click for the full chart');
   for (const m of marks)
     svg.appendChild(svgEl('line', { x1: 0, x2: SPARK_W, y1: sc.y(m.price).toFixed(2), y2: sc.y(m.price).toFixed(2),
       stroke: m.colour, 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.85,
@@ -2141,6 +2217,16 @@ async function pickStructureMarket(){
   else persist();          // the saved list may have changed without a market change
 }
 
+/* Your own open SELL orders for this type at the market currently selected — the
+   duplicate-order guard in the Sell table. Reads the last "My orders" pull (persisted),
+   so it keeps working without refetching. */
+function openOrdersHere(typeId){
+  if (typeId == null || !state.orders.list.length) return [];
+  const h = hub();
+  const loc = h.station || h.structure;
+  return state.orders.list.filter(o => !o.isBuy && o.typeId === typeId && o.locationId === loc);
+}
+
 function orderCoversHub(o, h){
   if (o.location_id === (h.station || h.structure)) return true;
   if (!o.is_buy_order) return false;
@@ -2151,7 +2237,10 @@ function orderCoversHub(o, h){
   return false;
 }
 
-async function fetchBook(typeId, h){
+// structBook: the structure's own indexed book. The Sell mode has exactly one selected
+// market and passes none (state.structBook is it); the orders triage walks several
+// structures at once and hands each one its own.
+async function fetchBook(typeId, h, structBook){
   let page = 1, unk = 0;
   const buys = new Map();   // keyed by order_id so structure-book duplicates dedup cleanly
   // the sell side is kept level by level too: "how many units are already listed at or
@@ -2169,11 +2258,12 @@ async function fetchBook(typeId, h){
     if (page >= pages) break;
     page++;
   }
-  if (h.structure && state.structBook){
+  const sBook = structBook || state.structBook;
+  if (h.structure && sBook){
     // sell side: ONLY the structure's own book (that is the book you'd list into);
     // buy side: merge the book's buys with the regional ones that cover the structure —
     // a public structure's orders appear in BOTH feeds, hence the order_id dedup
-    const e = state.structBook.get(typeId);
+    const e = sBook.get(typeId);
     if (e){
       for (const b of e.buys) buys.set(b.id ?? 'sx' + unk++, { p: b.p, v: b.v, minv: b.minv });
       for (const s of e.sells) sells.push({ p: s.p, v: s.v });
@@ -2285,7 +2375,9 @@ async function runEsi(){
             catch(_e){ /* history missing for some types — non-fatal */ }
           }
           if (token !== state.esiToken) return;
-          state.esi.set(j.key, { ...book, hist, typeId: j.typeId, status: 'ok' });
+          // the region is recorded so "My orders" can reuse this history instead of
+          // refetching it for an order at the same market
+          state.esi.set(j.key, { ...book, hist, typeId: j.typeId, region: h.region, status: 'ok' });
         }catch(_e){
           if (token !== state.esiToken) return;
           failed++;
@@ -2482,11 +2574,16 @@ async function runOrders(){
     for (const [id, reg] of locs) await resolveLocation(id, reg);
 
     state.orders.fetched = new Date().toISOString();
-    const failed = report.filter(r => r.error).length;
-    status.textContent = `${rows.length} open order${rows.length === 1 ? '' : 's'} loaded `
-      + new Date().toLocaleTimeString() + (failed ? ` — ${failed} character${failed > 1 ? 's' : ''} failed` : '');
-    status.className = failed ? 'err' : 'ok';
     persistOrders();
+    await resolveAdvBroker();
+    await diagnoseOrders();
+    const failed = report.filter(r => r.error).length;
+    const stalled = Object.values(state.orders.diag).filter(x => x && x.stalled).length;
+    status.textContent = `${rows.length} open order${rows.length === 1 ? '' : 's'}, ${stalled} stalled — `
+      + new Date().toLocaleTimeString()
+      + (failed ? ` — ${failed} character${failed > 1 ? 's' : ''} failed` : '')
+      + (state.ordFailedBooks ? ` — ${state.ordFailedBooks} order book${state.ordFailedBooks > 1 ? 's' : ''} unavailable` : '');
+    status.className = failed ? 'err' : 'ok';
   }catch(e){
     status.textContent = 'ESI error: ' + e.message;
     status.className = 'err';
@@ -2571,7 +2668,7 @@ function renderOrders(){
   }
   document.querySelectorAll('#ordTbl thead th').forEach(th => {
     th.classList.remove('s-asc', 's-desc');
-    if (th.dataset.key === state.ordSortKey){
+    if (th.dataset.key && th.dataset.key === state.ordSortKey){
       const str = th.dataset.key === 'name' || th.dataset.key === 'charName' || th.dataset.key === 'locName';
       const asc = str ? state.ordSortDir === -1 : state.ordSortDir === 1;
       th.classList.add(asc ? 's-asc' : 's-desc');
@@ -2649,6 +2746,7 @@ function renderOrdSummary(){
       'price × units remaining on the buy side — the escrow can be lower on a partly-filled order');
   const perChar = state.orders.chars.filter(c => !c.missingScope && !c.error)
     .map(c => `${c.name} ${c.count}`).join(' · ');
+  renderOrdTriageStats(box, sells, mk);
   if (perChar)
     mk('slots in use', perChar,
       "EVE's slot cap is a character fact ESI does not publish, so this counts what is open and "
@@ -2681,6 +2779,7 @@ function ordRowEl(r){
     b.className = 'badge buy'; b.style.marginLeft = '6px'; b.textContent = 'BUY';
     nameTd.appendChild(b);
   }
+  tr.appendChild(ordSparkCell(r));
   cell('num', fmtIsk(r.price), fmtExport(r.price));
   cell('num', `${fmt.format(r.volumeRemain)} / ${fmt.format(r.volumeTotal)}`, String(r.volumeRemain));
   cell('name', r.locName || String(r.locationId), r.locName || String(r.locationId),
@@ -2692,6 +2791,7 @@ function ordRowEl(r){
   cell('num', r.daysLeft == null ? '—' : fmtDays(r.daysLeft), r.daysLeft == null ? '' : r.daysLeft.toFixed(2),
     r.duration != null ? `${r.duration}-day order` : '');
   cell('num', fmtIsk(r.iskTied), r.iskTied.toFixed(2));
+  ordDiagCells(tr, r, cell);
   return tr;
 }
 
@@ -2715,6 +2815,448 @@ function restoreOrders(){
   state.orders.fetched = saved.fetched || null;
 }
 
+/* ---------- the relist (order-modification) fee — UNVERIFIED ------------------------
+   EVE charges a broker fee to MODIFY an open order's price, and the Advanced Broker
+   Relations skill reduces it. I have NO client-verified formula for that charge, so it
+   is not asserted as one. It is modelled here as the same broker % this page already
+   computes, reduced by RELIST_ADV_BROKER_REL_PER_LEVEL per level of Advanced Broker
+   Relations (resolved by NAME through the skills machinery, never by a hardcoded id):
+
+       relist %   = broker % × (1 − 0.05 × Advanced Broker Relations)
+       relist fee = max(100 ISK, relist % × units × the new price)
+
+   Following the precedent set by the broker-fee work: the number is a named constant
+   with this comment on it, the resulting % is shown in the UI, it is hand-editable, the
+   note next to it asks you to check it against your own client's modify-order dialog,
+   and your correction is persisted and used everywhere instead. */
+const RELIST_ADV_BROKER_REL_PER_LEVEL = 0.05;   // UNVERIFIED — see above
+const ADV_BROKER_SKILL = 'Advanced Broker Relations';
+const ADV_BROKER_KEY = 'eveHelper.advBrokerSkill.v1';
+let relistOverride = null;    // the hand-typed %, or null = use the computed one
+let advBrokerLevel = null;    // null = not resolved yet (treated as 0, and said so)
+
+async function resolveAdvBroker(){
+  if (!window.EveAuth || !EveAuth.isLoggedIn()) return;
+  let id = null;
+  try{ id = JSON.parse(localStorage.getItem(ADV_BROKER_KEY) || 'null'); }catch(_e){}
+  if (!Number.isFinite(id)){
+    try{
+      // the same /universe/ids resolver the item names go through — skills are types too
+      id = (await resolveTypeIds([ADV_BROKER_SKILL])).get(ADV_BROKER_SKILL.toLowerCase()) ?? null;
+      if (id != null) localStorage.setItem(ADV_BROKER_KEY, JSON.stringify(id));
+    }catch(_e){ return; }
+  }
+  const all = EveAuth.allSkills ? EveAuth.allSkills() : null;
+  if (id == null || !all) return;    // skills predate the full-list fetch — topbar ↻ fixes it
+  advBrokerLevel = all[id] || 0;
+  syncRelist();
+  ordRecompute();
+}
+
+const relistComputedPct = () =>
+  feePct('brokerFee') * 100 * (1 - RELIST_ADV_BROKER_REL_PER_LEVEL * (advBrokerLevel || 0));
+function relistPctEffective(){
+  const v = relistOverride != null ? Number(relistOverride) : NaN;
+  return Number.isFinite(v) && v >= 0 && v <= 100 ? v : relistComputedPct();
+}
+function syncRelist(){
+  const box = $('relistPct');
+  if (document.activeElement !== box) box.value = relistPctEffective().toFixed(2);
+  $('relistReset').disabled = relistOverride == null;
+  $('relistSrc').textContent = relistOverride != null
+    ? 'your number, saved and used for every reprice below. Neither this nor the computed value is '
+      + 'verified against the client — yours at least came from one.'
+    : `UNVERIFIED — modelled as the ${(feePct('brokerFee') * 100).toFixed(2)}% broker fee from the fees box, `
+      + `reduced by 5%/level of ${ADV_BROKER_SKILL} (`
+      + (advBrokerLevel == null ? 'level not read yet — assumed 0' : 'level ' + advBrokerLevel)
+      + "). CCP does not publish the modify-order formula: open the modify dialog in your client, "
+      + 'compare, and type the real number here.';
+}
+function syncOrdPatience(){
+  const pat = PATIENCE[state.patience] || PATIENCE.balanced;
+  for (const b of document.querySelectorAll('#ordPatRush,#ordPatBalanced,#ordPatPatient'))
+    b.setAttribute('aria-pressed', String(b.dataset.pat === state.patience));
+  $('ordPatNote').textContent = `${pat.days}-day window · under a `
+    + `${Math.round(pat.minFill * 100)}% chance of filling in it, an order counts as stalled`;
+}
+
+/* ---------- the diagnosis: fetch phase ---------------------------------------------
+   Every sell order needs the book at ITS location and that type's history. Orders are
+   grouped BY LOCATION first, so a player structure's whole book is pulled once no matter
+   how many orders sit in it, and history already pulled by the Sell mode for the same
+   region is reused rather than refetched. Everything goes through esiFetch, so the
+   error-limit and retry handling is the same one the price fetch uses. */
+async function diagnoseOrders(){
+  state.ordFailedBooks = 0;
+  state.ordBooks = new Map();
+  state.ordHist = new Map();
+  state.ordEnt = new Map();
+  state.ordNotes = new Map();     // locationId -> why its book could not be fetched
+  const sells = state.orders.list.filter(o => !o.isBuy);
+  if (!sells.length){ computeDiag(); return; }
+  const status = $('ordStatus'), bar = $('ordBar'), fill = $('ordFill');
+  // reuse what the Sell mode already fetched for the same region
+  for (const e of state.esi.values())
+    if (e && e.hist && e.hist.length && e.typeId != null && e.region != null)
+      state.ordHist.set(e.typeId + '@' + e.region, e.hist);
+
+  const byLoc = new Map();
+  for (const o of sells){
+    let g = byLoc.get(o.locationId);
+    if (!g) byLoc.set(o.locationId, g = { id: o.locationId, types: new Set(), regionId: o.regionId ?? null });
+    g.types.add(o.typeId);
+    if (g.regionId == null) g.regionId = o.regionId ?? null;
+  }
+
+  bar.hidden = false; fill.classList.add('ind');
+  const jobs = [];
+  for (const g of byLoc.values()){
+    const loc = state.orders.locs[g.id] || {};
+    const h = { label: loc.name || String(g.id), region: g.regionId ?? loc.regionId ?? null,
+                system: loc.systemId ?? null };
+    if (isStructureId(g.id)) h.structure = g.id; else h.station = g.id;
+    if (h.region == null){
+      state.ordNotes.set(g.id, 'no region is known for this location, so its order book cannot be fetched');
+      continue;
+    }
+    let sb = null;
+    if (h.structure){
+      // the structure-market path: a structure's sell side is only in its own book
+      if (!window.EveAuth || !EveAuth.isLoggedIn() || !EveAuth.tokenScopes().includes(STRUCTURE_MARKET_SCOPE)){
+        state.ordNotes.set(g.id, 'player structure — ' + scopeHelp([STRUCTURE_MARKET_SCOPE]));
+        continue;
+      }
+      status.textContent = `fetching ${h.label} order book…`;
+      try{ sb = (await fetchStructureBook(h, fill, status)).byType; }
+      catch(e){
+        state.ordNotes.set(g.id, /HTTP 403/.test(e.message)
+          ? 'the active character has no market access at this structure'
+          : 'the structure order book is unavailable: ' + e.message);
+        continue;
+      }
+      fill.classList.add('ind');
+    }
+    for (const typeId of g.types) jobs.push({ h, sb, typeId, locId: g.id });
+  }
+
+  const total = jobs.length;
+  let done = 0, failed = 0;
+  fill.classList.remove('ind'); fill.style.width = '0%';
+  const workers = Array.from({ length: 6 }, async () => {
+    for (;;){
+      const j = jobs.shift();
+      if (!j) return;
+      try{ state.ordBooks.set(j.locId + ':' + j.typeId, await fetchBook(j.typeId, j.h, j.sb)); }
+      catch(_e){ failed++; state.ordBooks.set(j.locId + ':' + j.typeId, null); }
+      const hk = j.typeId + '@' + j.h.region;
+      if (!state.ordHist.has(hk)){
+        try{ state.ordHist.set(hk, await fetchHistory(j.typeId, j.h)); }
+        catch(_e){ state.ordHist.set(hk, null); }   // some types carry no history at all
+      }
+      done++;
+      fill.style.width = Math.round(done / Math.max(total, 1) * 100) + '%';
+      status.textContent = `diagnosing… ${done}/${total} books${failed ? ` (${failed} failed)` : ''}`;
+    }
+  });
+  await Promise.all(workers);
+  state.ordFailedBooks = failed;
+  computeDiag();
+}
+
+/* ---------- the diagnosis: compute phase (no network, so it re-runs on any control) --- */
+// a listing this likely to fill is not "stalled" whatever the trend is doing
+const ORD_COMFORT_CHANCE = 0.9;
+
+// the pseudo-entry the decision-layer helpers memoize on (_asc/_trend/_hit live here)
+function ordEntry(o){
+  const k = o.typeId + '@' + o.regionId;
+  if (!state.ordEnt) state.ordEnt = new Map();
+  if (state.ordEnt.has(k)) return state.ordEnt.get(k);
+  const hist = state.ordHist ? state.ordHist.get(k) : null;
+  const e = (hist && hist.length) ? { hist, typeId: o.typeId } : null;
+  state.ordEnt.set(k, e);
+  return e;
+}
+
+function ownVolumesAt(typeId, locationId){
+  const m = new Map();
+  for (const o of state.orders.list){
+    if (o.isBuy || o.typeId !== typeId || o.locationId !== locationId) continue;
+    m.set(o.price, (m.get(o.price) || 0) + o.volumeRemain);
+  }
+  return m;
+}
+/* The sell book at a location with YOUR OWN units taken back out, level by level.
+   Your order is a public sell order like any other, so it IS in the book that was just
+   fetched — and counting it makes every number wrong in the same direction: the queue
+   ahead of you gains your own stack, and if you happen to be the cheapest, "the best
+   sell" is your own price and you look like you are undercutting yourself. The levels
+   carry no order ids, so own volume is matched by price, and several of your own orders
+   at one price are deducted together. */
+function competitorSells(levels, own){
+  const left = new Map(own);
+  const out = [];
+  for (const lv of levels || []){
+    let v = lv.v;
+    const mine = left.get(lv.p) || 0;
+    if (mine > 0){ const take = Math.min(mine, v); left.set(lv.p, mine - take); v -= take; }
+    if (v > 0) out.push({ p: lv.p, v });
+  }
+  return out;
+}
+const queueAtOrBelow = (levels, price) =>
+  levels.reduce((t, lv) => lv.p <= price * (1 + 1e-9) ? t + lv.v : t, 0);
+
+function computeDiag(){
+  const cfg = {
+    tax: feePct('salesTax'),
+    relistFrac: relistPctEffective() / 100,
+    pat: PATIENCE[state.patience] || PATIENCE.balanced,
+    histDays: currentHistDays(),
+    useUndercut: $('undercut').checked,
+  };
+  const diag = {};
+  for (const o of state.orders.list) if (!o.isBuy) diag[o.orderId] = diagnoseOne(o, cfg);
+  state.orders.diag = diag;
+}
+
+function diagnoseOne(o, cfg){
+  const d = { stalled: false, reasons: [], verdict: null, why: '',
+              note: (state.ordNotes && state.ordNotes.get(o.locationId)) || null };
+  const e = ordEntry(o);
+  d.histRows = e ? e.hist : null;
+  d.trendPctWk = e ? histTrend(e) : null;
+  d.dir = trendClass(d.trendPctWk);
+  d.volDay = e ? histVolOf(e.hist, cfg.histDays) : null;
+  const book = state.ordBooks ? state.ordBooks.get(o.locationId + ':' + o.typeId) : null;
+  if (!book){
+    d.why = d.note
+      ? 'No order book here: ' + d.note + '. Nothing below can be computed for this order.'
+      : (state.orders.fetched && state.ordBooks
+        ? 'The order book for this item at this location could not be fetched, so there is nothing to '
+          + 'compare your price against.'
+        : 'Fetch your orders to pull the book and history behind this row.');
+    return d;
+  }
+  const own = ownVolumesAt(o.typeId, o.locationId);
+  const comp = competitorSells(book.sellLevels, own);
+  d.bestOther = comp.length ? comp[0].p : null;
+  d.aboveBestPct = (d.bestOther != null && d.bestOther > 0)
+    ? (o.price - d.bestOther) / d.bestOther * 100 : null;
+  d.queueAhead = queueAtOrBelow(comp, o.price);
+  d.daysToFill = daysToFillAt(comp, o.price, d.volDay);
+
+  const daysLeft = (o.issuedMs != null && o.duration != null)
+    ? o.duration - (Date.now() - o.issuedMs) / 86400e3 : null;
+  d.daysLeft = daysLeft;
+  // the window that actually matters: your patience, or the life left on the order,
+  // whichever runs out first — waiting 30 days on an order that expires in 4 is fiction
+  d.window = Math.max(1, Math.round(daysLeft == null ? cfg.pat.days
+    : Math.min(cfg.pat.days, Math.max(daysLeft, 1))));
+  const hit = e ? hitRateCached(e, o.price, d.window) : null;
+  d.queueFactor = (hit && d.daysToFill != null) ? Math.min(1, d.window / Math.max(d.daysToFill, 0.5)) : 1;
+  d.chance = hit ? hit.p * d.queueFactor : null;
+  d.hitRaw = hit ? hit.raw : null;
+  d.hitBasis = hit ? hit.basis : null;
+
+  const q = o.volumeRemain, tax = cfg.tax;
+  const dumpWalk = walkBook(book.buyLevels, q, null);
+  d.dumpFilled = dumpWalk.filled;
+  d.dumpNow = dumpWalk.proceeds * (1 - tax);
+  d.decay = d.trendPctWk == null ? 1
+    : Math.max(0.2, Math.min(3, Math.pow(Math.max(0.01, 1 + d.trendPctWk / 100), d.window / 7)));
+  d.giveUp = d.dumpNow * d.decay;     // dumping it at the END of the window instead of now
+
+  if (d.chance == null){
+    d.why = 'No price history for this item in this region, so there are no odds behind anything here — '
+      + 'the queue ahead of you and the live book are all this row can honestly tell you.';
+    return d;
+  }
+
+  /* Three futures over the days that are left, all net of sales tax. NONE of them is
+     charged the broker fee that put this order up: that ISK left your wallet when the
+     order went up and is never coming back whatever you do now. Charging it against
+     CANCEL & DUMP is the classic way to talk yourself into keeping a dead order ("I
+     already paid for this listing"), and it is exactly backwards — a sunk cost cannot
+     be recovered by waiting. The only fee anywhere below is the RELIST fee, because
+     that one is a payment you have not made yet. */
+  d.valueHold = d.chance * q * o.price * (1 - tax) + (1 - d.chance) * d.giveUp;
+  d.valueDump = d.dumpNow;
+
+  d.repricePrice = (d.bestOther != null && d.bestOther < o.price)
+    ? (cfg.useUndercut ? undercut(d.bestOther) : d.bestOther) : null;
+  if (d.repricePrice != null){
+    d.queueAtReprice = queueAtOrBelow(comp, d.repricePrice);
+    d.daysToFillReprice = daysToFillAt(comp, d.repricePrice, d.volDay);
+    const hitX = hitRateCached(e, d.repricePrice, d.window);
+    const qfX = (hitX && d.daysToFillReprice != null)
+      ? Math.min(1, d.window / Math.max(d.daysToFillReprice, 0.5)) : 1;
+    d.chanceReprice = hitX ? hitX.p * qfX : null;
+    d.relistFee = brokerOn(q * d.repricePrice, cfg.relistFrac);
+    d.valueReprice = d.chanceReprice == null ? null
+      : d.chanceReprice * q * d.repricePrice * (1 - tax) + (1 - d.chanceReprice) * d.giveUp - d.relistFee;
+  }
+
+  if (d.chance < cfg.pat.minFill)
+    d.reasons.push(`only a ${Math.round(d.chance * 100)}% chance of filling at ${fmtIsk(o.price)} in the `
+      + `${d.window} days that count (your "${cfg.pat.label}" floor is ${Math.round(cfg.pat.minFill * 100)}%)`);
+  if (d.daysToFill != null && daysLeft != null && d.daysToFill > daysLeft)
+    d.reasons.push(`${fmt.format(Math.round(d.queueAhead))} units are queued at or below your price — about `
+      + `${fmtDays(d.daysToFill)} days to clear, and this order expires in ${fmtDays(daysLeft)}`);
+  if (d.dir === 'falling' && d.aboveBestPct != null && d.aboveBestPct > 0 && d.chance < ORD_COMFORT_CHANCE)
+    d.reasons.push(`you are ${d.aboveBestPct.toFixed(1)}% above the best sell here on a market sliding `
+      + `${Math.abs(d.trendPctWk).toFixed(1)}%/week, so the gap only widens`);
+  d.stalled = d.reasons.length > 0;
+
+  /* A tie goes to the option that FREES THE MARKET SLOT. Slots, not ISK, are what runs
+     out here, and the Sell mode already applies exactly this rule the other way round —
+     a listing has to strictly beat selling now to be worth the slot it would occupy. So
+     continuing to sit on a slot (hold, and even more so reprice, which also pays a fee)
+     has to be strictly better, not merely equal: with a 0% chance and a flat market,
+     holding and dumping are worth the same ISK, and the one that hands you the slot back
+     is the better deal. */
+  const FREES_SLOT_FIRST = { dump: 0, hold: 1, reprice: 2 };
+  const opts = [{ k: 'hold', v: d.valueHold }, { k: 'dump', v: d.valueDump }];
+  if (d.valueReprice != null) opts.push({ k: 'reprice', v: d.valueReprice });
+  opts.sort((a, b) => (b.v - a.v) || (FREES_SLOT_FIRST[a.k] - FREES_SLOT_FIRST[b.k]));
+  d.verdict = opts[0].k;
+  d.verdictValue = opts[0].v;
+  d.why = verdictWhy(o, d, cfg);
+  return d;
+}
+
+function verdictWhy(o, d, cfg){
+  const q = o.volumeRemain, tax = cfg.tax;
+  const pc = x => Math.round(x * 100) + '%';
+  const out = [];
+  out.push(d.verdict === 'hold' ? `HOLD — leave it up.`
+    : d.verdict === 'reprice' ? `REPRICE to ${fmtIsk(d.repricePrice)}.`
+    : `CANCEL & DUMP — take what the buy book pays today.`);
+  out.push(`Hold = ${fmtIsk(d.valueHold)} ISK: ${pc(d.chance)} × ${fmt.format(q)} × ${fmtIsk(o.price)} `
+    + `less ${(tax * 100).toFixed(2)}% tax = ${fmtIsk(d.chance * q * o.price * (1 - tax))}, plus `
+    + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} for dumping it at the end of the ${d.window} days`
+    + (Math.abs(d.decay - 1) > 0.005
+      ? ` (today's ${fmtIsk(d.dumpNow)} carried ${pctSigned((d.decay - 1) * 100)} by the trend)` : '')
+    + `.`);
+  if (d.valueReprice != null)
+    out.push(`Reprice = ${fmtIsk(d.valueReprice)} ISK: at ${fmtIsk(d.repricePrice)} the chance is `
+      + `${pc(d.chanceReprice)}, worth ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} plus `
+      + `${pc(1 - d.chanceReprice)} × ${fmtIsk(d.giveUp)}, minus the ${fmtIsk(d.relistFee)} ISK relist fee `
+      + `(${relistPctEffective().toFixed(2)}%, unverified — see the note above the table).`);
+  else if (d.bestOther == null)
+    out.push('Nothing else is listed here, so there is no competitive price to move to.');
+  else
+    out.push(`You are already at or under the best competing sell (${fmtIsk(d.bestOther)}), so there is `
+      + 'nothing to reprice to.');
+  out.push(`Cancel & dump = ${fmtIsk(d.valueDump)} ISK: what the buy book pays for `
+    + `${fmt.format(d.dumpFilled)}${d.dumpFilled < q ? ' of the ' + fmt.format(q) : ''} units right now, `
+    + `after tax. The broker fee you paid to put this order up is SUNK — it is not charged against any `
+    + `of the three, and least of all against cancelling.`);
+  if (d.stalled) out.push('Stalled: ' + d.reasons.join('; ') + '.');
+  return out.join(' ');
+}
+
+function ordRecompute(){
+  if (!state.orders.list.length) return;
+  computeDiag();
+  if (state.mode === 'orders') renderOrders();
+}
+
+/* ---------- the diagnosis cells ---------- */
+const VERDICT_LABEL = { hold: 'HOLD', reprice: 'REPRICE', dump: 'CANCEL & DUMP' };
+const VERDICT_CLASS = { hold: 'hold', reprice: 'reprice', dump: 'dump' };
+
+function ordDiagCells(tr, r, cell){
+  if (r.isBuy){
+    const t = 'buy orders are not triaged here — the sell-side arithmetic does not apply to them';
+    for (let i = 0; i < 5; i++) cell('num', '—', '', t);
+    cell('', '—', '', t);
+    cell('', '—', '', t);
+    return;
+  }
+  cell('num', r.queueAhead == null ? '—' : fmt.format(Math.round(r.queueAhead)),
+    r.queueAhead == null ? '' : String(Math.round(r.queueAhead)),
+    r.queueAhead == null ? (r.why || '') : 'units listed at or below your price here, your own excluded');
+  cell('num' + (r.aboveBestPct > 0 ? ' neg' : r.aboveBestPct < 0 ? ' pos' : ''),
+    r.aboveBestPct == null ? '—' : pctSigned(r.aboveBestPct),
+    r.aboveBestPct == null ? '' : r.aboveBestPct.toFixed(2),
+    r.bestOther == null ? 'nothing else is listed here' : 'best competing sell ' + fmtIsk(r.bestOther));
+  cell('num', r.daysToFill == null ? '—' : fmtDays(r.daysToFill),
+    r.daysToFill == null ? '' : r.daysToFill.toFixed(2),
+    r.daysToFill == null ? 'no queue or no traded volume to divide by'
+      : `${fmt.format(Math.round(r.queueAhead))} units ahead of you ÷ ${fmt.format(r.volDay)} units traded per day `
+        + '(regional, both sides — optimistic)');
+  cell('num' + (r.trendPctWk > 0 ? ' pos' : r.trendPctWk < 0 ? ' neg' : ''),
+    r.trendPctWk == null ? '—' : pctSigned(r.trendPctWk),
+    r.trendPctWk == null ? '' : r.trendPctWk.toFixed(2),
+    r.trendPctWk == null ? 'no price history for this item' : 'Theil–Sen slope over the last 30 days (' + r.dir + ')');
+  cell('num', r.chance == null ? '—' : Math.round(r.chance * 100) + '%',
+    r.chance == null ? '' : (r.chance * 100).toFixed(1), r.why || '');
+  const st = cell('stalledcell', r.chance == null && !r.stalled ? '—' : (r.stalled ? 'yes' : 'no'),
+    '', r.stalled ? '' : (r.why || ''));
+  if (r.stalled){
+    st.textContent = '';
+    const b = document.createElement('b');
+    b.style.color = 'var(--red)';
+    b.textContent = 'yes';
+    const s = document.createElement('span');
+    s.className = 'hint';
+    s.style.display = 'block';
+    s.textContent = r.reasons.join(' · ');
+    st.append(b, s);
+  }
+  const vd = cell('', '', '', r.why || '');
+  if (r.verdict){
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + VERDICT_CLASS[r.verdict];
+    badge.textContent = VERDICT_LABEL[r.verdict];
+    badge.title = r.why;
+    vd.dataset.copy = VERDICT_LABEL[r.verdict];
+    vd.appendChild(badge);
+    if (r.verdict === 'reprice'){
+      const s = document.createElement('span');
+      s.className = 'hint';
+      s.style.marginLeft = '6px';
+      s.textContent = `→ ${fmtIsk(r.repricePrice)} · fee ${fmtIsk(r.relistFee)}`;
+      vd.appendChild(s);
+    }
+  } else {
+    vd.textContent = '—';
+    vd.className = 'hint';
+  }
+}
+
+/* the sparkline, reused from the Sell table, with a marker at YOUR price */
+function ordSparkCell(r){
+  const td = document.createElement('td');
+  td.className = 'spark';
+  const svg = r.histRows && r.histRows.length ? buildSparkline({
+    name: r.name, histRows: r.histRows, dir: r.dir, trendPctWk: r.trendPctWk,
+    bestSell: r.bestOther ?? null, yourPrice: r.price,
+    repriceTo: r.verdict === 'reprice' ? r.repricePrice : null,
+  }, false) : null;
+  if (svg){ td.appendChild(svg); td.dataset.spark = 'ready'; }
+  else {
+    td.textContent = '—';
+    td.title = 'no price history for this item in this region';
+    td.dataset.spark = 'none';
+  }
+  return td;
+}
+
+function renderOrdTriageStats(box, sells, mk){
+  const stalled = sells.filter(r => r.stalled);
+  if (!stalled.length && !sells.some(r => r.verdict)) return;
+  const frozen = stalled.reduce((t, r) => t + r.iskTied, 0);
+  const recover = stalled.reduce((t, r) => t + (r.dumpNow || 0), 0);
+  mk('stalled', `${stalled.length} order${stalled.length === 1 ? '' : 's'} · ${fmtIsk(frozen)} ISK frozen`,
+    'orders whose odds are under your patience floor, whose queue cannot clear before they expire, or '
+    + 'that sit above the best sell on a falling market');
+  mk('recoverable now by dumping', fmtIsk(recover) + ' ISK',
+    'what the buy book would actually pay for those units today, walked depth-first and after sales tax — '
+    + 'the broker fee already spent on those orders is sunk and is not counted against this');
+}
+
 /* ---------- the mode switcher ----------
    A pure view swap: the CSS shows one mode's sections, no state is touched, and both
    modes keep rendering underneath so switching is instant. */
@@ -2730,6 +3272,22 @@ function applyMode(){
   $('modeSell').setAttribute('aria-pressed', String(state.mode === 'sell'));
   $('modeOrders').setAttribute('aria-pressed', String(state.mode === 'orders'));
 }
+for (const b of document.querySelectorAll('#ordPatRush,#ordPatBalanced,#ordPatPatient'))
+  b.addEventListener('click', () => {
+    // one source of truth: the Sell mode's radios. Ticking one and re-running rebuild()
+    // re-reads state.patience exactly as clicking it over there would.
+    $('pat' + b.dataset.pat[0].toUpperCase() + b.dataset.pat.slice(1)).checked = true;
+    rebuild();
+    ordRecompute();
+  });
+$('relistPct').addEventListener('change', () => {
+  const txt = $('relistPct').value.trim();
+  relistOverride = txt === '' ? null : txt;
+  syncRelist(); ordRecompute(); persist();
+});
+$('relistReset').addEventListener('click', () => {
+  relistOverride = null; syncRelist(); ordRecompute(); persist();
+});
 $('modeSell').addEventListener('click', () => setMode('sell'));
 $('modeOrders').addEventListener('click', () => setMode('orders'));
 $('btnOrders').addEventListener('click', runOrders);
@@ -2738,6 +3296,7 @@ $('ordFilter').addEventListener('input', () => { state.ordFilter = $('ordFilter'
 document.querySelectorAll('#ordTbl thead th').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.key;
+    if (!k) return;                       // the History column is a picture, not a value
     if (state.ordSortKey === k) state.ordSortDir *= -1;
     else { state.ordSortKey = k; state.ordSortDir = -1; }
     renderOrders();
@@ -2753,7 +3312,10 @@ $('ordBody').addEventListener('click', e => {
   if (!text || text === '—') return;
   cellCopy(text, td);
 });
-if (window.EveAuth) EveAuth.onChange(() => { if (state.mode === 'orders') renderOrders(); });
+if (window.EveAuth) EveAuth.onChange(() => {
+  resolveAdvBroker();
+  if (state.mode === 'orders') renderOrders();
+});
 
 /* ---------- persistence ---------- */
 function persist(){
@@ -2769,7 +3331,7 @@ function persist(){
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
       patience: state.patience,
-      mode: state.mode, ordShowBuy: state.ordShowBuy,
+      mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ticked: state.rows.filter(r => r.checked).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
@@ -2804,6 +3366,7 @@ function restore(){
   if (saved.histMode) $('histMode').value = saved.histMode;
   if (saved.histDays) $('histDays').value = saved.histDays;
   if (saved.mode === 'sell' || saved.mode === 'orders') state.mode = saved.mode;
+  relistOverride = saved.relistPct != null ? String(saved.relistPct) : null;
   state.ordShowBuy = !!saved.ordShowBuy;
   $('ordShowBuy').checked = state.ordShowBuy;
   if (PATIENCE[saved.patience]) state.patience = saved.patience;
@@ -2860,7 +3423,8 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
 $('inv').addEventListener('input', () => rebuild());
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays',
                   'patRush', 'patBalanced', 'patPatient'])
-  $(id).addEventListener('change', () => rebuild());   // patience re-ranks locally, no refetch
+  // patience, fees and the history window re-rank BOTH modes locally, with no refetch
+  $(id).addEventListener('change', () => { rebuild(); ordRecompute(); });
 $('topN').addEventListener('change', persist);
 
 $('market').addEventListener('change', () => {
@@ -2970,6 +3534,10 @@ $('tblBody').addEventListener('click', e => {
 });
 
 restoreOrders();                  // the last order pull, so the mode is not empty on a reload
+if (state.orders.fetched){
+  $('ordStatus').textContent = `${state.orders.list.length} order${state.orders.list.length === 1 ? '' : 's'} `
+    + `from ${new Date(state.orders.fetched).toLocaleString()} — fetch again for prices, odds and verdicts`;
+}
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 applyMode();
 renderOrders();
