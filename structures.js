@@ -578,10 +578,11 @@
         // #topbar is 20), so "log in first" with no login control is a dead end — offer
         // the action here, the same way the missing-scopes branch offers the panel
         msg.className = 'msg err';
-        msg.textContent = 'log in with EVE first — the search runs as your character: ';
+        msg.textContent = 'log in with EVE first — the search runs as your character.';
         const link = document.createElement('span');
         link.className = 'evePermLink';
         link.id = 'structLogin';
+        link.style.cssText = 'display:inline-block;margin-top:6px';
         link.textContent = 'log in with EVE';
         link.title = 'starts the EVE SSO login — the picker closes first, since it covers the topbar button';
         link.addEventListener('click', () => {
@@ -655,8 +656,10 @@
         // literally nothing (title, blank strip, search box) tells them neither that the
         // list is empty nor where structures are managed — so say both, and keep the
         // footer link, which used to disappear with the list
-        if (list.length) for (const s of saved()) rows.appendChild(rowEl(s));
-        else {
+        if (list.length){
+          savedBox.appendChild(cap);           // a "saved" heading over "none yet" says nothing
+          for (const s of saved()) rows.appendChild(rowEl(s));
+        } else {
           const none = document.createElement('div');
           none.className = 'msg';
           none.id = 'structNone';
@@ -671,7 +674,7 @@
         link.textContent = 'manage structures →';
         link.title = 'the Structure Manager — rename, edit or remove a structure in one place';
         foot.appendChild(link);
-        savedBox.append(cap, rows, foot);
+        savedBox.append(rows, foot);
       }
       renderSaved();
 
