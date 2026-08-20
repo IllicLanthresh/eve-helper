@@ -67,7 +67,7 @@
   .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
   .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
   .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
-  .flag{display:inline-block;font-size:11px;color:var(--red);margin-right:6px}
+  .flag{display:inline-block;font-size:11px;color:var(--red);margin-right:6px;cursor:help}
   .flag.warn{color:var(--amber)}
   .flag.info{color:var(--dim)}
   tr.excluded td{opacity:.45}
@@ -135,6 +135,19 @@
   code{font-family:var(--mono);background:#1a2233;padding:1px 5px;border-radius:4px;font-size:12px}
   details{margin-top:10px;color:var(--dim);font-size:13px}
   details summary{cursor:pointer;color:var(--text)}
+  /* section help: the one-line fact stays on screen, the long form hides behind a ?
+     that is CLOSED by default. Long-form reference lives in the README. */
+  details.help{display:inline-block;margin:0 0 0 6px;vertical-align:baseline;font-size:12px}
+  details.help>summary{list-style:none;display:inline-block;min-width:16px;height:16px;line-height:14px;
+    text-align:center;border:1px solid var(--line);border-radius:9px;color:var(--dim);font-size:11px;
+    cursor:pointer;user-select:none;padding:0 4px}
+  details.help>summary::-webkit-details-marker{display:none}
+  details.help>summary:hover{color:var(--text);border-color:var(--cyan)}
+  details.help[open]>summary{color:var(--cyan);border-color:var(--cyan)}
+  details.help .helpbody{display:block;margin:8px 0 0;color:var(--dim);font-size:12px;
+    max-width:960px;line-height:1.5}
+  details.help .helpbody code{font-size:11px}
+  .subhead{margin:4px 0 0;color:var(--dim);font-size:13px}
   #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)}
   @media (max-width:760px){ td.name{max-width:170px} }
@@ -150,22 +163,21 @@
 </nav>
 <header>
   <h1>Sell Helper</h1>
-  <p class="sell-only">Paste your inventory, pick a trade hub, and pull live prices straight from ESI (no login).
-     Every item is valued against the actual buy-order book — depth, min-volume scams and all — and
-     against the two ways of listing it, priced with the fee you pay <i>up front</i> and the odds
-     that the order ever fills. The recommendation is an action: sell it now, list it, or list it
-     patiently — ranked by expected ISK per market-slot-day, because slots are what you run out of.</p>
-  <p class="orders-only">The orders you already have, pulled from ESI for every logged-in character, and
-     judged against the same numbers the Sell mode uses: how many units are queued ahead of you at your
-     price, how long that queue takes to clear, which way the price is going, and what the odds of
-     filling actually are. Every stalled order gets a verdict — hold it, reprice it, or cancel and dump
-     it — with the arithmetic behind it one hover away.</p>
+  <div class="subhead sell-only">inventory → ESI prices → INSTANT / LIST / LIST-PATIENT · ranked by ISK/slot-day<details
+    class="help"><summary>?</summary><span class="helpbody">Paste an inventory, pick a hub, pull live prices from ESI (public, no login).
+    Each item is valued against the real buy-order book (depth and <code>min_volume</code> scams respected) and against
+    both ways of listing it, priced with the broker fee you pay up front and the odds the order ever fills.
+    Ranking is expected ISK per market-slot-day: slots are the scarce resource. Long-form reference: README.</span></details></div>
+  <div class="subhead orders-only">open orders per character · queue · fill odds · trend → HOLD / REPRICE / CANCEL &amp; DUMP<details
+    class="help"><summary>?</summary><span class="helpbody">Every logged-in character's open orders from ESI, judged with the Sell mode's
+    numbers: units queued ahead of you at your price, days for that queue to clear, the item's trend, and the odds of
+    filling. Stalled orders get a verdict; the arithmetic is on the badge's tooltip. Long-form reference: README.</span></details></div>
   <div class="rowline" id="modeRow">
     <span class="seg" role="group" aria-label="page mode">
       <button id="modeSell" type="button" aria-pressed="true"
-        title="paste a hangar, price it, decide what to list — everything this page has always done">Sell loot</button>
+        title="paste a hangar · price it · decide what to list">Sell loot</button>
       <button id="modeOrders" type="button" aria-pressed="false"
-        title="the orders already on the market: queue position, fill odds, and hold / reprice / dump">My orders</button>
+        title="orders already up: queue · fill odds · hold / reprice / dump">My orders</button>
     </span>
   </div>
 </header>
@@ -173,17 +185,17 @@
 
 <section class="sell-only">
   <h2>1 · Input &amp; prices</h2>
-  <label for="inv">Inventory paste (select items in a hangar or container → Ctrl-C)</label>
+  <label for="inv">Inventory paste — hangar or container, Ctrl-C</label>
   <textarea id="inv" spellcheck="false" placeholder="Item Name&#9;Qty&#9;Group&#9;…&#9;Volume&#9;Est. price"></textarea>
   <div class="rowline">
-    <button id="btnDemo" type="button">Load sample data</button>
+    <button id="btnDemo" type="button" title="load a sample hangar paste">Sample</button>
     <button id="btnClear" type="button">Clear</button>
     <span class="sep"></span>
     <label for="market" style="margin:0">market</label>
     <select id="market" style="width:210px"></select>
     <a href="structures.html" id="manageStructs" class="hint" hidden
-      title="the Structure Manager — one record per structure: owner-set broker rate, tax, rigs, notes">manage structures</a>
-    <button id="btnEsi" type="button" class="primary">Fetch prices (ESI)</button>
+      title="Structure Manager&#10;one record per structure: broker rate · tax · rigs · notes">structures ↗</a>
+    <button id="btnEsi" type="button" class="primary" title="pull books + history from ESI (public, no login)">Fetch prices</button>
     <span id="esiStatus"></span>
   </div>
   <div id="fetchBar" hidden><div id="fetchFill"></div></div>
@@ -204,7 +216,7 @@
       <legend>history reference</legend>
       <div class="grow">
         <label style="margin:0"><input type="checkbox" id="histOn" checked> fetch history</label>
-        <select id="histMode" style="width:100px" title="statistic over the region's daily average prices — this is the PATIENT price the decision layer values and tests against history">
+        <select id="histMode" style="width:100px" title="statistic over the region's daily average prices&#10;this is the PATIENT price the decision layer values">
           <option value="median">median</option>
           <option value="avg">average</option>
           <option value="p10">p10</option>
@@ -212,111 +224,106 @@
         </select>
         <label for="histDays" style="margin:0">of last</label>
         <input id="histDays" type="number" min="1" max="400" step="1" value="30" style="width:60px"
-          title="day range for the statistic — recomputed locally, no refetch needed">
+          title="day range for the statistic&#10;recomputed locally — no refetch">
         <label style="margin:0">days</label>
       </div>
-      <div class="hint" style="margin-top:4px">the patient list price, the Hist column, ≫/≪ flags and fallback prices
+      <div class="hint" style="margin-top:4px" title="fed by this statistic:&#10;patient price · Hist column · ≫/≪ flags · fallback prices">feeds: patient price · Hist · ≫/≪ · fallbacks
         <span id="histNote" style="color:var(--amber)"></span></div>
     </fieldset>
     <fieldset class="grp">
       <legend>order list price L</legend>
       <div class="grow">
         <label style="margin:0"><input type="radio" name="psrc" id="srcSell" value="sell" checked> current best sell</label>
-        <label style="margin:0 0 0 6px" title="undercut the current best sell by one tick — applies whenever an item's list price comes from the current sell, including history-reference items that have no history"><input type="checkbox" id="undercut"> −1 tick</label>
+        <label style="margin:0 0 0 6px" title="undercut best sell by one tick&#10;applies wherever L comes from the current sell, history fallbacks included"><input type="checkbox" id="undercut"> −1 tick</label>
       </div>
       <div class="grow" style="margin-top:4px">
         <label style="margin:0"><input type="radio" name="psrc" id="srcHist" value="hist"> history reference
-          <span id="srcHistEcho" class="hint" title="defined in the history reference group — click to edit"></span></label>
+          <span id="srcHistEcho" class="hint" title="set in the history reference group"></span></label>
       </div>
     </fieldset>
     <fieldset class="grp" id="patienceBox">
       <legend>patience</legend>
       <div class="grow">
         <span class="seg" role="radiogroup" aria-label="how long you are willing to wait">
-          <label title="7-day window — only list what history says fills fast; needs a high chance before an order is worth its broker fee"><input type="radio" name="patience" id="patRush" value="rush"><span>in a rush</span></label>
-          <label title="14-day window — the default"><input type="radio" name="patience" id="patBalanced" value="balanced" checked><span>balanced</span></label>
-          <label title="30-day window — happy to leave orders up for a month"><input type="radio" name="patience" id="patPatient" value="patient"><span>patient</span></label>
+          <label title="window: 7d&#10;floor: 75% chance"><input type="radio" name="patience" id="patRush" value="rush"><span>in a rush</span></label>
+          <label title="window: 14d&#10;floor: 55% chance&#10;default"><input type="radio" name="patience" id="patBalanced" value="balanced" checked><span>balanced</span></label>
+          <label title="window: 30d&#10;floor: 35% chance"><input type="radio" name="patience" id="patPatient" value="patient"><span>patient</span></label>
         </span>
       </div>
       <div class="hint" id="patNote" style="margin-top:4px"></div>
     </fieldset>
   </div>
-  <p class="hint" style="margin:8px 0 0">
-    Net — instant: <code>price × (1 − tax)</code> against real book depth · listed:
-    <code>qty × price × (1 − tax) − max(100 ISK, broker% × qty × price)</code>, and that broker fee is
-    charged when the order <b>goes up</b>, not when it fills — so a listing that never sells is a
-    straight loss. Importing at a price auto-fills any buy orders above it first (at their price), so
-    SPLIT plans execute themselves.</p>
+  <p class="hint" style="margin:8px 0 0">net instant <code>price × (1 − tax)</code> on real depth · net listed
+    <code>qty × price × (1 − tax) − max(100 ISK, broker% × qty × price)</code><details class="help"><summary>?</summary><span
+    class="helpbody">The broker fee is charged when the order <b>goes up</b>, not when it fills: a listing that never
+    sells is a straight loss. Importing at a price auto-fills any buy order above it first, at that order's own price,
+    so SPLIT plans execute themselves.</span></details></p>
 </section>
 
 <section class="sell-only">
-  <h2>2 · Check — unpriced &amp; not sellable</h2>
+  <h2>2 · Unpriced &amp; unsellable</h2>
   <div id="unpricedBox"><span class="hint">Nothing yet.</span></div>
   <details>
     <summary>Notes &amp; assumptions</summary>
     <ul class="plain">
-      <li>Instant valuation walks the real buy book top-down: order depth (<code>volume_remain</code>) and
-          <code>min_volume</code> (margin-scam bait) are respected, so one 1-unit buy order at a silly price
-          no longer values your whole stack.</li>
-      <li>SPLIT is computed from the instant side: a unit goes to the instant leg whenever its buy order pays
-          more after tax than listing it at <code>L</code> nets after tax + broker — i.e. buys down to
-          <code>L × (1−tax−broker)/(1−tax)</code> (≈ 0.977 × L at default fees). The leg appears in the instant
-          checklist (partial stack); the remainder is listed at <code>L</code> via the import. Importing the whole
-          stack at <code>L</code> without selling the leg first is safe too — buys ≥ <code>L</code> fill
-          automatically at their own price; you only lose the sliver between the two thresholds.</li>
-      <li>Order fills are not guaranteed — an order at a history-derived price may take days or never fill.
-          Relist fees from repricing are not modelled.</li>
-      <li>Price history is per <b>region</b> (ESI has no station-level history) using each day's average
-          price; the day range and statistic are applied locally, so changing them needs no refetch.</li>
-      <li>Vol/day is the mean of the region's daily traded units over the same "last N days" window as the
-          history statistic (buys and sells combined — no API has per-side <i>traded</i> volume). The Buy/Sell
-          depth columns are the live order book per side — outstanding orders right now, not traded volume.
-          Margin % is <code>(sell − buy) ÷ buy</code> (negative only in crossed markets, which are already
-          flagged). Sell/Hist % compares the live best sell to the history statistic — green above history,
-          red below.</li>
-      <li><b>Three real disposals per item</b>, each valued net of fees: <b>INSTANT</b> (dump into the buy
-          book — certain, and it uses no market slot), <b>LIST</b> at the competitive price, and
-          <b>LIST-PATIENT</b> at the history reference. A listing is worth
-          <code>p × (it fills) + (1 − p) × (you give up at the end of the window and dump it then, at a price
-          carried by the trend)</code> — and the broker fee is subtracted in <i>both</i> branches, because you
-          pay it to put the order up. That is why a decaying item stops being recommended for listing.</li>
-      <li><b>Chance %</b> is the empirical fill probability at the recommended price: over the last ~12 months,
-          the share of rolling windows (7 / 14 / 30 days, per the patience control) in which the daily high
-          reached that price — with every past day first carried to today's price level at the item's own
-          trend, and then tempered by how long the queue of cheaper sell orders already is. The carrying is
-          what separates a dip from a decay: on a sliding item the highs of last spring do not count as
-          evidence about next week. Below the patience mode's floor (75% / 55% / 35%) a listing is never
-          recommended — the broker fee would most likely be spent for nothing. Past behaviour is not a promise.</li>
-      <li><b>Fill est.</b> = units already listed at or below the recommended price ÷ Vol/day. Regional traded
-          volume mixes buy and sell sides and every station in the region, and your own stack is not counted in
-          the queue, so treat it as an optimistic order-of-magnitude number.</li>
-      <li><b>ISK/slot-day</b> = expected net ÷ expected days on the market. It is the ranking column because
-          market slots, not ISK, are what you run out of. INSTANT rows have no value here — they use no slot —
-          so they sort to the bottom of that column and live on the instant checklist instead.</li>
-      <li><span class="flag warn">suspect price</span> = top buy above best sell (thin/odd market) ·
-          <span class="flag warn">≫/≪ history</span> = current sell far from the history statistic ·
-          <span class="flag warn">depth x/y</span> = the buy book can only absorb x of your y units.</li>
-      <li><span class="flag warn">already listed here</span> = you already have an open sell order for this
-          item at this market (from the <b>My orders</b> mode's last pull). A second order competes with
-          your own, in the same queue, for a second broker fee.</li>
-      <li><span class="flag">unsellable?</span> = Ice Storm / Expired filaments the market won't accept;
-          auto-excluded from the export (you can re-tick them).</li>
-      <li>All ESI endpoints used are public — no login, nothing leaves your machine except the price queries.</li>
-      <li>Prices respect EVE's 4-significant-digit rule (undercut = one tick of the price's own band).</li>
+      <li><b>INSTANT</b> — walks the real buy book top-down; <code>volume_remain</code> and
+          <code>min_volume</code> (margin-scam bait) respected. Certain, no broker fee, no market slot.</li>
+      <li><b>LIST</b> at the competitive price <code>L</code> · <b>LIST-PATIENT</b> at the history
+          reference. Value = <code>p × (it fills) + (1 − p) × (dump at the end of the window, carried by
+          the trend)</code>; the broker fee is subtracted in <i>both</i> branches, which is why a decaying
+          item stops being recommended for listing.</li>
+      <li><b>SPLIT</b> — a unit goes instant when its buy order beats <code>L</code> after fees: buys down
+          to <code>L × (1−tax−broker)/(1−tax)</code> (≈ 0.977 <code>L</code> at default fees). Instant leg →
+          checklist, remainder → import. Importing the whole stack at <code>L</code> is safe too: buys ≥
+          <code>L</code> fill at their own price, and only the sliver between the two thresholds is lost.</li>
+      <li><b>Chance %</b> — share of past windows (7 / 14 / 30 d per patience, over ~12 months) whose daily
+          high reached the price, each past day first carried to today's price level at the item's own trend,
+          then tempered by the queue of cheaper sell orders. The carrying separates a dip from a decay.
+          Under the floor (75 / 55 / 35%) a listing is never recommended — the broker fee would most likely
+          be spent for nothing. Past behaviour, not a promise.</li>
+      <li><b>Fill est.</b> — units already listed at or below the price ÷ Vol/day. Regional volume mixes
+          both sides and every station, and your own stack is not counted in the queue: an optimistic
+          order of magnitude, not a forecast.</li>
+      <li><b>ISK/slot-day</b> — expected net ÷ expected days on the market. The ranking column, because
+          market slots run out before ISK does. INSTANT uses no slot, has no value here, and sorts to the
+          bottom of that column.</li>
+      <li><b>Vol/day</b> — mean regional units traded per day over the history window, buys and sells
+          combined (no API splits traded volume by side). <b>Buy/Sell depth</b> — the live book per side:
+          outstanding orders right now, not traded volume. <b>Margin %</b> = <code>(sell − buy) ÷ buy</code>,
+          negative only on a crossed market (already flagged). <b>Sell/Hist %</b> — live best sell vs the
+          history statistic: green above, red below.</li>
+      <li><b>History</b> is per <b>region</b> (ESI publishes none per station), on each day's average price.
+          Day range and statistic are applied locally — changing them needs no refetch.</li>
+      <li>Flags, hover any for its numbers: <span class="flag warn">▼x%/wk</span> falling trend ·
+          <span class="flag warn">suspect</span> top buy above best sell (thin/odd market) ·
+          <span class="flag warn">≫hist</span>/<span class="flag warn">≪hist</span> best sell far from the
+          history statistic · <span class="flag warn">depth x/y</span> the buy book absorbs x of your y
+          units · <span class="flag warn">minfee</span> the 100 ISK per-order floor beats the broker % ·
+          <span class="flag warn">dup×n</span> you already have n sell orders for this item here — same
+          queue, second broker fee, read from the <b>My orders</b> last pull ·
+          <span class="flag info">L=hist</span>/<span class="flag info">L=sell</span> the list price fell
+          back to the other source · <span class="flag info">&gt;best</span> <code>L</code> above the best
+          sell · <span class="flag info">no buy</span>/<span class="flag info">no sell</span> that side of
+          the book is empty · <span class="flag">unsellable</span> Ice Storm / Expired filaments the market
+          refuses, auto-excluded from the export (re-tick to include).</li>
+      <li>Fills are not guaranteed. Relist fees from repricing are not modelled on this side (the
+          <b>My orders</b> mode does model them).</li>
+      <li>Every ESI endpoint used here is public: no login, and nothing leaves your machine but the price
+          queries. Prices respect EVE's 4-significant-digit rule — a tick is one step of the price's own band.</li>
     </ul>
   </details>
 </section>
 
 <section class="sell-only">
-  <h2>3 · Review — items ranked by expected profit</h2>
-  <div id="summary"><span class="hint">Paste your inventory and fetch prices to see results.</span></div>
+  <h2>3 · Review</h2>
+  <div id="summary"><span class="hint">no rows — paste an inventory, fetch prices</span></div>
   <div class="rowline">
     <span class="hint">import list:</span>
     <label for="topN" style="margin:0">top</label>
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
-    <button id="btnTop" type="button" title="ticks the top N ORDER/SPLIT rows for the import list">Tick top N</button>
-    <button id="btnAll" type="button" title="ticks every ORDER/SPLIT row passing the filters">All</button>
-    <button id="btnNone" type="button" title="empties the whole import list, regardless of filters">None</button>
+    <button id="btnTop" type="button" title="tick the top N LIST/SPLIT rows">Tick top N</button>
+    <button id="btnAll" type="button" title="tick every LIST/SPLIT row passing the filters">All</button>
+    <button id="btnNone" type="button" title="untick everything, filters ignored">None</button>
     <span class="sep"></span>
     <label for="fltType" style="margin:0">show</label>
     <select id="fltType" style="width:180px">
@@ -328,31 +335,31 @@
     </select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
-    <span class="hint">· click a cell to copy its value · click a sparkline for the full chart</span>
+    <span class="hint">· cell → copy · spark → chart</span>
   </div>
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
-        <th data-key="checked" title="tick to include a row in the import list — INSTANT rows have nothing to import (no price to choose) and are always sold via the instant checklist instead">Import</th>
+        <th data-key="checked" title="tick: include in the import list&#10;INSTANT: no price to import — instant checklist instead">Import</th>
         <th data-key="rank" class="num">#</th>
         <th data-key="name">Item</th>
-        <th data-key="trendPctWk" title="the last 120 days of daily average price, with markers for the current best sell, the competitive list price and the patient price — click a cell for the full chart. Sorts by trend %/week: the line's own slope">History</th>
+        <th data-key="trendPctWk" title="chart: 120d daily average&#10;markers: best sell · list price · patient price&#10;sort: trend %/wk · click a cell for the full chart">History</th>
         <th data-key="qty" class="num">Qty</th>
-        <th data-key="bestBuy" class="num" title="highest buy order covering the hub station">Top buy ISK/u</th>
-        <th data-key="bestSell" class="num" title="cheapest sell order at the hub station">Sell ISK/u</th>
-        <th data-key="margin" class="num" title="spread between best sell and top buy: (sell − buy) ÷ buy — negative means a crossed market">Margin %</th>
-        <th data-key="hist" class="num" title="chosen statistic over the region's daily average prices">Hist ISK/u</th>
-        <th data-key="sellVsHist" class="num" title="current best sell vs the history statistic: (sell − hist) ÷ hist — green above history (good time to sell), red below (the market is low right now — the Plan column says whether that is a dip or a decay)">Sell/Hist %</th>
-        <th data-key="volDay" class="num" title="average units traded per day over the history window (regional; trades have no per-side split in any API)">Vol/day</th>
-        <th data-key="buyDepth" class="num" title="units currently wanted by buy orders covering the hub station">Buy depth</th>
-        <th data-key="sellDepth" class="num" title="units currently offered by sell orders at the hub station">Sell depth</th>
-        <th data-key="strategy" title="the recommended disposal — hover a badge for the numbers behind it">Plan</th>
-        <th data-key="exportPrice" class="num" title="price to import the item at">Import at ISK/u</th>
-        <th data-key="fillDays" class="num" title="rough days to fill at the recommended price: units already listed at or below it ÷ Vol/day. Regional volume mixes buy and sell sides and other stations, and your own stack is not counted in the queue — an optimistic approximation, not a forecast">Fill est. (d)</th>
-        <th data-key="fillChance" class="num" title="chance the recommended listing fills inside the patience window: the share of past windows whose daily high reached that price — each past day carried to today's price level at the item's own trend, then tempered by the queue length. Past behaviour, not a promise">Chance %</th>
-        <th data-key="perSlot" class="num" title="expected net ÷ expected days on the market — what one market slot earns per day. INSTANT uses no slot and is not ranked here">ISK/slot-day</th>
+        <th data-key="bestBuy" class="num" title="highest buy order covering the hub">Top buy ISK/u</th>
+        <th data-key="bestSell" class="num" title="cheapest sell order at the hub">Sell ISK/u</th>
+        <th data-key="margin" class="num" title="(sell − buy) ÷ buy&#10;negative: crossed market">Margin %</th>
+        <th data-key="hist" class="num" title="chosen statistic over the region's daily averages">Hist ISK/u</th>
+        <th data-key="sellVsHist" class="num" title="(sell − hist) ÷ hist&#10;green: above history · red: below&#10;dip or decay: the Plan column decides">Sell/Hist %</th>
+        <th data-key="volDay" class="num" title="mean units traded/day over the history window&#10;regional, both sides (no API splits traded volume)">Vol/day</th>
+        <th data-key="buyDepth" class="num" title="units wanted by buy orders covering the hub">Buy depth</th>
+        <th data-key="sellDepth" class="num" title="units offered by sell orders at the hub">Sell depth</th>
+        <th data-key="strategy" title="recommended disposal · hover a badge for its numbers">Plan</th>
+        <th data-key="exportPrice" class="num" title="price to import at">Import at ISK/u</th>
+        <th data-key="fillDays" class="num" title="queue at the price ÷ Vol/day&#10;queue: units already listed at or below it, yours excluded&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
+        <th data-key="fillChance" class="num" title="chance of filling inside the patience window&#10;= share of past windows whose daily high reached the price&#10;carried to today by the trend, tempered by the queue">Chance %</th>
+        <th data-key="perSlot" class="num" title="expected net ÷ expected days on the market&#10;INSTANT uses no slot — not ranked here">ISK/slot-day</th>
         <th data-key="totalNet" class="num">Expected net ISK</th>
-        <th data-key="advTotal" class="num" title="extra ISK from the order/split plan vs pure instant (negative = instant is better)">Order Δ ISK</th>
+        <th data-key="advTotal" class="num" title="listing plan net − instant net&#10;negative: instant is better">Order Δ ISK</th>
         <th data-key="flags">Flags</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
@@ -363,7 +370,7 @@
 <section class="sell-only">
   <h2>4 · Export</h2>
   <div class="rowline" style="margin-top:0">
-    <button id="btnCopy" type="button" class="primary">Copy import list</button>
+    <button id="btnCopy" type="button" class="primary" title="the ticked rows as Name ⇥ Price">Copy import list</button>
     <label for="decSep" style="margin:0">decimals</label>
     <select id="decSep" style="width:100px">
       <option value="dot">1234.56</option>
@@ -371,20 +378,18 @@
     </select>
     <span id="copyStatusImp" class="hint"></span>
   </div>
-  <p class="hint" style="margin:8px 0 2px"><b>Import list — orders &amp; splits</b> · <span id="impEcho">nothing ticked</span></p>
-  <p class="hint" style="margin:0 0 4px">
-    <code>Item name ⇥ Price</code> (ISK/unit, whole stacks) for the game's multi-sell import — the ticked
-    rows in the table. For SPLIT items you can first sell the instant leg (the Plan column shows
-    "N now · M listed"), then import the remainder; importing the whole stack directly is safe too (buy
-    orders above the price fill instantly at their own price). INSTANT rows (⚡) never appear here —
-    sell them straight from the hangar: filter the table to INSTANT and click a name cell to copy it
-    for the in-game inventory search.</p>
+  <p class="hint" style="margin:8px 0 2px"><b>Import list</b> · <span id="impEcho">nothing ticked</span>
+    · <code>Name ⇥ Price</code> ISK/unit, whole stacks<details class="help"><summary>?</summary><span class="helpbody">Feeds the
+    game's multi-sell import: one line per ticked LIST/SPLIT row. For a SPLIT you may sell the instant leg
+    first (the Plan cell reads "N now · M listed") and import the remainder; importing the whole stack is
+    safe too, since buy orders above the price fill at their own price. INSTANT rows (⚡) never appear here —
+    filter the table to INSTANT and click a name cell to copy it for the in-game inventory search.</span></details></p>
   <textarea id="preview" readonly spellcheck="false"></textarea>
   <div class="rowline">
-    <button id="btnCopyInst" type="button" title="all INSTANT items plus the instant legs of ticked SPLITs, as Name ⇥ Qty text">Copy instant list (name ⇥ qty)</button>
+    <button id="btnCopyInst" type="button" title="every INSTANT item + the instant legs of ticked SPLITs&#10;format: Name ⇥ Qty">Copy instant list</button>
     <span id="copyStatusInst" class="hint"></span>
     <span class="sep"></span>
-    <button id="btnCopyTsv" type="button">Copy full table (TSV for spreadsheets)</button>
+    <button id="btnCopyTsv" type="button" title="the whole table + the working numbers it hides, tab-separated">Copy TSV</button>
     <span id="copyStatusTsv" class="hint"></span>
   </div>
 </section>
@@ -394,8 +399,8 @@
 <section class="orders-only">
   <h2>1 · Your open orders</h2>
   <div class="rowline" style="margin-top:0">
-    <button id="btnOrders" type="button" class="primary">Fetch my orders (ESI)</button>
-    <label style="margin:0" title="buy orders are listed separately — their economics are the other way round (you are waiting for someone to sell TO you, and the ISK is in escrow)"><input type="checkbox" id="ordShowBuy"> include buy orders</label>
+    <button id="btnOrders" type="button" class="primary" title="read open orders for every logged-in character">Fetch my orders</button>
+    <label style="margin:0" title="buy orders list separately&#10;their economics run the other way: you wait for someone to sell TO you, ISK in escrow"><input type="checkbox" id="ordShowBuy"> include buy orders</label>
     <span class="sep"></span>
     <span id="ordStatus"></span>
   </div>
@@ -407,24 +412,26 @@
 <section class="orders-only">
   <h2>2 · Triage</h2>
   <div class="rowline" style="margin-top:0">
-    <input id="ordFilter" type="text" placeholder="filter by item, location or character…" style="width:280px">
+    <input id="ordFilter" type="text" placeholder="item, location or character…" style="width:280px">
     <span class="hint" id="ordCount"></span>
     <span class="sep"></span>
-    <span class="hint">· click a cell to copy its value</span>
+    <button id="btnOrdTsv" type="button" title="every column + the diagnostics behind them, tab-separated">Copy TSV</button>
+    <span id="copyStatusOrd" class="hint"></span>
+    <span class="hint">· cell → copy</span>
   </div>
   <div class="rowline">
     <span class="seg" role="group" aria-label="how long you are willing to wait">
-      <button id="ordPatRush" type="button" data-pat="rush" title="7-day window">in a rush</button>
-      <button id="ordPatBalanced" type="button" data-pat="balanced" title="14-day window">balanced</button>
-      <button id="ordPatPatient" type="button" data-pat="patient" title="30-day window">patient</button>
+      <button id="ordPatRush" type="button" data-pat="rush" title="window: 7d&#10;floor: 75% chance">in a rush</button>
+      <button id="ordPatBalanced" type="button" data-pat="balanced" title="window: 14d&#10;floor: 55% chance">balanced</button>
+      <button id="ordPatPatient" type="button" data-pat="patient" title="window: 30d&#10;floor: 35% chance">patient</button>
     </span>
     <span class="hint" id="ordPatNote"></span>
   </div>
   <div class="rowline">
     <label for="relistPct" style="margin:0">relist fee %</label>
     <input id="relistPct" type="number" step="0.01" min="0" max="20" style="width:80px"
-      title="the broker fee EVE charges to MODIFY an order's price — type your client's number here if it disagrees">
-    <button id="relistReset" type="button" title="go back to the computed value">reset</button>
+      title="broker fee EVE charges to MODIFY an order's price&#10;type your client's number here if it disagrees">
+    <button id="relistReset" type="button" title="back to the computed value">reset</button>
     <span class="hint" id="relistSrc" style="flex:1 1 300px"></span>
   </div>
   <div class="tablewrap">
@@ -432,20 +439,20 @@
       <thead><tr>
         <th data-key="charName">Character</th>
         <th data-key="name">Item</th>
-        <th title="the last 120 days of daily average price, with a marker at your order's price and at the best competing sell — a price the market has left behind is visible at a glance">History</th>
-        <th data-key="price" class="num" title="the price your order is asking (sell) or offering (buy)">Your price</th>
-        <th data-key="volumeRemain" class="num" title="units left on the order, against the size it went up as">Qty left / total</th>
+        <th title="chart: 120d daily average&#10;markers: your price · best competing sell&#10;a price the market left behind shows at a glance">History</th>
+        <th data-key="price" class="num" title="what your order asks (sell) or offers (buy)">Your price</th>
+        <th data-key="volumeRemain" class="num" title="units left / size the order went up as">Qty left / total</th>
         <th data-key="locName">Location</th>
-        <th data-key="ageDays" class="num" title="days since the order was issued">Age (d)</th>
-        <th data-key="daysLeft" class="num" title="days before the order expires: its duration minus its age">Days left</th>
-        <th data-key="iskTied" class="num" title="price × units remaining — the ISK sitting on the market instead of in your wallet">ISK tied up</th>
-        <th data-key="queueAhead" class="num" title="units listed at or below your price at this location, with your OWN remaining units taken back out — the line you are actually standing behind">Queue ahead</th>
-        <th data-key="aboveBestPct" class="num" title="how far your price sits above the best competing sell at this location (your own orders excluded)">vs best %</th>
-        <th data-key="daysToFill" class="num" title="days to work through the queue ahead of you at your price: units ahead ÷ daily traded volume. Regional volume mixes buy and sell sides and every station in the region — an optimistic order-of-magnitude number, not a forecast">Fill est. (d)</th>
-        <th data-key="trendPctWk" class="num" title="the item's own price trend, %/week — the same Theil–Sen slope the Sell mode ranks with">Trend %/wk</th>
-        <th data-key="chance" class="num" title="chance this order fills at your price before it expires: the share of past windows whose daily high reached your price, each past day carried to today's price level at the item's own trend, then tempered by the queue already ahead of you">Chance %</th>
-        <th data-key="stalledIsk" title="stalled = the odds are under your patience floor, or the queue cannot clear before the order expires, or you are above the best sell on a market that is sliding away. Sorts by the ISK frozen in stalled orders">Stalled?</th>
-        <th data-key="verdict" title="hold it, reprice it, or cancel and dump it — hover a badge for the arithmetic">Verdict</th>
+        <th data-key="ageDays" class="num" title="days since issue">Age (d)</th>
+        <th data-key="daysLeft" class="num" title="duration − age">Days left</th>
+        <th data-key="iskTied" class="num" title="price × units remaining&#10;ISK on the market instead of in your wallet">ISK tied up</th>
+        <th data-key="queueAhead" class="num" title="units listed at or below your price here&#10;your own units taken back out — the line you actually stand behind">Queue ahead</th>
+        <th data-key="aboveBestPct" class="num" title="your price vs the best competing sell here&#10;your own orders excluded, so cheapest reads 0%">vs best %</th>
+        <th data-key="daysToFill" class="num" title="queue ahead ÷ Vol/day&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
+        <th data-key="trendPctWk" class="num" title="Theil–Sen slope, %/week&#10;same trend the Sell mode ranks with">Trend %/wk</th>
+        <th data-key="chance" class="num" title="chance of filling at your price before expiry&#10;= share of past windows whose daily high reached it&#10;carried to today by the trend, tempered by the queue">Chance %</th>
+        <th data-key="stalledIsk" title="stalled: odds under the floor, or the queue outlasts the order, or above best sell on a sliding market&#10;sorts by ISK frozen in stalled orders">Stalled?</th>
+        <th data-key="verdict" title="hold / reprice / cancel &amp; dump · hover a badge for the arithmetic">Verdict</th>
       </tr></thead>
       <tbody id="ordBody"></tbody>
     </table>
@@ -453,49 +460,42 @@
   <details>
     <summary>Notes &amp; assumptions</summary>
     <ul class="plain">
-      <li>Orders are read per character from <code>/characters/{id}/orders/</code>, which lists only
-          <b>open</b> orders. A character whose login does not carry
-          <code>esi-markets.read_character_orders.v1</code> is listed above with a permissions link —
-          it is never silently left out of the totals.</li>
-      <li><b>Slots in use</b> is a count of open orders per character. EVE's slot cap is a fact about
-          the character (Trade / Retail / Wholesale / Tycoon plus skills you may not have trained), and
-          ESI does not publish it, so this page counts what is open and does not invent a total.</li>
-      <li>Item names come from ESI; station names from <code>/universe/stations</code> and player
-          structures from your structure records (or <code>/universe/structures</code>). A location
-          your characters cannot resolve — a structure you have no docking access to, for instance —
-          is shown as its raw id rather than a guess.</li>
-      <li>ISK tied up is <code>price × units remaining</code>. For a buy order that is the ISK
-          committed to it; the actual escrow can be lower on a partly-filled order.</li>
-      <li><b>Queue ahead</b> is the units listed at or below your price at that location, with your own
-          remaining units taken back out — a mistake that would otherwise make every order look one
-          stack worse than it is. <b>vs best %</b> compares your price to the best <i>competing</i>
-          sell, your own orders excluded, so being the cheapest reads as 0% and not as "you are
-          beating yourself".</li>
-      <li><b>Fill est.</b> is the queue ahead of you ÷ the daily traded volume, exactly as in the Sell
-          table, and carries exactly the same caveat: regional volume mixes buy and sell sides and
-          every station in the region, so treat it as an optimistic order of magnitude.</li>
-      <li><b>Chance %</b> is the same trend-adjusted hit rate the Sell mode recommends with — the share
-          of past windows in which the daily high reached your price, every past day first carried to
-          today's price level at the item's own trend, then tempered by the queue. The window is
-          whichever is shorter: your patience setting or the days left on the order.</li>
-      <li><b>Stalled</b> fires when the chance is under your patience mode's floor, or the queue at
-          your price cannot clear before the order expires, or you sit above the best sell on a
-          falling market (where the gap only widens). The Stalled column says which.</li>
-      <li><b>The verdicts</b> compare three futures over the days left, all net of sales tax:
-          <b>HOLD</b> = <code>chance × (units × your price) + (1 − chance) × (dumping at the end,
-          carried by the trend)</code>; <b>REPRICE</b> = the same at the competitive price, minus the
-          relist fee; <b>CANCEL &amp; DUMP</b> = what the buy book pays right now, walked depth-first.
-          The broker fee you already paid to put the order up is <b>sunk</b> — it is not charged
-          against any of the three, and in particular not against cancelling, which is the classic way
-          to talk yourself into keeping a dead order.</li>
-      <li>The <b>relist fee</b> is <span style="color:var(--amber)">not verified against the client</span>.
-          It is modelled as the broker % from the fees box reduced by 5% per level of Advanced Broker
-          Relations (resolved by name from your skills). Check it against your own modify-order dialog
-          and type the real number into the box — it is saved.</li>
-      <li>Books and history are fetched per location and per type, grouped so a structure's book is
-          pulled once no matter how many orders you have in it. Where a book or a history is missing —
-          no market scope at a structure, no docking access, a type with no history — the row says so
-          and gets no verdict, rather than a verdict built on nothing.</li>
+      <li><b>Source</b> — <code>/characters/{id}/orders/</code>, per character, <b>open</b> orders only.
+          A login without <code>esi-markets.read_character_orders.v1</code> is listed above with a
+          permissions link, never silently dropped from the totals.</li>
+      <li><b>Slots in use</b> — a count of open orders per character. EVE's cap is a character fact
+          (Trade / Retail / Wholesale / Tycoon plus skills) that ESI does not publish, so this counts what
+          is open and invents no total.</li>
+      <li><b>Names</b> — items from ESI, NPC stations from <code>/universe/stations</code>, player
+          structures from your structure records or <code>/universe/structures</code>. A location your
+          characters cannot resolve (no docking access, say) shows as its raw id, not a guess.</li>
+      <li><b>ISK tied up</b> = <code>price × units remaining</code>. On a buy order that is ISK committed;
+          real escrow can be lower once it is partly filled.</li>
+      <li><b>Queue ahead</b> — units listed at or below your price there, your own remaining units taken
+          back out (otherwise every order reads one stack worse than it is). <b>vs best %</b> compares
+          against the best <i>competing</i> sell, so being cheapest reads 0%, not "you beat yourself".</li>
+      <li><b>Fill est.</b> = queue ahead ÷ daily traded volume, exactly as in the Sell table and with the
+          same caveat: regional volume mixes both sides and every station — an optimistic order of magnitude.</li>
+      <li><b>Chance %</b> — the Sell mode's trend-adjusted hit rate: share of past windows whose daily high
+          reached your price, each past day carried to today's level at the item's own trend, then tempered
+          by the queue. Window = your patience or the days left on the order, whichever is shorter.</li>
+      <li><b>Stalled</b> fires on any of: chance under the patience floor · the queue at your price cannot
+          clear before expiry · you sit above the best sell on a falling market, where the gap only widens.
+          The Stalled cell's chips say which; hover one for its numbers.</li>
+      <li><b>Verdicts</b> — three futures over the days left, all net of sales tax. <b>HOLD</b> =
+          <code>chance × (units × your price) + (1 − chance) × (dump at the end, carried by the trend)</code> ·
+          <b>REPRICE</b> = the same at the competitive price, minus the relist fee · <b>CANCEL &amp; DUMP</b> =
+          what the buy book pays now, walked depth-first. The broker fee that put the order up is <b>sunk</b>:
+          charged against none of the three, least of all against cancelling — the classic way to talk
+          yourself into keeping a dead order.</li>
+      <li><b>Relist fee</b> — <span style="color:var(--amber)">not verified against the client</span>.
+          Modelled as the broker % from the fees box, less 5% per level of Advanced Broker Relations
+          (resolved by name from your skills). Compare with your own modify-order dialog and type the real
+          number into the box — it is saved.</li>
+      <li><b>Fetching</b> — books and history per location and per type, grouped so a structure's book is
+          pulled once however many orders sit in it. A missing book or history (no market scope at a
+          structure, no docking access, a type with no history) leaves the row saying so and with no
+          verdict, rather than a verdict built on nothing.</li>
     </ul>
   </details>
 </section>
