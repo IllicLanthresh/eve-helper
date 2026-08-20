@@ -1608,6 +1608,180 @@ H.run('structures-manager', async () => {
     }
 
     /* ================================================================================
+       (i) the leftovers: controls that lied about what they could do
+       ================================================================================ */
+    section('Industry only offers "infer rigs…" where the wizard can actually run');
+    {
+      // one hull the catalog knows and one it does not — the wizard's first step dead-ends
+      // with "No probeable rig domains for this structure." on the second
+      const UNKNOWN = { id: 1035000000077, name: 'Test Oddity', typeId: 34567, typeName: 'Oddity',
+        systemId: IND_SYS, systemName: 'TEST-1', security: -0.42, regionId: 10000999 };
+      const s = await openIndustry(browser, server, [auth(),
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[RAITARU], UNKNOWN] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [
+            { uid: 'f1', npc: false, ref: RAITARU, activities: ['man'], scope: [], sciOverride: null },
+            { uid: 'f2', npc: false, ref: UNKNOWN.id, activities: ['man'], scope: [], sciOverride: null },
+          ]),
+        ] }]]);
+      await s.page.waitForSelector('.fac[data-ref="' + UNKNOWN.id + '"]', { timeout: 15000 });
+      const links = await s.page.evaluate(ref => {
+        const sel = c => [...document.querySelectorAll(`.fac[data-ref="${c}"] a`)].map(a => a.getAttribute('href'));
+        return { known: sel(1035000000001), unknown: sel(ref) };
+      }, UNKNOWN.id);
+      check('a hull the catalog knows keeps the wizard link',
+        links.known.some(h => /\/rigs$/.test(h)), JSON.stringify(links.known));
+      check('...and one it does not is not sent to a wizard with nothing to probe',
+        !links.unknown.some(h => /\/rigs$/.test(h)), JSON.stringify(links.unknown));
+      check('...while the record itself is still reachable from it',
+        links.unknown.some(h => h === 'structures.html#s' + UNKNOWN.id), JSON.stringify(links.unknown));
+      const cap = await s.page.$$eval('.fac[data-ref="' + UNKNOWN.id + '"] .hint',
+        els => els.map(e => e.textContent).join(' | '));
+      check('...and the rig line says why', /unknown structure type/.test(cap), cap);
+      await s.close();
+    }
+
+    section('the record’s "activities this structure can run" is checked, not just stored');
+    {
+      // a Tatara is a refinery: the hull default is reactions only, and this profile routes
+      // manufacturing there. The field used to be written in the manager and read by
+      // nothing except the next facility added.
+      const s = await openIndustry(browser, server, [auth(),
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[TATARA]] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [{ uid: 'f1', npc: false, ref: TATARA, activities: ['man', 'rea'],
+                                    scope: [], sciOverride: null }]),
+        ] }]]);
+      await s.page.waitForSelector('.fac .facActWarn', { timeout: 15000 });
+      const w = await s.page.$eval('.fac .facActWarn', el => el.textContent);
+      check('the facility card names the activity the structure cannot run',
+        /routes Manufacturing here/.test(w), w);
+      check('...and does not accuse it of the one it can', !/Reactions/.test(w), w);
+      check('...saying the record is still on the hull default', /default for this hull/.test(w), w);
+      check('...with the record one click away', await s.page.evaluate(() =>
+        !!document.querySelector('.fac .facActWarn a[href="structures.html#s1035000000002"]')));
+      // recording that it CAN manufacture clears the flag — the field drives something real
+      await s.page.evaluate(id => EveStructures.update(id, { industryActivities: ['man', 'rea'] }), TATARA);
+      await s.page.waitForFunction(() => !document.querySelector('.fac .facActWarn'), null, { timeout: 15000 });
+      check('correcting the record on the manager side clears it', true);
+      await s.close();
+    }
+
+    section('Industry’s mirrored structure facts do not look like its editable NPC fields');
+    {
+      const s = await openIndustry(browser, server, [auth(),
+        ['eveHelper.structures.v1', { v: 2, structures: [
+          Object.assign({}, IDENT[RAITARU], { facilityTax: 2.5 }),
+        ] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [
+            { uid: 'f1', npc: false, ref: RAITARU, activities: ['man'], scope: [], sciOverride: null },
+            { uid: 'f2', npc: true, label: 'Jita 4-4', system: null, systemName: null, security: null,
+              activities: ['man'], scope: [], bonuses: { me: 0, te: 0, cost: 0 }, tax: 0.25, sciOverride: null },
+          ]),
+        ] }]]);
+      await s.page.waitForSelector('.fac[data-ref] .kv.ro', { timeout: 15000 });
+      const marked = await s.page.evaluate(() => ({
+        roOnStruct: document.querySelectorAll('.fac[data-ref] .kv.ro').length,
+        roOnNpc: document.querySelectorAll('.fac:not([data-ref]) .kv.ro').length,
+        inputsInRo: document.querySelectorAll('.fac .kv.ro input').length,
+        inputsOnNpc: document.querySelectorAll('.fac:not([data-ref]) .kv input').length,
+        taxTxt: document.getElementById('facTaxf1').textContent,
+      }));
+      eq('the two mirrored facts on a structure card are marked read-only', marked.roOnStruct, 2);
+      eq('...and nothing on the NPC card is', marked.roOnNpc, 0);
+      eq('...a mirror never carries an input', marked.inputsInRo, 0);
+      check('...while the NPC station keeps its real ones', marked.inputsOnNpc >= 4, marked.inputsOnNpc);
+      check('the mirrored tax names where it comes from, without hovering',
+        /from Structures/.test(marked.taxTxt) && /2\.5%/.test(marked.taxTxt), marked.taxTxt);
+      await s.close();
+    }
+
+    section('a failed SDE fetch cannot destroy a profile’s unmapped legacy rig rows');
+    {
+      // migrateRigs bails when data/industry.json is unreadable, so a {preset, scope} row
+      // is mapped to no catalog tid and handed to nobody — deleting it with the rest of
+      // the per-profile copy would lose it on a single fetch failure, permanently
+      const EQ1 = 37301;
+      const fixture = JSON.parse(JSON.stringify(IND_FIXTURE));
+      fixture.marketGroups[9] = ['Ship Equipment', 0];
+      fixture.rigs[EQ1] = { n: 'Standup M-Set Equipment Manufacturing Material Efficiency I',
+        sz: 'M', me: 2, te: 0, cost: 0, sec: SEC_RIG, scope: [G.PLATE], act: ['man'], fit: FIT,
+        dom: 'Equipment' };
+      const storage = [auth(), infoCache([RAITARU]),
+        ['eveHelper.structMigration.v1',
+          { v: 1, sell: 1, mine: 1, mineStruct: 1, industry: 1, industryBonus: 1 }],
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[RAITARU]] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [Object.assign(legacyFacility({ tax: 3 }),
+            { rigs: [{ preset: 't1me', scope: [9] }] })]),
+        ] }]];
+      const context = await browser.newContext();
+      await H.seedStorage(context, null, storage);
+      await H.mockEsi(context, { skills: {}, standings: {} });
+      await mockIdentity(context);
+      await context.route('**/data/ores.json', r => r.fulfill(H.json(ORES_FIXTURE)));
+      let sdeOk = false;      // read at request time: the reload below gets the catalog
+      await context.route('**/data/industry.json', r =>
+        sdeOk ? r.fulfill(H.json(fixture)) : r.fulfill({ status: 404, body: 'not built by CI' }));
+      const page = await context.newPage();
+      H.watchPage(page, 'industry-nosde');
+      await page.goto(server.url + '/industry.html');
+      await page.waitForFunction(() => document.getElementById('sdeStatus').className === 'err',
+        null, { timeout: 20000 });
+      // the facility migration has run once its own effect is visible: the copies it CAN
+      // hand over are gone from the profile
+      await page.waitForFunction(() => activeProfile().facilities[0].tax === undefined,
+        null, { timeout: 15000 });
+      const kept = await page.evaluate(() => activeProfile().facilities[0].rigs);
+      check('the unmapped preset row is still there', Array.isArray(kept) && kept.length === 1
+        && kept[0].preset === 't1me', JSON.stringify(kept));
+      eq('...and persisted, not just held in memory', await page.evaluate(() =>
+        JSON.parse(localStorage.getItem('eveHelper.industryProfiles.v1')).profiles[0].facilities[0].rigs[0].preset),
+        't1me');
+      eq('...while the facts that COULD be handed over were', await page.evaluate(id =>
+        EveStructures.facts(id).facilityTax, RAITARU), 3);
+
+      sdeOk = true;
+      await page.reload();
+      await page.waitForFunction(() => document.getElementById('sdeStatus').className === 'ok',
+        null, { timeout: 20000 });
+      await page.waitForFunction(id => EveStructures.facts(id).rigs.length === 1, RAITARU,
+        { timeout: 15000 });
+      eq('the first load that has the catalog maps it onto the record',
+        (await factsOf(page, RAITARU)).rigs[0], EQ1);
+      eq('...and only then is the profile copy dropped',
+        await page.evaluate(() => activeProfile().facilities[0].rigs), undefined);
+      await context.close();
+    }
+
+    section('Mine states the security band instead of offering a dropdown it never enables');
+    {
+      const context = await baseContext(browser, [auth(), infoCache([TATARA]),
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[TATARA]] }],
+        ['eveHelper.mine.v1', { fac: { struct: 's:' + TATARA, sec: 'ns', imp: 4,
+                                       structInfo: IDENT[TATARA] } }]], {
+        esi: { skills: MINE_SKILLS, standings: {}, typeIds: MINE_TIDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'mine-band-text');
+      await page.goto(server.url + '/mine.html');
+      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+        null, { timeout: 25000 });
+      await page.waitForFunction(() => /nullsec/.test(document.getElementById('facNote').textContent),
+        null, { timeout: 15000 });
+      check('the permanently-disabled band dropdown is gone',
+        await page.evaluate(() => !document.getElementById('facSec')));
+      const note = await page.$eval('#facNote', el => el.textContent);
+      check('...and the band it displayed is stated in the facility note',
+        /nullsec/.test(note) && /×1\.12/.test(note), note);
+      check('...with where it was detected from in the title', /security -0\.42/.test(
+        await page.$eval('#facNote', el => el.title)), await page.$eval('#facNote', el => el.title));
+      await context.close();
+    }
+
+    /* ================================================================================
        (e) the manager is reachable from everywhere
        ================================================================================ */
     section('every page carries the Structures tab');

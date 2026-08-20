@@ -280,11 +280,6 @@
     <select id="facStruct" style="width:170px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility"></select>
     <button id="facPick" type="button" disabled
       title="log in with EVE, then search a player structure — Athanor/Tatara refinery bases and system security are auto-detected">choose structure…</button>
-    <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier — auto-detected from the chosen structure's system">
-      <option value="hs">highsec ×1.00</option>
-      <option value="ls">lowsec ×1.06</option>
-      <option value="ns">null/WH ×1.12</option>
-    </select>
     <select id="facImp" style="width:112px" disabled title="Zainou 'Beancounter' RX reprocessing implant">
       <option value="0">no implant</option>
       <option value="1">RX-801 +1%</option>
@@ -892,14 +887,19 @@ function renderFacControls(){
   if (isStruct) $('facManage').href = 'structures.html#s' + st.id;
   renderRigNote(on && isStruct);
   if (on){
-    sel.title = '';
+    sel.title = 'refine at the NPC station or any structure on the shared saved list — '
+      + '“choose structure…” adds one';
     $('facPick').title = 'search a player structure — Athanor/Tatara refinery bases and system security are auto-detected';
     $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant (clone implants are not in ESI — set manually)";
-    $('facSec').title = isStruct
-      ? `detected from ${st.systemName || 'the system'} security ${st.security != null ? st.security.toFixed(2) : '?'} — not editable`
-      : 'security multiplier applies only to structure rigs';
   }
+  // the security band was a three-option dropdown that renderFacControls disabled on every
+  // pass — a control the user could never earn. It is detected, never picked, so it is
+  // stated as text in the facility note (“… (nullsec) — rig ×1.12”) like the rig line
   $('facNote').textContent = on ? facNoteText() : '';
+  $('facNote').title = on && isStruct
+    ? `security band detected from ${st.systemName || 'the system'} security `
+      + `${st.security != null ? st.security.toFixed(2) : '?'} — it scales the reprocessing rig bonus`
+    : '';
 }
 
 /* ---------- imported-skills transparency panel ---------- */

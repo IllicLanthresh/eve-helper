@@ -9,7 +9,7 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | **Sell** | `index.html` | Turns a hangar full of loot into ready-to-paste sell lists for any trade hub — valued against the real order book, ranked by net profit after fees, best plan per item (instant / order / split). |
 | **Mine** | `mine.html` | Two modes over one page. **Plan production**: paste the materials you need → what to mine (rocks, moon ores, sov array deposits), how many m³ after refine losses, and which of your alliance moons cover it (accepts in-game survey scans and Alliance Auth moon/extraction pastes). **Profit mode**: paste a survey scan at the belt — or an Alliance Auth extraction copy, to plan a moon pop ahead — and rank the contents by refined vs compressed ISK/m³. Live Jita prices. |
 | **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
-| **Structures** | `structures.html` | The one place player structures are managed: one record per structure with its identity (auto-detected) plus the facts ESI never publishes — owner-set market broker %, facility job tax, installed Standup rigs (with the rig-inference wizard), reprocessing rig, hull role bonuses, industry activities and notes. Every other tool just *selects* a structure. |
+| **Structures** | `structures.html` | The one place player structures are managed: one record per structure with its identity (auto-detected) plus the facts ESI never publishes — owner-set market broker %, facility job tax, installed Standup rigs (with the rig-inference wizard), reprocessing rig, hull role bonuses, industry activities and notes. Every other tool *selects* a structure and reads those facts — the one exception is Sell's broker box, which writes the rate it asks you to read off the market window straight onto the record. |
 
 ## EVE login (optional)
 
@@ -420,8 +420,12 @@ Each holds:
   building. Everything intrinsic to the structure — name, hull, system, security, installed
   **rigs**, the hull's **role bonuses** and the **owner-set facility tax** — is read from
   the one record in the [Structure Manager](#structure-manager-structureshtml) and shown
-  here read-only, each with an *edit in the structure manager* link (and an *infer rigs…*
-  link straight into the wizard). Two profiles can therefore never disagree about the same
+  here read-only: those chips carry a **from Structures** marker and a dashed outline, so a
+  mirror is not mistaken for the NPC card's editable fields, and each has an *edit* link
+  into the record (plus an *infer rigs…* link straight into the wizard, offered only where
+  the catalog actually knows which rigs fit the hull). If a profile routes an activity the
+  record says the structure cannot run, the card says so rather than computing on in
+  silence. Two profiles can therefore never disagree about the same
   building, and an edit there re-renders the facility list and marks the computed table
   stale. A facility whose record was removed says so and refuses to compute rather than
   quietly using a structure with no hull, no rigs and no tax. NPC stations have no record,
@@ -528,8 +532,11 @@ Every tool needs the same handful of facts about a player structure, and none of
 in ESI. They used to be smeared across three tools — the Sell page kept a broker rate per
 structure id, the Mine page kept a refinery snapshot with its rig, and every Industry
 profile kept its own copy of the same structure's hull, rigs, tax and role bonuses. Now
-there is **one record per structure**, edited in one place; the tools only *select* a
-structure.
+there is **one record per structure**, edited in one place; the tools *select* a structure
+and read its facts. One write-through is sanctioned, and it is the only one: the **Sell
+page's broker box**, because that rate is read off the in-game market window while you are
+selling — typing it there records it on the structure. Mine's rig and Industry's tax, rigs
+and role bonuses are read-only mirrors with an *edit* link into the record.
 
 | Lives on the record (about the STRUCTURE) | Stays in the tool (about YOU) |
 | --- | --- |
@@ -560,7 +567,10 @@ conflicts). Clicking a card opens its editor:
   catalog, so they are a tier rather than a type id).
 - **Industry activities**: what the structure is *capable* of, defaulted from the hull
   kind (engineering complexes manufacture/invent/copy/research, refineries react, citadels
-  neither) and overridable, with a reset to the default.
+  neither) and overridable, with a reset to the default. It seeds what a newly added
+  Industry facility routes here **and** is checked against every existing one: a profile
+  routing an activity this record says the structure cannot run is flagged on its facility
+  card, with a link back here.
 - **Structure role bonuses**: the hull's own ME / TE / job-cost bonuses, pre-filled from
   the per-hull preset (Raitaru/Azbel/Sotiyo/Athanor/Tatara — *verify in game*). Correcting
   one records an override on that structure; *reset to hull preset* clears it again. Every
@@ -665,7 +675,8 @@ both profiles and what was kept is stored on the record (identical notes are nev
 twice). The manager shows it on the card with a **dismiss** button. Nothing is ever dropped
 silently. The Industry page applies the same rule when it hands legacy `{preset}` rig rows
 over, and it never deletes a profile's copy of a structure's facts unless a record is there
-to take them.
+to take them — nor a `{preset}` row the rig catalog was not loaded to map, which would
+otherwise be lost for good on one failed `data/industry.json` fetch.
 
 ---
 

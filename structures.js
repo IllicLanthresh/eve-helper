@@ -7,7 +7,11 @@
    industry activities the structure can run, free-text notes). Per-tool PREFERENCES —
    which profile routes what here, product scopes, the pilot's implant, cost-index
    overrides — stay with the tool.
-   The manager UI is structures.html; every other page merely SELECTS a structure.
+   The manager UI is structures.html; every other page SELECTS a structure and reads its
+   facts. One write-through is sanctioned, and only one: the Sell page's broker box, which
+   is where the owner-set rate is actually read off the in-game market window, updates the
+   selected structure's marketBroker on the record (index.html — setStructBroker). Nothing
+   else outside the manager writes a managed fact.
 
    window.EveStructures:
    - pick({title, list}) → Promise<entry|null> — modal with live search (as the ACTIVE

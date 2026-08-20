@@ -90,6 +90,10 @@
   .fac .kv input{width:64px;padding:3px 6px;font-size:12px}
   .fac .warnbox{margin-top:6px;padding:6px 10px;border:1px solid #6b571f;background:#3a2f14;
     color:var(--amber);border-radius:8px;font-size:12px}
+  /* a fact MIRRORED from the structure record, next to fields that really are editable
+     here: same size, deliberately not the same shape */
+  .fac .kv.ro{border:1px dashed var(--line);border-radius:6px;padding:2px 8px;background:var(--panel)}
+  .fac .ro-src{color:var(--cyan);font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.75}
   .rig{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px}
   .rig select{width:230px;font-size:12px;padding:3px 6px}
   .rig .x{cursor:pointer;color:var(--dim);padding:0 5px;border-radius:4px}
@@ -759,7 +763,8 @@ function facView(f){
              typeId: null, typeName: 'NPC station', size: null,
              system: f.system, systemName: f.systemName, security: f.security,
              tax: f.tax || 0, taxKnown: true, bonuses: { ...NO_BONUS, ...(f.bonuses || {}) },
-             bonusesAreDefault: true, rigs: [], rigSlots: 0 };
+             bonusesAreDefault: true, rigs: [], rigSlots: 0,
+             capable: null, capsAreDefault: true };
   const ref = facRef(f);
   const rec = ref != null && window.EveStructures ? EveStructures.get(ref) : null;
   const fx = rec ? EveStructures.facts(ref) : null;
@@ -767,13 +772,15 @@ function facView(f){
     return { ok: false, npc: false, ref, label: 'structure ' + ref, typeId: null, typeName: null,
              size: null, system: null, systemName: null, security: null,
              tax: 0, taxKnown: false, bonuses: { ...NO_BONUS }, bonusesAreDefault: true,
-             rigs: [], rigSlots: 0 };
+             rigs: [], rigSlots: 0, capable: null, capsAreDefault: true };
   return { ok: true, npc: false, ref: rec.id, label: rec.name,
            typeId: rec.typeId, typeName: rec.typeName, size: fx.size,
            system: rec.systemId, systemName: rec.systemName, security: rec.security,
            tax: fx.facilityTax != null ? fx.facilityTax : 0, taxKnown: fx.facilityTax != null,
            bonuses: fx.bonuses, bonusesAreDefault: fx.bonusesAreDefault,
-           rigs: fx.rigs, rigSlots: fx.rigSlots };
+           rigs: fx.rigs, rigSlots: fx.rigSlots,
+           // what the STRUCTURE can run (this profile picks which of those it routes here)
+           capable: fx.industryActivities, capsAreDefault: fx.activitiesAreDefault };
 }
 const facUsable = f => f.npc || facView(f).ok;
 function manageLink(v, label, sub){
@@ -994,7 +1001,16 @@ function migrateFacilityRefs(){
       if (f.label && f.label !== rec.name)
         EveStructures.addConflict(ref, `Industry profile "${p.name}" called this structure `
           + `"${f.label}"; the record's own name is used everywhere now`);
-      for (const k of FAC_COPIED) if (k in f){ delete f[k]; changed = true; }
+      // legacy {preset, scope} rig rows that migrateRigs could not map because the catalog
+      // never loaded (data/industry.json failed) are NOT handed over by adoptLegacyFacts,
+      // which only reads tids — dropping them here would destroy them on a single SDE
+      // fetch failure. Keep them: migrateRigs runs again on every load and maps them the
+      // first time the catalog is there.
+      const unmapped = Array.isArray(f.rigs) && f.rigs.some(r => r && r.preset != null);
+      for (const k of FAC_COPIED){
+        if (k === 'rigs' && unmapped) continue;
+        if (k in f){ delete f[k]; changed = true; }
+      }
     }
   }
   if (changed) writeProfiles();
@@ -1262,6 +1278,25 @@ function renderFacilities(){
     acts.appendChild(scopePicker(f.scope = f.scope || [], () => saveProfiles()));
     card.appendChild(acts);
 
+    // The record says what the STRUCTURE can run; the checkboxes above say what THIS
+    // profile routes here. Routing an activity the structure cannot run is a real mistake,
+    // and catching it is what makes that field on the record mean something — it used to
+    // be written in the manager and read by nothing but the next facility added.
+    if (!f.npc && v.capable){
+      const cannot = (f.activities || []).filter(a => !v.capable.includes(a));
+      if (cannot.length){
+        const w = document.createElement('div');
+        w.className = 'facActWarn warnbox';
+        w.append(document.createTextNode(`this profile routes ${cannot.map(a => ACT_LABELS[a]).join(', ')} `
+          + `here, but the structure's record says ${cannot.length > 1 ? 'those are' : 'that is'} not `
+          + 'something it can run'
+          + (v.capsAreDefault ? ' — the record is still on the default for this hull, so correct it there '
+            + 'if the structure really does have the service module' : '') + '. '));
+        w.appendChild(manageLink(v, 'open the record'));
+        card.appendChild(w);
+      }
+    }
+
     const kvs = document.createElement('div');
     kvs.className = 'rowline';
     const mkNum = (labelTxt, get, set, title, step) => {
@@ -1286,20 +1321,28 @@ function renderFacilities(){
           'NPC station job fee (0.25% by default)', '0.01'));
     } else {
       // hull role bonuses and the owner-set job tax belong to the STRUCTURE: read here,
-      // edited once in the manager, identical in every profile that points at it
+      // edited once in the manager, identical in every profile that points at it. They sit
+      // next to the NPC card's real inputs, so they are marked as mirrors rather than
+      // relying on "there is no box here" being noticed
+      const src = () => {
+        const s = document.createElement('span');
+        s.className = 'ro-src';
+        s.textContent = 'from Structures ·';
+        return s;
+      };
       const bon = document.createElement('span');
-      bon.className = 'kv';
+      bon.className = 'kv ro';
       bon.id = 'facBonus' + f.uid;
-      bon.title = 'the hull’s ME/TE/job-cost role bonuses, kept on the structure record'
+      bon.title = 'read-only here — the hull’s ME/TE/job-cost role bonuses are kept on the structure record'
         + (v.bonusesAreDefault ? ' — preset for this hull type, verify in game' : ' — corrected by hand');
-      bon.append(document.createTextNode(`role bonuses ME ${v.bonuses.me}% · TE ${v.bonuses.te}% · `
+      bon.append(src(), document.createTextNode(`role bonuses ME ${v.bonuses.me}% · TE ${v.bonuses.te}% · `
         + `cost ${v.bonuses.cost}%${v.bonusesAreDefault ? ' (preset)' : ''}`), manageLink(v, 'edit'));
       const tx = document.createElement('span');
-      tx.className = 'kv';
+      tx.className = 'kv ro';
       tx.id = 'facTax' + f.uid;
-      tx.title = 'owner-set job tax, kept on the structure record — ESI does not publish it; '
-        + 'read it off the in-game industry window and record it once in the Structure Manager';
-      tx.append(document.createTextNode('facility tax ' + (v.taxKnown ? v.tax + '%' : '— (not recorded)')),
+      tx.title = 'read-only here — the owner-set job tax is kept on the structure record; ESI does not '
+        + 'publish it, so read it off the in-game industry window and record it once in the Structure Manager';
+      tx.append(src(), document.createTextNode('facility tax ' + (v.taxKnown ? v.tax + '%' : '— (not recorded)')),
         manageLink(v, 'edit'));
       kvs.append(bon, tx);
     }
@@ -1327,16 +1370,24 @@ function renderFacilities(){
         + 'system’s security-band multiplier (engineering rigs: HS ×1.0, LS ×1.9, NS/WH ×2.1; '
         + 'reactor rigs: LS ×1.0, NS/WH ×1.1, never HS). The fitting belongs to the structure, '
         + 'so it is recorded once in the Structure Manager and every profile sees the same rigs.';
+      const roSrc = document.createElement('span');
+      roSrc.className = 'ro-src';
+      roSrc.textContent = 'from Structures ·';
       cap.textContent = st
-        ? `rigs — ${st[2]}-Set, ${tids.length}/${slots} slots, ${secLabel(v.security)} multipliers`
-        : 'rigs — unknown structure type, catalog unavailable';
-      rigBox.append(cap, manageLink(v, tids.length ? 'manage' : 'add rigs'));
-      // not the owner? the manager works the fitting out from the in-game industry window
-      const wiz = manageLink(v, 'infer rigs…', '/rigs');
-      wiz.title = 'open the Structure Manager’s rig-inference wizard for this structure — it reads the '
-        + 'bonused quantities and job duration the in-game industry window shows anyone who can use the '
-        + 'facility, so structure ownership is not needed';
-      rigBox.appendChild(wiz);
+        ? ` rigs — ${st[2]}-Set, ${tids.length}/${slots} slots, ${secLabel(v.security)} multipliers`
+        : ' rigs — unknown structure type, catalog unavailable';
+      rigBox.append(roSrc, cap, manageLink(v, tids.length ? 'manage' : 'add rigs'));
+      // Not the owner? The manager works the fitting out from the in-game industry window —
+      // but only where the catalog knows which rigs fit this hull. Offering it otherwise
+      // lands on a wizard whose first step is "No probeable rig domains for this
+      // structure.", which is the same dead end the manager itself already refuses.
+      if (rigsForFacility(v).length){
+        const wiz = manageLink(v, 'infer rigs…', '/rigs');
+        wiz.title = 'open the Structure Manager’s rig-inference wizard for this structure — it reads the '
+          + 'bonused quantities and job duration the in-game industry window shows anyone who can use the '
+          + 'facility, so structure ownership is not needed';
+        rigBox.appendChild(wiz);
+      }
       for (const tid of tids){
         const row = document.createElement('div');
         row.className = 'rig';
