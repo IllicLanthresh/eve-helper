@@ -75,7 +75,12 @@
   const roleBonuses = typeId => Object.assign({ me: 0, te: 0, cost: 0 }, ROLE_BONUSES[typeId] || {});
 
   const readJson = key => { try{ return JSON.parse(localStorage.getItem(key) || 'null'); }catch(_e){ return null; } };
-  const writeJson = (key, v) => { try{ localStorage.setItem(key, JSON.stringify(v)); }catch(_e){} };
+  // returns false when the write did not land (a full or blocked origin) — the caller
+  // decides whether that is worth saying out loud
+  const writeJson = (key, v) => {
+    try{ localStorage.setItem(key, JSON.stringify(v)); return true; }
+    catch(_e){ return false; }
+  };
   // null/''/garbage all mean "not known" — Number(null) is 0, which would silently invent
   // a 0% rate, so those cases must map to null and not to a number
   const num = v => {
@@ -250,8 +255,12 @@
   function addConflict(id, text){
     const r = get(id);
     if (!r) return null;
+    const t = String(text);
+    // the same note twice says nothing new — and an import that runs again (a pass that
+    // threw before its marker landed) would otherwise grow the list on every page load
+    if (r.conflicts.some(c => c.text === t)) return r;
     const conflicts = r.conflicts.concat([{ cid: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-                                            text: String(text), at: Date.now() }]);
+                                            text: t, at: Date.now() }]);
     return update(id, { conflicts });
   }
   function dismissConflict(id, cid){
@@ -302,20 +311,37 @@
 
   /* ---------- legacy import ------------------------------------------------------
      The same structure's facts used to be smeared across three tools. This pulls them
-     into the central record, once per source (a marker key makes it idempotent — later
-     manual edits are never clobbered), and NEVER drops anything: a structure that only
-     ever lived in a tool's own blob is created here, and two profiles disagreeing about
-     the same structure keep the most recently saved value plus a conflict note the
-     manager surfaces. A concise summary goes to the console. ----- */
+     into the central record, once per source (a marker key written after EVERY pass makes
+     it idempotent — later manual edits are never clobbered), and drops no fact of a
+     structure the tools still know about: one that only ever lived in a tool's own blob is
+     created here, and two profiles disagreeing about the same structure keep the most
+     recently saved value plus a conflict note the manager surfaces. What it deliberately
+     does NOT do is bring a structure back from the dead — see the Sell pass. A concise
+     summary goes to the console. ----- */
   // the record a legacy fact belongs to, created from whatever identity is around (the
-  // ESI identity cache first, then the tool's own snapshot) if it was never saved
+  // ESI identity cache first, then the tool's own snapshot) if it was never saved. A
+  // record another pass already created from a THINNER source keeps its facts but takes
+  // the identity this pass can supply: the passes see different sources (the Sell one has
+  // no identity of its own, and the ESI cache it falls back to is wiped by the topbar's
+  // "refresh ESI data"), so whichever runs first must not pin a nameless record forever.
+  const IDENTITY_KEYS = ['name', 'typeId', 'typeName', 'systemId', 'systemName', 'security', 'regionId'];
+  const placeholderName = n => /^structure \d+$/.test(String(n == null ? '' : n));
   function ensureRecord(id, identity){
-    const have = get(id);
-    if (have) return have;
     const cache = readJson(INFO_KEY) || {};
-    const base = { id: Number(id) };
+    const base = {};
     for (const src of [cache[id], identity])
       for (const [k, v] of Object.entries(src || {})) if (v !== undefined) base[k] = v;
+    const have = get(id);
+    if (have){
+      const patch = {};
+      for (const k of IDENTITY_KEYS){
+        const v = base[k];
+        if (v == null || v === '') continue;
+        const cur = have[k];
+        if (cur == null || (k === 'name' && placeholderName(cur) && !placeholderName(v))) patch[k] = v;
+      }
+      return Object.keys(patch).length ? remember({ id: have.id, ...patch }) : have;
+    }
     base.id = Number(id);
     if (!base.name) base.name = 'structure ' + id;
     remember(base);
@@ -326,126 +352,160 @@
     const log = [];
     let touched = false;
     const setFact = (id, key, value) => { update(id, { [key]: value }); touched = true; };
+    // the marker is written after EVERY pass rather than once at the end: every setFact
+    // is already durable, so a pass that throws (a hand-edited profile blob, a full
+    // origin) must not make the passes that already finished run a second time — the
+    // Industry one has no per-fact guard and would overwrite later manual edits
+    const done = (...keys) => {
+      for (const k of keys) mark[k] = 1;
+      mark.v = 1;
+      if (!writeJson(MIG_KEY, mark))
+        console.warn('[EveStructures] the import marker could not be stored (storage full?) — '
+          + 'the import may run again on the next load');
+    };
+    const pass = (name, fn) => {
+      try{ fn(); }
+      catch(e){ console.error(`[EveStructures] legacy import (${name}) failed — the tool's own `
+        + 'storage is untouched and the pass runs again next load:', e); }
+    };
+    const arr = v => (Array.isArray(v) ? v : []);
 
-    if (!mark.sell){
-      const sell = readJson('eveSellHelper.v2');
-      const map = sell && sell.structBroker && typeof sell.structBroker === 'object' ? sell.structBroker : {};
-      for (const [sid, v] of Object.entries(map)){
-        const pct = num(v);
-        if (pct == null) continue;
-        const rec = ensureRecord(sid);
-        if (rec.marketBroker == null){
-          setFact(rec.id, 'marketBroker', pct);
-          log.push(`Sell: broker ${pct}% → ${rec.name}`);
-        }
-      }
-      mark.sell = 1;
-    }
+    // Mine and Industry run FIRST: they carry the structure's identity, and the Sell pass
+    // has none of its own, so a record created here is properly named before Sell finds it
 
     // the rig import and the "register the refinery itself" one are marked separately: a
     // browser that already ran the first must still get the second
-    if (!mark.mine || !mark.mineStruct){
-      const mine = readJson('eveHelper.mine.v1');
-      const fac = mine && mine.fac && typeof mine.fac === 'object' ? mine.fac : null;
-      const sid = fac && /^s:\d+$/.test(String(fac.struct)) ? String(fac.struct).slice(2) : null;
-      if (sid){
-        // the refinery the Mine tool had selected belongs in the shared list even when no
-        // rig was ever recorded for it — otherwise that page's own "configure it in the
-        // structure manager" note points at a record the manager does not have
-        const rec = ensureRecord(sid, fac.structInfo && fac.structInfo.id ? fac.structInfo : null);
-        if (!mark.mine && REPRO_RIGS[fac.rig] && fac.rig !== 'none' && rec.reproRig === 'none'){
-          setFact(rec.id, 'reproRig', fac.rig);
-          log.push(`Mine: ${fac.rig} reprocessing rig → ${rec.name}`);
+    pass('mine', () => {
+      if (!mark.mine || !mark.mineStruct){
+        const mine = readJson('eveHelper.mine.v1');
+        const fac = mine && mine.fac && typeof mine.fac === 'object' ? mine.fac : null;
+        const sid = fac && /^s:\d+$/.test(String(fac.struct)) ? String(fac.struct).slice(2) : null;
+        if (sid){
+          // the refinery the Mine tool had selected belongs in the shared list even when no
+          // rig was ever recorded for it — otherwise that page's own "configure it in the
+          // structure manager" note points at a record the manager does not have
+          const rec = ensureRecord(sid, fac.structInfo && fac.structInfo.id ? fac.structInfo : null);
+          if (!mark.mine && REPRO_RIGS[fac.rig] && fac.rig !== 'none' && rec.reproRig === 'none'){
+            setFact(rec.id, 'reproRig', fac.rig);
+            log.push(`Mine: ${fac.rig} reprocessing rig → ${rec.name}`);
+          }
         }
+        done('mine', 'mineStruct');
       }
-      mark.mine = 1;
-      mark.mineStruct = 1;
-    }
+    });
 
     // the rig/tax import and the later role-bonus one are marked separately: a browser
     // that already ran the first must still get the second
-    if (!mark.industry || !mark.industryBonus){
-      const store = readJson('eveHelper.industryProfiles.v1');
-      const profiles = store && Array.isArray(store.profiles) ? store.profiles.slice() : [];
-      // no timestamps are kept per profile, so "most recently saved" is read as: the
-      // ACTIVE profile last (it is the one being worked in), the rest in store order
-      profiles.sort((a, b) => (a.id === store.active ? 1 : 0) - (b.id === store.active ? 1 : 0));
-      const owner = {};   // "<id>:<field>" → profile name that supplied it
-      for (const p of profiles){
-        for (const f of (p.facilities || [])){
-          // a facility written before the profiles referenced structures by id carries
-          // the id itself; a migrated one carries only the reference
-          const fid = f && !f.npc ? (f.ref != null ? f.ref : f.id) : null;
-          if (fid == null) continue;
-          const rec = ensureRecord(fid, {
-            id: Number(fid), name: f.label || ('structure ' + fid), typeId: f.typeId, typeName: f.typeName,
-            systemId: f.system, systemName: f.systemName, security: f.security,
-          });
-          if (!mark.industryBonus && f.bonuses && typeof f.bonuses === 'object'){
-            // per-facility role bonuses that were left at the hull preset carry no
-            // information — only a hand-corrected set becomes a fact about the structure
-            const want = coerceBonus(f.bonuses);
-            const preset = roleBonuses(rec.typeId);
-            if (want && !sameBonus(want, preset)){
-              const cur = (get(rec.id) || rec).roleBonus;
-              const key = rec.id + ':bonus';
-              if (cur && !sameBonus(cur, want) && owner[key])
-                addConflict(rec.id, `profile "${owner[key]}" said role bonuses ME ${cur.me}% / TE ${cur.te}% / `
-                  + `cost ${cur.cost}% and "${p.name}" said ME ${want.me}% / TE ${want.te}% / cost ${want.cost}%; `
-                  + `kept "${p.name}"'s`);
-              if (!sameBonus(cur, want)){
-                setFact(rec.id, 'roleBonus', want);
-                log.push(`Industry "${p.name}": role bonuses ME ${want.me}% / TE ${want.te}% / `
-                  + `cost ${want.cost}% → ${rec.name}`);
+    pass('industry', () => {
+      if (!mark.industry || !mark.industryBonus){
+        const store = readJson('eveHelper.industryProfiles.v1') || {};
+        const profiles = arr(store.profiles).filter(p => p && typeof p === 'object');
+        // no timestamps are kept per profile, so "most recently saved" is read as: the
+        // ACTIVE profile last (it is the one being worked in), the rest in store order
+        profiles.sort((a, b) => (a.id === store.active ? 1 : 0) - (b.id === store.active ? 1 : 0));
+        const owner = {};   // "<id>:<field>" → profile name that supplied it
+        for (const p of profiles){
+          for (const f of arr(p.facilities)){
+            // a facility written before the profiles referenced structures by id carries
+            // the id itself; a migrated one carries only the reference
+            const fid = f && !f.npc ? (f.ref != null ? f.ref : f.id) : null;
+            if (fid == null) continue;
+            const rec = ensureRecord(fid, {
+              id: Number(fid), name: f.label || ('structure ' + fid), typeId: f.typeId, typeName: f.typeName,
+              systemId: f.system, systemName: f.systemName, security: f.security,
+            });
+            if (!mark.industryBonus && f.bonuses && typeof f.bonuses === 'object'){
+              // per-facility role bonuses that were left at the hull preset carry no
+              // information — only a hand-corrected set becomes a fact about the structure
+              const want = coerceBonus(f.bonuses);
+              const preset = roleBonuses(rec.typeId);
+              if (want && !sameBonus(want, preset)){
+                const cur = (get(rec.id) || rec).roleBonus;
+                const key = rec.id + ':bonus';
+                if (cur && !sameBonus(cur, want) && owner[key])
+                  addConflict(rec.id, `profile "${owner[key]}" said role bonuses ME ${cur.me}% / TE ${cur.te}% / `
+                    + `cost ${cur.cost}% and "${p.name}" said ME ${want.me}% / TE ${want.te}% / cost ${want.cost}%; `
+                    + `kept "${p.name}"'s`);
+                if (!sameBonus(cur, want)){
+                  setFact(rec.id, 'roleBonus', want);
+                  log.push(`Industry "${p.name}": role bonuses ME ${want.me}% / TE ${want.te}% / `
+                    + `cost ${want.cost}% → ${rec.name}`);
+                }
+                owner[key] = p.name;
+              }
+            }
+            if (mark.industry) continue;                    // rigs and tax came over already
+            const tids = arr(f.rigs).map(r => r && r.tid).map(Number).filter(Number.isFinite);
+            if (tids.length){
+              const cur = (get(rec.id) || rec).rigs;
+              const key = rec.id + ':rigs';
+              const same = cur.length === tids.length && cur.every(t => tids.includes(t));
+              if (cur.length && !same && owner[key]){
+                addConflict(rec.id, `profile "${owner[key]}" and "${p.name}" disagreed about rigs; `
+                  + `kept "${p.name}"'s (${tids.length} rig${tids.length > 1 ? 's' : ''}, `
+                  + `dropped ${cur.length} from "${owner[key]}")`);
+              }
+              if (!same){
+                setFact(rec.id, 'rigs', tids);
+                log.push(`Industry "${p.name}": ${tids.length} rig(s) → ${rec.name}`);
+              }
+              owner[key] = p.name;
+            }
+            // a pre-refactor structure facility was CREATED with tax: 0 — that 0 was the
+            // "never entered" placeholder, not an owner-set rate. Importing it would defeat
+            // the record's own "— (not recorded)" prompt and could overwrite the real rate
+            // another profile carries, so only a positive rate counts as a recorded fact.
+            const tax = num(f.tax);
+            if (tax != null && tax > 0){
+              const cur = (get(rec.id) || rec).facilityTax;
+              const key = rec.id + ':tax';
+              if (cur != null && cur !== tax && owner[key])
+                addConflict(rec.id, `profile "${owner[key]}" said facility tax ${cur}% and "${p.name}" said ${tax}%; `
+                  + `kept "${p.name}"'s ${tax}%`);
+              if (cur !== tax){
+                setFact(rec.id, 'facilityTax', tax);
+                log.push(`Industry "${p.name}": facility tax ${tax}% → ${rec.name}`);
               }
               owner[key] = p.name;
             }
           }
-          if (mark.industry) continue;                    // rigs and tax came over already
-          const tids = (f.rigs || []).map(r => r && r.tid).map(Number).filter(Number.isFinite);
-          if (tids.length){
-            const cur = (get(rec.id) || rec).rigs;
-            const key = rec.id + ':rigs';
-            const same = cur.length === tids.length && cur.every(t => tids.includes(t));
-            if (cur.length && !same && owner[key]){
-              addConflict(rec.id, `profile "${owner[key]}" and "${p.name}" disagreed about rigs; `
-                + `kept "${p.name}"'s (${tids.length} rig${tids.length > 1 ? 's' : ''}, `
-                + `dropped ${cur.length} from "${owner[key]}")`);
-            }
-            if (!same){
-              setFact(rec.id, 'rigs', tids);
-              log.push(`Industry "${p.name}": ${tids.length} rig(s) → ${rec.name}`);
-            }
-            owner[key] = p.name;
-          }
-          const tax = num(f.tax);
-          if (tax != null){
-            const cur = (get(rec.id) || rec).facilityTax;
-            const key = rec.id + ':tax';
-            if (cur != null && cur !== tax && owner[key])
-              addConflict(rec.id, `profile "${owner[key]}" said facility tax ${cur}% and "${p.name}" said ${tax}%; `
-                + `kept "${p.name}"'s ${tax}%`);
-            if (cur !== tax){
-              setFact(rec.id, 'facilityTax', tax);
-              log.push(`Industry "${p.name}": facility tax ${tax}% → ${rec.name}`);
-            }
-            owner[key] = p.name;
+        }
+        done('industry', 'industryBonus');
+      }
+    });
+
+    pass('sell', () => {
+      if (!mark.sell){
+        const sell = readJson('eveSellHelper.v2');
+        const map = sell && sell.structBroker && typeof sell.structBroker === 'object' ? sell.structBroker : {};
+        for (const [sid, v] of Object.entries(map)){
+          const pct = num(v);
+          if (pct == null) continue;
+          // The old Sell tool rewrote this map on EVERY market switch and nothing ever
+          // pruned it — removing a structure dropped it from the saved list only. So the
+          // map also names structures that were merely selected once, and ones deliberately
+          // deleted since. A rate is imported onto a record that exists (the passes above
+          // and the rescued saved list have created every structure the tools still know);
+          // a rate with no record left behind it is dropped rather than resurrected.
+          const rec = get(sid);
+          if (!rec) continue;
+          if (rec.marketBroker == null){
+            setFact(rec.id, 'marketBroker', pct);
+            log.push(`Sell: broker ${pct}% → ${rec.name}`);
           }
         }
+        done('sell');
       }
-      mark.industry = 1;
-      mark.industryBonus = 1;
-    }
+    });
 
-    mark.v = 1;
-    writeJson(MIG_KEY, mark);
     if (log.length)
       console.info('[EveStructures] central structure records: imported ' + log.length
         + ' fact(s) from the tools —\n  ' + log.join('\n  '));
     return { imported: log.length, touched };
   }
+  // every pass guards itself; this only catches something going wrong around them
   try{ migrateLegacy(); }
-  catch(e){ console.error('[EveStructures] legacy import failed (nothing was dropped):', e); }
+  catch(e){ console.error('[EveStructures] legacy import failed:', e); }
   // a v1 store (bare array), or a list rescued from the Sell tool's own old blob, is
   // rewritten in the v2 shape on first load so every page agrees on the schema; an empty
   // store is left alone rather than created for nothing

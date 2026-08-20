@@ -1234,8 +1234,15 @@ const structBrokerOf = id => {
   const f = window.EveStructures ? EveStructures.facts(id) : null;
   return f ? f.marketBroker : null;
 };
-const setStructBroker = (id, pct) => {
-  if (window.EveStructures && Number.isFinite(pct)) EveStructures.update(id, { marketBroker: pct });
+// the box's raw value, never Number() of it: Number('') is 0, and recording a 0% owner-set
+// rate over a real one is exactly what the store's own coercion refuses to do. An emptied
+// box means "not known" — the same thing the manager's own editor writes.
+const setStructBroker = (id, raw) => {
+  if (!window.EveStructures) return;
+  const txt = String(raw == null ? '' : raw).trim();
+  if (txt === ''){ EveStructures.update(id, { marketBroker: null }); return; }
+  const pct = Number(txt);
+  if (Number.isFinite(pct)) EveStructures.update(id, { marketBroker: pct });
 };
 let hubBrokerFee = null;    // broker % last used at an NPC hub (structures don't share it)
 let marketWasStructure = false;
@@ -1556,13 +1563,28 @@ renderMarketOptions();   // also draws the fee-source line for the selected mark
 // edited (registered before the generic rebuild listener so the record is current first)
 $('brokerFee').addEventListener('change', () => {
   const h = hub();
-  if (h.structure) setStructBroker(h.structure, Number($('brokerFee').value));
+  if (h.structure) setStructBroker(h.structure, $('brokerFee').value);
   renderFeeSrc();
 });
 // a record edited in the manager (another tab) must reach this page live
 if (window.EveStructures) EveStructures.subscribe(ev => {
   if (ev.reason !== 'storage') return;
+  const before = $('market').value;
   renderMarketOptions();
+  const after = $('market').value;
+  if (after !== before){
+    // The structure that WAS the market is gone (removed in the manager), so the select
+    // fell back to an NPC hub. Run the page's own market-change path rather than half of
+    // it: it restores the hub's broker fee (leaving the structure's rate in the box would
+    // persist it as the NPC-hub rate), re-fees from skills, drops the structure's order
+    // book instead of showing it under a hub's name, and rebuilds. Only the status line
+    // is ours — "market changed" would not explain why it changed on its own.
+    $('market').dispatchEvent(new Event('change'));
+    $('esiStatus').textContent = `the selected structure was removed in the Structure Manager — `
+      + `market reset to ${hub().label}, fetch prices again`;
+    $('esiStatus').className = '';
+    return;
+  }
   const h = hub();
   const pct = h.structure ? structBrokerOf(h.structure) : null;
   renderFeeSrc();

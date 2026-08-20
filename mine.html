@@ -805,6 +805,16 @@ function renderRigNote(isStruct){
   if (!isStruct) return;
   const rig = reproRig();
   const labels = (window.EveStructures && EveStructures.REPRO_RIGS) || {};
+  // the structure was removed in the manager: this page still has its identity snapshot,
+  // so it keeps working — but "configure the rig in the manager" would send the user to a
+  // record that is not there any more, so say what actually happened
+  if (window.EveStructures && st && !EveStructures.get(st.id)){
+    el.className = 'hint warn';
+    el.textContent = 'this structure is no longer in the Structure Manager — add it back there to '
+      + 'record its reprocessing rig (the yield below assumes none)';
+    el.title = 'the structure manager holds every fact about a structure; this page only selects one';
+    return;
+  }
   if (rig === 'none'){
     el.className = 'hint warn';
     el.textContent = 'no reprocessing rig set — configure it in the structure manager';

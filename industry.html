@@ -904,15 +904,32 @@ function migrateRigs(){
     }
     if (mapped.length || dropped.length) p.rigMigration = { mapped, dropped };
   }
-  // hand the per-profile rig lists over to the central records, then drop them here
-  for (const p of profStore.profiles){
+  // Hand the per-profile rig lists over to the central records, then drop them here.
+  // Same tie-break as the store's own import (structures.js): the ACTIVE profile is
+  // treated as the most recently saved one, so it goes LAST and wins; a rig list another
+  // profile disagrees with is not silently dropped but left as a note on the record.
+  const byRecency = profStore.profiles.slice()
+    .sort((a, b) => (a.id === profStore.active ? 1 : 0) - (b.id === profStore.active ? 1 : 0));
+  const rigOwner = {};        // structure id → the profile whose rigs are on the record
+  for (const p of byRecency){
     for (const f of p.facilities || []){
       const ref = facRef(f);
       if (!f.rigs || f.npc || ref == null) continue;
       const tids = f.rigs.map(r => r && r.tid).map(Number).filter(Number.isFinite);
       const rec = window.EveStructures ? EveStructures.facts(ref) : null;
       if (tids.length && !rec) continue;      // no central record to hand them to — keep them
-      if (tids.length && !rec.rigs.length) EveStructures.update(ref, { rigs: tids });
+      if (tids.length){
+        const cur = rec.rigs;
+        const same = cur.length === tids.length && cur.every(t => tids.includes(t));
+        if (!same && (!cur.length || rigOwner[ref])){
+          if (cur.length)
+            EveStructures.addConflict(ref, `profile "${rigOwner[ref]}" and "${p.name}" disagreed about `
+              + `rigs; kept "${p.name}"'s (${tids.length} rig${tids.length > 1 ? 's' : ''}, `
+              + `dropped ${cur.length} from "${rigOwner[ref]}")`);
+          EveStructures.update(ref, { rigs: tids });
+        }
+        rigOwner[ref] = p.name;
+      }
       delete f.rigs;
       changed = true;
     }
@@ -926,6 +943,30 @@ function migrateRigs(){
    they have no record, so their facts stay here. */
 const FAC_COPIED = ['id', 'label', 'typeId', 'typeName', 'system', 'systemName', 'security',
                     'bonuses', 'tax', 'rigs'];
+/* The profile's copy is handed to the record before it is dropped. EveStructures does this
+   import itself, once, on the first load of ANY page — but a record removed in the manager
+   afterwards takes those facts with it, and this copy is then the only one left. So: fill
+   the gaps on the record from the copy (a fact already recorded always wins), and when
+   there is no record at all, KEEP the copy — deleting it would destroy the facts for good,
+   and it is what refills the record if the structure is added back. */
+function adoptLegacyFacts(ref, f){
+  const rec = window.EveStructures ? EveStructures.get(ref) : null;
+  if (!rec) return false;
+  const patch = {};
+  const tax = Number(f.tax);
+  // 0 was the "never entered" placeholder a structure facility was created with
+  if (rec.facilityTax == null && Number.isFinite(tax) && tax > 0) patch.facilityTax = tax;
+  const tids = (Array.isArray(f.rigs) ? f.rigs : []).map(r => r && r.tid).map(Number).filter(Number.isFinite);
+  if (!rec.rigs.length && tids.length) patch.rigs = tids;
+  if (rec.roleBonus == null && f.bonuses && typeof f.bonuses === 'object'){
+    const preset = EveStructures.roleBonuses(rec.typeId);
+    const want = { me: Number(f.bonuses.me) || 0, te: Number(f.bonuses.te) || 0, cost: Number(f.bonuses.cost) || 0 };
+    // only a hand-corrected set says anything the hull preset does not
+    if (want.me !== preset.me || want.te !== preset.te || want.cost !== preset.cost) patch.roleBonus = want;
+  }
+  if (Object.keys(patch).length) EveStructures.update(ref, patch);
+  return true;
+}
 function migrateFacilityRefs(){
   let changed = false;
   for (const p of profStore.profiles){
@@ -941,10 +982,14 @@ function migrateFacilityRefs(){
         continue;
       }
       if (f.ref !== ref){ f.ref = ref; changed = true; }
+      // no record to hand the facts to (removed in the manager, or never imported): the
+      // copy this facility still carries is the last one there is, so it stays put until
+      // the structure is back — the facility says so on its card and refuses to compute
+      if (!adoptLegacyFacts(ref, f)) continue;
       // a facility renamed inside a profile loses that alias — the record's own name is
       // what every tool shows now, so leave a note on the record rather than drop it
-      const rec = window.EveStructures ? EveStructures.get(ref) : null;
-      if (rec && f.label && f.label !== rec.name)
+      const rec = EveStructures.get(ref);
+      if (f.label && f.label !== rec.name)
         EveStructures.addConflict(ref, `Industry profile "${p.name}" called this structure `
           + `"${f.label}"; the record's own name is used everywhere now`);
       for (const k of FAC_COPIED) if (k in f){ delete f[k]; changed = true; }
@@ -1129,7 +1174,12 @@ function renderFacilities(){
       gone.style.cssText = 'margin-top:6px;padding:6px 10px;border:1px solid #6b571f;background:#3a2f14;'
         + 'color:var(--amber);border-radius:8px;font-size:12px';
       gone.textContent = 'this structure is no longer in the Structure Manager — nothing can be computed '
-        + 'here until it is added back (or this facility is removed)';
+        + 'here until it is added back (or this facility is removed)'
+        // the pre-refactor copy this profile still carries is the only surviving one: it is
+        // kept untouched and goes back onto the record the moment the structure returns
+        + (FAC_COPIED.some(k => k in f)
+          ? '. The rigs and owner-set tax this profile still carries from before are kept and go '
+            + 'back onto the record when it does' : '');
       card.appendChild(gone);
       box.appendChild(card);
       return;
@@ -2460,7 +2510,14 @@ function treeTsv(res){
   }
   // rigs/tax edited in the Structure Manager (this tab or another) change every number
   // on this page — re-render the facilities and flag the table as stale
+  let adopting = false;        // migrateFacilityRefs writes records, which fires this again
   if (window.EveStructures) EveStructures.subscribe(() => {
+    if (!adopting){
+      adopting = true;
+      // a structure added back in the manager reclaims the legacy facts the profile kept
+      try{ migrateFacilityRefs(); }
+      finally{ adopting = false; }
+    }
     clearEngines();            // the cached engines were built from the old facts
     renderFacilities(); markStale();
   });

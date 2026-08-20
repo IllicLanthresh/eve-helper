@@ -159,7 +159,10 @@ renaming, editing and removing happen in the
 [Structure Manager](#structure-manager-structureshtml), which the modal's footer link and
 the **manage structures** link next to the market selector both open (deep-linked to the
 selected structure's record). Removing a structure there drops it from the market list and
-falls back to Jita. The saved list is **shared with every tool**. This
+falls back to Jita — including live in an already-open Sell tab, which restores the NPC
+hub's own broker fee, clears the structure's order book and says why. Typing in the broker
+box records the structure's owner-set rate; **emptying** it records *not known* rather than
+0%. The saved list is **shared with every tool**. This
 needs the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
 `esi-search.search_structures.v1` scopes — if your character logged in before these were
 requested, log in again ("+ alt" on the same character works).
@@ -552,7 +555,14 @@ conflicts). Clicking a card opens its editor:
   one records an override on that structure; *reset to hull preset* clears it again. Every
   Industry profile routing work here computes with these.
 - **Notes**, and a **used by** line naming the tools and profiles currently pointing at
-  the structure. Removing a structure asks for confirmation and names exactly that.
+  the structure. Removing a structure asks for confirmation, names exactly that, and is
+  honest about the cost: Sell and Mine fall back to their own defaults, while an Industry
+  facility routing work there **stops computing** until the structure is added back (the
+  pre-refactor facts a profile still carries from before the import are kept for exactly
+  that case, and go back onto the record when it returns).
+
+A deep link to a record that is not in the list any more (a tool still pointing at a
+removed structure) says so at the top of the page instead of doing nothing.
 
 Everything saves the moment it changes. `structures.html#s<id>` opens straight to one
 record — that is what the *manage* links on the Sell, Mine and Industry pages use — and
@@ -595,22 +605,41 @@ load that file (Industry, the manager) hand it to the store with `useTypeMap()`,
 caches a compact copy so the Sell and Mine pages get sizes without fetching 2 MB.
 
 On any page, `structures.js` imports the old per-tool copies **once** (a marker key makes
-it idempotent, so later hand edits are never clobbered) and logs a summary to the console:
+it idempotent, so later hand edits are never clobbered) and logs a summary to the console.
+The passes run Mine → Industry → Sell, because the first two carry the structure's identity
+and the Sell one carries none; each pass is guarded on its own and **writes the marker as
+soon as it finishes**, so a pass that throws (a hand-edited profile blob, a full origin)
+never makes the passes that already succeeded run a second time over your edits.
 
-- Sell's `structBroker` map → `marketBroker` (a blank entry is *not known*, never 0%);
 - Mine's facility snapshot rig → `reproRig`. The refinery itself gets a record either way —
   built from the snapshot when it was never in the saved list, and created even when no rig
   was ever recorded, so the Mine page's *"configure it in the structure manager"* note
   always has a record to point at;
-- every Industry profile's per-facility rigs and tax → `rigs` / `facilityTax`;
+- every Industry profile's per-facility rigs and tax → `rigs` / `facilityTax`. A legacy
+  `tax: 0` is **not** imported: 0 was the value a structure facility was created with, i.e.
+  the "never entered" placeholder, so importing it would both defeat the record's own
+  *"— (not recorded)"* prompt and let a placeholder overwrite a real rate;
 - every Industry profile's hand-corrected role bonuses → `roleBonus` (bonuses left at the
   hull preset carry no information and are not imported), after which the facility keeps
-  only its reference to the structure and its own routing.
+  only its reference to the structure and its own routing;
+- Sell's `structBroker` map → `marketBroker` (a blank entry is *not known*, never 0%), and
+  **only onto a structure that still has a record**. The old Sell page rewrote that map on
+  every market switch and nothing ever pruned it, so it also names structures that were
+  merely selected once or deliberately deleted since; importing those would resurrect them
+  in every picker and dropdown.
+
+A record another pass created from a thinner source keeps its facts but takes the identity a
+later pass can supply — the Sell pass has none of its own, and the ESI identity cache it
+would fall back to is wiped by the topbar's *↻ refresh ESI data*, so whichever pass runs
+first must not pin a nameless record forever.
 
 When two profiles disagree about the same structure, the **most recently saved** wins —
 read as: the active profile last, the rest in store order — and a **conflict note** naming
-both profiles and what was kept is stored on the record. The manager shows it on the card
-with a **dismiss** button. Nothing is ever dropped silently.
+both profiles and what was kept is stored on the record (identical notes are never stored
+twice). The manager shows it on the card with a **dismiss** button. Nothing is ever dropped
+silently. The Industry page applies the same rule when it hands legacy `{preset}` rig rows
+over, and it never deletes a profile's copy of a structure's facts unless a record is there
+to take them.
 
 ---
 

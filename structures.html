@@ -125,6 +125,9 @@
     <button id="btnAdd" type="button" class="primary">+ add structure…</button>
     <span id="sdeStatus"></span>
   </div>
+  <!-- a #s<id> deep link whose record is not here any more: the tool that sent the user
+       said "fix it in the manager", so the manager has to say what happened -->
+  <div id="hashMsg" class="warn" style="font-size:13px;margin-top:10px" hidden></div>
   <div id="list"></div>
   <details class="notes">
     <summary>What ESI does and doesn't tell us</summary>
@@ -298,9 +301,14 @@ function render(){
     x.addEventListener('click', e => {
       e.stopPropagation();
       const used = usedBy(rec.id);
+      // be exact about what "removed" costs each tool: Sell and Mine fall back to their
+      // own defaults, but an Industry facility routes work to a structure it can no
+      // longer read, so it stops computing until the structure is added back
       const where = used.length ? '\n\nIt is currently used by:\n· ' + used.join('\n· ')
-        + '\n\nThose will fall back to their defaults.' : '\n\nNothing is using it right now.';
-      if (!window.confirm(`Remove "${rec.name}" and everything recorded about it?${where}`)) return;
+        + '\n\nSell and Mine fall back to their defaults; an Industry facility cannot be computed '
+        + 'until this structure is added back.' : '\n\nNothing is using it right now.';
+      if (!window.confirm(`Remove "${rec.name}" and everything recorded about it — the owner-set `
+          + `rates, the rigs and the notes?${where}`)) return;
       open.delete(rec.id);
       S.remove(rec.id);
       render();
@@ -1149,11 +1157,22 @@ $('btnAdd').addEventListener('click', async () => {
 // rig-inference wizard on it (that is how the Industry page hands a structure over)
 let wizOpened = null;
 function applyHash(){
+  const msg = $('hashMsg');
+  msg.hidden = true;
+  msg.textContent = '';
   const m = /^#s(\d+)(\/rigs)?$/.exec(location.hash || '');
   if (!m) return;
   const id = Number(m[1]);
   const rec = S.get(id);
-  if (!rec) return;
+  if (!rec){
+    // the tool that linked here still points at this structure, so silently doing nothing
+    // would be a dead end — say it is gone and how to get it back
+    msg.hidden = false;
+    msg.textContent = `structure ${id} is not in this list — it was removed here, or never added. `
+      + 'Add it back with “+ add structure…” above (search finds it by name) and everything that '
+      + 'points at it works again.';
+    return;
+  }
   open.add(id);
   render();
   const el = document.getElementById('s' + id);

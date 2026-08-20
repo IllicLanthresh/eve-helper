@@ -211,7 +211,9 @@ async function baseContext(browser, storage, opts) {
   const context = await browser.newContext();
   await H.seedStorage(context, null, storage);
   await H.mockEsi(context, Object.assign({ skills: {}, standings: {} }, opts.esi || {}));
-  await context.route('**/data/industry.json', r => r.fulfill(H.json(IND_FIXTURE)));
+  // opts.industry overrides the catalog for one test (an extra rig domain, say) without
+  // shifting the counts every other test asserts against the shared fixture
+  await context.route('**/data/industry.json', r => r.fulfill(H.json(opts.industry || IND_FIXTURE)));
   await context.route('**/data/ores.json', r => r.fulfill(H.json(ORES_FIXTURE)));
   return context;
 }
@@ -256,6 +258,17 @@ async function openManager(browser, server, storage, opts) {
   // the catalog has loaded and the list has been rendered from it — the page's own marker
   await page.waitForFunction(() => typeof D !== 'undefined' && D !== null
     && document.getElementById('sdeStatus').className === 'ok', null, { timeout: 20000 });
+  return { context, page, close: () => context.close() };
+}
+
+async function openIndustry(browser, server, storage, opts) {
+  opts = opts || {};
+  const context = await baseContext(browser, storage, opts);
+  await mockIdentity(context, opts.identity || {});
+  const page = await context.newPage();
+  H.watchPage(page, 'industry');
+  await page.goto(server.url + '/industry.html');
+  await page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
   return { context, page, close: () => context.close() };
 }
 
@@ -1024,6 +1037,283 @@ H.run('structures-manager', async () => {
         document.getElementById('compStatus').textContent), null, { timeout: 15000 });
       check('...and computing says so instead of inventing a facility', true);
       await context.close();
+    }
+
+    /* ================================================================================
+       (g) the review's findings, each pinned by the case that used to break
+       ================================================================================ */
+    section('removing a record never destroys the last surviving copy of its facts');
+    {
+      // structures.js imports on the FIRST load of any page, so the facts can already be
+      // central before Industry is ever opened. If the record is then removed in the
+      // manager, this profile's pre-refactor copy is the only one left — deleting it here
+      // (which is what the facility migration used to do, unconditionally) would lose the
+      // owner-set tax, the rigs and the corrected role bonuses for good.
+      const storage = [auth(), infoCache([RAITARU]),
+        ['eveHelper.structMigration.v1',
+          { v: 1, sell: 1, mine: 1, mineStruct: 1, industry: 1, industryBonus: 1 }],
+        ['eveHelper.structures.v1', { v: 2, structures: [] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [legacyFacility({ tax: 3, rigs: [RIG_T2], bonuses: { me: 1, te: 18, cost: 3 } })]),
+        ] }]];
+      const s = await openIndustry(browser, server, storage);
+      const page = s.page;
+      eq('the structure really is out of the store', await page.evaluate(() => EveStructures.saved().length), 0);
+      const fac = await page.evaluate(() => activeProfile().facilities[0]);
+      eq('the facility keeps the owner-set tax it carries', fac.tax, 3);
+      eq('...its rigs', JSON.stringify((fac.rigs || []).map(r => r.tid)), JSON.stringify([RIG_T2]));
+      eq('...and the corrected role bonuses', fac.bonuses && fac.bonuses.te, 18);
+      const goneTxt = await page.$eval('#facList .facGone', el => el.textContent);
+      check('the card says the structure is gone', /no longer in the Structure Manager/.test(goneTxt), goneTxt);
+      check('...and that what it still carries is kept', /kept and go back onto the record/.test(goneTxt), goneTxt);
+
+      section('...and adding it back hands them straight over to the record');
+      await page.evaluate(e => EveStructures.remember(e), IDENT[RAITARU]);
+      await page.waitForFunction(id => {
+        const f = EveStructures.facts(id);
+        return f && f.facilityTax === 3;
+      }, RAITARU, { timeout: 15000 });
+      const f = await factsOf(page, RAITARU);
+      eq('the owner-set tax is on the record again', f.facilityTax, 3);
+      eq('...the rigs too', f.rigs.join(','), String(RIG_T2));
+      eq('...and the corrected role bonus', f.bonuses.te, 18);
+      const fac2 = await page.evaluate(() => activeProfile().facilities[0]);
+      check('...after which the profile stops carrying its own copy',
+        fac2.tax === undefined && fac2.rigs === undefined && fac2.bonuses === undefined, JSON.stringify(fac2));
+      eq('...and the facility computes again',
+        await page.evaluate(() => facilityToEngine(activeProfile().facilities[0]).tax), 3);
+      await s.close();
+    }
+
+    section('a record created without identity takes it from the pass that has one');
+    {
+      // the oldest Sell blob carried a list with nothing but ids, and the ESI identity
+      // cache it would otherwise fall back to is wiped by the topbar's "refresh ESI data".
+      // The Industry profile still knows the hull, the system and the security band.
+      const storage = [auth(),
+        ['eveSellHelper.v2', { inv: '', brokerFee: '2.20',
+          structures: [{ id: RAITARU, name: 'structure ' + RAITARU }],
+          structBroker: { [RAITARU]: '4.5' }, market: 's:' + RAITARU, ticked: [] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [legacyFacility({ tax: 3, rigs: [RIG_T2] })]),
+        ] }]];
+      const s = await openManager(browser, server, storage);
+      const rec = await recOf(s.page, RAITARU);
+      eq('the placeholder name gives way to the real one', rec.name, 'Test Raitaru');
+      eq('...the hull comes over', rec.typeId, 35825);
+      eq('...the system, so cost indices resolve at all', rec.systemId, IND_SYS);
+      near('...the security, so rigs are computed in the right band', rec.security, -0.42, 1e-9);
+      eq('...and the rig size the structure map derives from the hull', rec.size, 'M');
+      const f = await factsOf(s.page, RAITARU);
+      eq("Sell's rate still lands on that same record", f.marketBroker, 4.5);
+      eq('...next to the Industry facts', f.facilityTax + '/' + f.rigs.join(','), '3/' + RIG_T2);
+      eq('...on ONE record, not two', await s.page.evaluate(() => EveStructures.saved().length), 1);
+      await expand(s.page, RAITARU);
+      const body = await s.page.$eval('#s' + RAITARU + ' .stbody', el => el.textContent);
+      check('...so the rig catalog knows what fits it', !/unknown structure type/.test(body), body.slice(0, 160));
+      await s.close();
+    }
+
+    section('the Sell import never resurrects a structure that was removed');
+    {
+      // the old Sell page rewrote structBroker on EVERY market switch and nothing pruned
+      // it, so it still names a structure that has since been deleted
+      const storage = [auth(), infoCache([RAITARU, KEEPSTAR]),
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[RAITARU]] }],
+        ['eveSellHelper.v2', { inv: '', brokerFee: '2.20',
+          structBroker: { [RAITARU]: '4.5', [KEEPSTAR]: '3' }, market: 'jita', ticked: [] }]];
+      const s = await openManager(browser, server, storage);
+      eq('the deleted structure stays deleted', await recOf(s.page, KEEPSTAR), null);
+      eq('...so the saved list still holds exactly the one structure',
+        await s.page.evaluate(() => EveStructures.saved().length), 1);
+      eq('...while the rate of the structure that IS saved still lands',
+        (await factsOf(s.page, RAITARU)).marketBroker, 4.5);
+      const listed = await s.page.$eval('#list', el => el.textContent);
+      check('...and no nameless "structure <id>" card appears', !/structure 1035/.test(listed), listed.slice(0, 160));
+      await s.close();
+    }
+
+    section('a legacy facility tax of 0 is the "never entered" placeholder, not a fact');
+    {
+      const s = await openManager(browser, server, [auth(), infoCache([RAITARU]),
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [legacyFacility({ tax: 0, rigs: [RIG_T2] })]),
+        ] }]]);
+      eq('nothing is recorded for a tax nobody ever typed',
+        (await factsOf(s.page, RAITARU)).facilityTax, null);
+      const tags = await s.page.$eval('#s' + RAITARU + ' .tags', el => el.textContent);
+      check('...so the card asks for it instead of showing a recorded 0%', /tax —/.test(tags), tags);
+      eq('...and the rigs beside it still came over',
+        (await factsOf(s.page, RAITARU)).rigs.join(','), String(RIG_T2));
+      await s.close();
+    }
+
+    section('...and it can never overwrite a rate another profile did record');
+    {
+      // the ACTIVE profile (which wins every tie) still carries the untouched 0
+      const s = await openManager(browser, server, [auth(), infoCache([RAITARU]),
+        ['eveHelper.industryProfiles.v1', { active: 'pB', profiles: [
+          profile('pA', 'Alpha', [legacyFacility({ tax: 2.5, rigs: [RIG_T2] })]),
+          profile('pB', 'Bravo', [legacyFacility({ tax: 0, rigs: [RIG_T2] })]),
+        ] }]]);
+      const f = await factsOf(s.page, RAITARU);
+      eq('the real rate survives the placeholder', f.facilityTax, 2.5);
+      check('...with no note claiming the two profiles disagreed about tax',
+        !f.conflicts.some(c => /facility tax/.test(c.text)), JSON.stringify(f.conflicts));
+      await s.close();
+    }
+
+    section('emptying the Sell broker box records "not known", never 0%');
+    {
+      const context = await baseContext(browser, sellOnlyLegacy(), {
+        esi: { skills: { accounting: 5, brokerRelations: 5 }, standings: {},
+               typeIds: SELL_TYPE_IDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'sell-broker');
+      await page.goto(server.url + '/index.html');
+      await page.waitForFunction(() => hub().structure === 1035466617946
+        && document.getElementById('brokerFee').value === '4.5'
+        && /⚡/.test(document.body.textContent), null, { timeout: 20000 });
+      await page.fill('#brokerFee', '');
+      await page.dispatchEvent('#brokerFee', 'change');
+      await page.waitForFunction(id => EveStructures.facts(id).marketBroker === null,
+        KEEPSTAR, { timeout: 15000 });
+      eq('the record says "not known" rather than an owner-set 0%',
+        await page.evaluate(id => EveStructures.facts(id).marketBroker, KEEPSTAR), null);
+      const src = await page.$eval('#feeSrc', el => el.textContent);
+      check('...and the fee line asks for the rate again', /none recorded yet/.test(src), src);
+      await page.fill('#brokerFee', '3.5');
+      await page.dispatchEvent('#brokerFee', 'change');
+      await page.waitForFunction(id => EveStructures.facts(id).marketBroker === 3.5, KEEPSTAR);
+      eq('...while a real rate is still written straight through',
+        await page.evaluate(id => EveStructures.facts(id).marketBroker, KEEPSTAR), 3.5);
+      await context.close();
+    }
+
+    section('removing the selected market structure in another tab resets Sell cleanly');
+    {
+      const context = await baseContext(browser, sellOnlyLegacy(), {
+        esi: { skills: { accounting: 5, brokerRelations: 5 }, standings: {},
+               typeIds: SELL_TYPE_IDS, books: {} },
+      });
+      await mockIdentity(context);
+      const sell = await context.newPage();
+      H.watchPage(sell, 'sell-crosstab');
+      await sell.goto(server.url + '/index.html');
+      await sell.waitForFunction(() => hub().structure === 1035466617946
+        && document.getElementById('brokerFee').value === '4.5'
+        && /⚡/.test(document.body.textContent), null, { timeout: 20000 });
+      // a book fetched AT the structure: it must not survive under an NPC hub's name
+      await sell.evaluate(() => state.esi.set('probe', { sell: 1 }));
+      const mgr = await context.newPage();
+      H.watchPage(mgr, 'manager-crosstab');
+      await mgr.goto(server.url + '/structures.html');
+      await mgr.waitForFunction(id => !!EveStructures.get(id), KEEPSTAR, { timeout: 20000 });
+      await mgr.evaluate(id => EveStructures.remove(id), KEEPSTAR);
+      await sell.waitForFunction(() => document.getElementById('market').value === 'jita',
+        null, { timeout: 15000 });
+      eq('the market falls back to an NPC hub', await sell.$eval('#market', el => el.value), 'jita');
+      check("...and stops calling itself a structure market",
+        await sell.evaluate(() => marketWasStructure === false));
+      check("...so the structure's owner-set rate is out of the broker box",
+        await sell.$eval('#brokerFee', el => el.value) !== '4.5',
+        await sell.$eval('#brokerFee', el => el.value));
+      eq('...the structure order book is dropped', await sell.evaluate(() => state.esi.size), 0);
+      const st = await sell.$eval('#esiStatus', el => el.textContent);
+      check('...and the page says why', /removed in the Structure Manager/.test(st), st);
+      await sell.evaluate(() => persist());
+      const blob = await sell.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')));
+      eq('...with the dead market not persisted', blob.market, 'jita');
+      check("...nor the structure's rate persisted as the NPC-hub broker fee",
+        String(blob.brokerFee) !== '4.5', String(blob.brokerFee));
+      await context.close();
+    }
+
+    section('a corrupt legacy blob cannot abort the import of the others');
+    {
+      const storage = [auth(), infoCache([TATARA]),
+        ['eveHelper.mine.v1', { fac: { struct: 's:' + TATARA, rig: 't2', sec: 'ns', imp: 4,
+                                       structInfo: IDENT[TATARA] } }],
+        // hand-edited/corrupt: facilities is not an array, and one rig list is a string
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          { id: 'pA', name: 'Alpha', facilities: { nope: true } },
+          { id: 'pB', name: 'Bravo', facilities: [{ uid: 'f9', npc: false, id: RAITARU,
+            label: 'Test Raitaru', typeId: 35825, rigs: 'not-a-list', tax: 2 }] },
+        ] }],
+        ['eveSellHelper.v2', { inv: '', structBroker: { [TATARA]: '1.5' }, market: 'jita', ticked: [] }]];
+      const s = await openManager(browser, server, storage);
+      eq("the Mine tool's rig still came over", (await factsOf(s.page, TATARA)).reproRig, 't2');
+      eq("...and Sell's rate for the same structure with it",
+        (await factsOf(s.page, TATARA)).marketBroker, 1.5);
+      eq('...as did the tax of the profile that IS readable',
+        (await factsOf(s.page, RAITARU)).facilityTax, 2);
+      const mark = await s.page.evaluate(() =>
+        JSON.parse(localStorage.getItem('eveHelper.structMigration.v1')));
+      check('every pass is marked done, so none of them runs over a later edit',
+        mark && mark.sell === 1 && mark.mine === 1 && mark.mineStruct === 1
+        && mark.industry === 1 && mark.industryBonus === 1, JSON.stringify(mark));
+      await s.close();
+    }
+
+    section('an import that runs again cannot pile up the same conflict note');
+    {
+      const s = await openManager(browser, server, industryConflictLegacy());
+      eq('the first run leaves one note per disagreeing fact',
+        (await factsOf(s.page, RAITARU)).conflicts.length, 2);
+      // exactly what a marker that never landed (a full origin) used to do on every load
+      await s.page.evaluate(() => {
+        for (let i = 0; i < 2; i++) {
+          localStorage.removeItem('eveHelper.structMigration.v1');
+          EveStructures.migrateLegacy();
+        }
+      });
+      const f = await factsOf(s.page, RAITARU);
+      eq('...and two further runs add none', f.conflicts.length, 2);
+      eq('...nor a duplicate record', await s.page.evaluate(() => EveStructures.saved().length), 1);
+      eq('...with the same values still recorded', f.facilityTax + '/' + f.rigs.join(','), '3/' + RIG_T2);
+      await s.close();
+    }
+
+    section('a deep link to a structure that is not here any more says so');
+    {
+      const s = await openManager(browser, server,
+        [auth(), ['eveHelper.structures.v1', { v: 2, structures: [IDENT[TATARA]] }]],
+        { hash: '#s' + RAITARU });
+      await s.page.waitForFunction(() => !document.getElementById('hashMsg').hidden,
+        null, { timeout: 15000 });
+      const msg = await s.page.$eval('#hashMsg', el => el.textContent);
+      check('the page names the structure the link asked for', new RegExp(String(RAITARU)).test(msg), msg);
+      check('...says it is not in the list', /not in this list/.test(msg), msg);
+      check('...and how to get it back', /add structure/.test(msg), msg);
+      await s.close();
+    }
+
+    section('legacy preset rigs follow the same "active profile wins" rule as everything else');
+    {
+      const EQ1 = 37301, EQ2 = 37302;
+      const fixture = JSON.parse(JSON.stringify(IND_FIXTURE));
+      fixture.marketGroups[9] = ['Ship Equipment', 0];      // the legacy scope's top group
+      fixture.rigs[EQ1] = { n: 'Standup M-Set Equipment Manufacturing Material Efficiency I',
+        sz: 'M', me: 2, te: 0, cost: 0, sec: SEC_RIG, scope: [G.PLATE], act: ['man'], fit: FIT,
+        dom: 'Equipment' };
+      fixture.rigs[EQ2] = { n: 'Standup M-Set Equipment Manufacturing Material Efficiency II',
+        sz: 'M', me: 2.4, te: 0, cost: 0, sec: SEC_RIG, scope: [G.PLATE], act: ['man'], fit: FIT,
+        dom: 'Equipment' };
+      const presetFac = preset => Object.assign(legacyFacility({ tax: 3 }), { rigs: [{ preset, scope: [9] }] });
+      const storage = [auth(), infoCache([RAITARU]),
+        ['eveHelper.industryProfiles.v1', { active: 'pB', profiles: [
+          profile('pA', 'Alpha', [presetFac('t1me')]),
+          profile('pB', 'Bravo', [presetFac('t2me')]),
+        ] }]];
+      const s = await openIndustry(browser, server, storage, { industry: fixture });
+      const f = await factsOf(s.page, RAITARU);
+      eq('the ACTIVE profile’s mapped rig is the one on the record', f.rigs.join(','), String(EQ2));
+      check('...and the other profile’s is not dropped in silence',
+        f.conflicts.some(c => /disagreed about rigs/.test(c.text)
+          && /Alpha/.test(c.text) && /Bravo/.test(c.text)), JSON.stringify(f.conflicts));
+      await s.close();
     }
 
     /* ================================================================================

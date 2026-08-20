@@ -177,9 +177,16 @@ H.run('fees', async () => {
     // the central structure record, so the blob drops it and nothing is lost
     check('...and the old per-structure rate map', persisted.structBroker === undefined,
       JSON.stringify(persisted.structBroker));
-    const moved = await s.page.evaluate(() => EveStructures.facts(1035466617946));
-    check('the owner-set rate landed on the central structure record',
-      moved && moved.marketBroker === 3.75, JSON.stringify(moved));
+    // ...and the rate in it is imported only where a record exists to take it. The old
+    // Sell tool rewrote structBroker on EVERY market switch and never pruned it, so an
+    // entry with no saved structure behind it is one that was removed: importing it would
+    // put a deleted structure back in every picker, dropdown and manager list. (The rate
+    // of a structure that IS saved still lands — see "player structures are untouched".)
+    const moved = await s.page.evaluate(() => EveStructures.get(1035466617946));
+    check('a leftover rate whose structure has no record is dropped, not resurrected',
+      moved === null, JSON.stringify(moved));
+    eq('...so nothing is invented in the saved list either',
+      await s.page.evaluate(() => EveStructures.saved().length), 0);
     await s.close();
 
     /* ---------- structures keep their own behaviour ---------- */
