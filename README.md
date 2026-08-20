@@ -178,10 +178,31 @@ remembered.
 6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
    plan. Every row carries the item's icon (CCP's public image CDN — no login, no scope),
    so a row can be matched against the stack in your hangar by eye; types the CDN has no
-   icon for — many SKINs — leave the box blank rather than showing a broken image. The table opens sorted by **ISK/slot-day**, descending. Filters are a viewing aid
-   only — ticked rows hidden by a filter stay in the import list (the toolbar says so).
-   Selection buttons (top N / all / none) act on the filtered rows and tick only listing
-   rows (INSTANT items have no price to import).
+   icon for — many SKINs — leave the box blank rather than showing a broken image. The table opens sorted by **ISK/slot-day**, descending.
+
+   **The screen is the order.** The `#` column is the row's position *in the view you are
+   looking at* — it renumbers every time you sort or filter, and it is the only ordering
+   the tool has. `Tick top N` works down that order from the top, the import list and both
+   TSVs come out in it, and there is no second ranking hiding behind any of them. (Until this was fixed,
+   `#` was a fixed position by expected net ISK, assigned when the plan was built and
+   never moved by sorting — so `Tick top N` ticked rows that were nowhere near the top of
+   the screen, and nothing on the page said which order was in charge.)
+
+   `Tick top N` passes over rows it cannot tick — INSTANT ones (a ⚡ where the checkbox
+   would be), unsellable ones (they carry a flag), and rows the filters are hiding — so
+   "top 2" can land on `#1` and `#3`. Both reasons are visible on the row itself.
+
+   **The three selection buttons obey one rule: a bulk button *sets* the import list, it
+   never adds to it.** Whatever it does not tick, it unticks — everywhere, including rows a
+   filter is hiding and stale ticks left behind on rows that have since become INSTANT.
+   Only the per-row checkbox is additive. That is what makes "top 20" mean twenty: after
+   any of the three, every ticked row is on screen, so the count in the echo is checkable
+   by eye. It also means a bulk press discards a deliberate hand-tick on an unsellable row
+   — the buttons say so, and `Tick top N` / `All` never tick one themselves.
+
+   Filters remain a viewing aid: a row you tick *by hand* and then filter away stays in
+   the import list, and the toolbar says so (`⚠N hidden`). After a bulk button there is
+   nothing for that warning to report.
 7. **Export — two artifacts**:
    - **Import list (orders & splits)**: every ticked row as `Item name ⇥ Price` for the
      game's multi-sell import. The tick column is labelled *Import* and only ORDER/SPLIT
@@ -200,7 +221,12 @@ remembered.
    the working numbers the table keeps in tooltips (trend %/week, percentile rank, undercut
    velocity, the broker fee at risk). *My orders* has its own **Copy TSV** with the triage
    diagnostics: queue ahead, days to fill, chance, trend, the hold / reprice / dump values
-   and the relist fee.
+   and the relist fee. Each states its scope on its button, because the two differ on
+   purpose: the Sell one is the whole analysis, filters ignored (it carries an *In import
+   list* column and the rows that could not be priced), while *My orders* copies the orders
+   its table is showing — a filtered table there no longer copies a second, larger set
+   while the status line claims it copied what you were looking at. Both come out in the
+   order their table is in.
 
 ## The decision layer
 
@@ -250,8 +276,12 @@ live book — no extra ESI endpoint), all recomputed locally when you change a c
   cleared today's asking price, and a flat count would report a comfortable probability for
   a price nobody has paid since spring. The row's tooltip quotes both numbers when they
   disagree — *that gap is the difference between a dip and a decay*.
-- **ISK/slot-day** — expected net ÷ expected days on the market, the ranking column.
-  INSTANT rows have no value here (they use no slot) and sort to the bottom of it.
+- **ISK/slot-day** — expected net ÷ expected days on the market, and the column the table
+  opens sorted by: market slots, not ISK, are what you run out of. INSTANT rows have no
+  value here (they use no slot) and sort to the bottom of it. Without history there is no
+  fill estimate and therefore no rate at all, so the column is empty and the sort falls
+  through to expected net — the header tooltip counts the rows that have no rate yet
+  rather than letting the ▼ imply a ranking that is not happening.
 
 **The fee guard.** A listing whose fill chance is under the patience mode's floor is never
 recommended, whatever it would be worth if it filled:

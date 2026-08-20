@@ -515,6 +515,48 @@ H.run('orders', async () => {
       && order.slice(0, 5).every(r => r.stalled), JSON.stringify(order));
     eq('...topped by the biggest pile of frozen ISK', order[0].frozen, 20000);
 
+    /* The indicator used to decide "is this column text?" from a hard-coded list of three
+       keys while the comparator decided it from the value's own type, so Verdict — which
+       holds strings — sorted A→Z and drew ▼. An arrow pointing the opposite way to the
+       order it labels is the same defect as a # column ranking by something invisible. */
+    const arrowFor = async key => {
+      await page.click(`#ordTbl thead th[data-key="${key}"]`);
+      await page.waitForFunction(k => state.ordSortKey === k, key);
+      return page.evaluate(k => {
+        const th = document.querySelector(`#ordTbl thead th[data-key="${k}"]`);
+        const by = new Map(ordRows().map(r => [r.orderId, r]));
+        return {
+          arrow: th.classList.contains('s-asc') ? 'asc' : th.classList.contains('s-desc') ? 'desc' : 'none',
+          // the sell block only: buys are sorted separately, below their own separator
+          values: [...document.querySelectorAll('#ordBody tr[data-order-id]')]
+            .map(tr => by.get(Number(tr.dataset.orderId)))
+            .filter(r => r && !r.isBuy).map(r => r[k]),
+          text: ordRows().some(r => typeof r[k] === 'string'),
+        };
+      }, key);
+    };
+    // compared exactly the way the page compares them — including a text column's empty
+    // cells — so this checks the arrow, not the locale
+    const ascending = a => a.values.every((x, i) => i === 0 || (a.text
+      ? String(a.values[i - 1] == null ? '' : a.values[i - 1])
+          .localeCompare(String(x == null ? '' : x)) <= 0
+      : (a.values[i - 1] == null ? -Infinity : a.values[i - 1]) <= (x == null ? -Infinity : x)));
+    for (const key of ['verdict', 'name', 'iskTied']) {
+      const a = await arrowFor(key);
+      const varied = new Set(a.values.map(String)).size > 1;
+      check(`the ${key} column has something to order`, varied, JSON.stringify(a.values));
+      check(`the ${key} column draws an arrow at all`, a.arrow !== 'none', a.arrow);
+      eq(`...pointing the way the ${key} column is actually ordered`,
+        a.arrow, ascending(a) ? 'asc' : 'desc');
+      const b = await arrowFor(key);          // a second click reverses both
+      eq(`...and reversing ${key} reverses the arrow with it`,
+        b.arrow, ascending(b) ? 'asc' : 'desc');
+      check(`...the second click really reversed ${key}`, b.arrow !== a.arrow, a.arrow + '->' + b.arrow);
+    }
+    check('Verdict is a text column, so it is the one the old hard-coded list missed',
+      (await arrowFor('verdict')).text, 'verdict holds strings');
+    await page.evaluate(() => { state.ordSortKey = 'stalledIsk'; state.ordSortDir = -1; renderOrders(); });
+
     /* ---------- (k) the relist fee, unverified and overridable ---------- */
     section('the relist fee');
     eq('it is computed from the broker rate and Advanced Broker Relations',
@@ -640,6 +682,39 @@ H.run('orders', async () => {
       anyBuy === false, JSON.stringify(ids));
     await page.uncheck('#ordShowBuy');
 
+    /* Copy TSV used to read ordRows() directly, so it copied every order while the table
+       showed a filtered handful and the status line still said "copied N orders". The Sell
+       side announces its hidden rows; this one said nothing at all. */
+    await setFlt('dump');
+    const filteredTsv = await page.evaluate(() => ({
+      shown: document.querySelectorAll('#ordBody tr[data-order-id]').length,
+      count: document.getElementById('ordCount').textContent,
+      lines: ordTsv().split('\n').length - 1,
+      names: ordTsv().split('\n').slice(1).map(l => l.split('\t')[21]),
+    }));
+    check('the verdict filter really narrowed the table',
+      filteredTsv.shown > 0 && /\d+\/\d+ orders/.test(filteredTsv.count), filteredTsv.count);
+    eq('Copy TSV hands over the orders the table is showing, not a second set',
+      filteredTsv.lines, filteredTsv.shown);
+    check('...and every copied row really carries that verdict',
+      filteredTsv.names.every(v => v === 'CANCEL & DUMP'), JSON.stringify(filteredTsv.names));
+    await page.click('#btnOrdTsv');
+    await page.waitForFunction(n => document.getElementById('copyStatusOrd').textContent
+      === `copied ${n} orders`, filteredTsv.shown);
+    eq('...and the status line counts what it actually copied',
+      await page.textContent('#copyStatusOrd'), `copied ${filteredTsv.shown} orders`);
+
+    await page.evaluate(() => { document.getElementById('copyStatusOrd').textContent = ''; });
+
+    await page.fill('#ordFilter', 'zzz-no-such-order');
+    await page.dispatchEvent('#ordFilter', 'input');
+    await page.waitForFunction(() => state.ordFilter === 'zzz-no-such-order');
+    eq('the name filter scopes it too — nothing shown, nothing copied',
+      await page.evaluate(() => ordTsv().split('\n').length - 1), 0);
+    await page.fill('#ordFilter', '');
+    await page.dispatchEvent('#ordFilter', 'input');
+    await page.waitForFunction(() => state.ordFilter === '');
+
     await setFlt('all');
     eq('"all orders" puts every row back', (await shownIds()).length, allIds.length);
 
@@ -671,6 +746,9 @@ H.run('orders', async () => {
       && act.title.includes(act.charName) && act.title.includes('esi-ui.open_window.v1'),
       JSON.stringify(act.title));
 
+    // clear the shared status first: waiting on text an earlier click left behind would
+    // let this pass before the market window was ever requested
+    await page.evaluate(() => { document.getElementById('copyStatusOrd').textContent = ''; });
     await page.click(`#ordBody tr[data-order-id="${repId}"] button.rowact`);
     await page.waitForFunction(() => /copied/.test(document.getElementById('copyStatusOrd').textContent),
       null, { timeout: 10000 });

@@ -51,6 +51,7 @@
   thead th{position:sticky;top:0;background:#182130;color:var(--dim);font-weight:600;text-align:left;
     padding:7px 8px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap}
   thead th.num{text-align:right}
+  thead th.nosort{cursor:default}
   thead th.s-asc::after{content:' ▲';color:var(--cyan);font-size:10px}
   thead th.s-desc::after{content:' ▼';color:var(--cyan);font-size:10px}
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
@@ -329,9 +330,9 @@
     <span class="hint">import list:</span>
     <label for="topN" style="margin:0">top</label>
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
-    <button id="btnTop" type="button" title="tick the top N LIST/SPLIT rows">Tick top N</button>
-    <button id="btnAll" type="button" title="tick every LIST/SPLIT row passing the filters">All</button>
-    <button id="btnNone" type="button" title="untick everything, filters ignored">None</button>
+    <button id="btnTop" type="button" title="tick the first N tickable rows, top down&#10;replaces the whole import list&#10;passes over: ⚡ INSTANT · unsellable · filtered out">Tick top N</button>
+    <button id="btnAll" type="button" title="tick every row the filters show&#10;replaces the whole import list&#10;skips: INSTANT · unsellable">All</button>
+    <button id="btnNone" type="button" title="empty the import list&#10;filters ignored">None</button>
     <span class="sep"></span>
     <label for="fltType" style="margin:0">show</label>
     <select id="fltType" style="width:180px">
@@ -349,10 +350,10 @@
     <table id="tbl">
       <thead><tr>
         <th data-key="checked" title="tick: include in the import list&#10;INSTANT: no price to import — instant checklist instead">Import</th>
-        <th data-key="rank" class="num">#</th>
-        <th data-key="name">Item</th>
+        <th class="num nosort" title="position in the table as sorted&#10;renumbers when you sort or filter&#10;Tick top N works down this order">#</th>
+        <th data-key="name" title="the name as EVE spells it&#10;click a cell to copy it">Item</th>
         <th data-key="trendPctWk" title="chart: 120d daily average&#10;markers: best sell · list price · patient price&#10;sort: trend %/wk · click a cell for the full chart">History</th>
-        <th data-key="qty" class="num">Qty</th>
+        <th data-key="qty" class="num" title="units of it in the inventory you pasted">Qty</th>
         <th data-key="bestBuy" class="num" title="highest buy order covering the hub">Top buy ISK/u</th>
         <th data-key="bestSell" class="num" title="cheapest sell order at the hub">Sell ISK/u</th>
         <th data-key="margin" class="num" title="(sell − buy) ÷ buy&#10;negative: crossed market">Margin %</th>
@@ -366,9 +367,9 @@
         <th data-key="fillDays" class="num" title="queue at the price ÷ Vol/day&#10;queue: units already listed at or below it, yours excluded&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
         <th data-key="fillChance" class="num" title="chance of filling inside the patience window&#10;= share of past windows whose daily high reached the price&#10;carried to today by the trend, tempered by the queue">Chance %</th>
         <th data-key="perSlot" class="num" title="expected net ÷ expected days on the market&#10;INSTANT uses no slot — not ranked here">ISK/slot-day</th>
-        <th data-key="totalNet" class="num">Expected net ISK</th>
+        <th data-key="totalNet" class="num" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given">Expected net ISK</th>
         <th data-key="advTotal" class="num" title="listing plan net − instant net&#10;negative: instant is better">Order Δ ISK</th>
-        <th data-key="flags">Flags</th>
+        <th data-key="flags" title="warnings on the row · hover a chip for its numbers&#10;sorts by how many, not by how bad">Flags</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
     </table>
@@ -397,7 +398,7 @@
     <button id="btnCopyInst" type="button" title="every INSTANT item + the instant legs of ticked SPLITs&#10;format: Name ⇥ Qty">Copy instant list</button>
     <span id="copyStatusInst" class="hint"></span>
     <span class="sep"></span>
-    <button id="btnCopyTsv" type="button" title="the whole table + the working numbers it hides, tab-separated">Copy TSV</button>
+    <button id="btnCopyTsv" type="button" title="the whole table + the working numbers it hides, tab-separated&#10;every row, filters ignored — in the order on screen">Copy TSV</button>
     <span id="copyStatusTsv" class="hint"></span>
   </div>
 </section>
@@ -430,7 +431,7 @@
     </select>
     <span class="hint" id="ordCount"></span>
     <span class="sep"></span>
-    <button id="btnOrdTsv" type="button" title="every column + the diagnostics behind them, tab-separated">Copy TSV</button>
+    <button id="btnOrdTsv" type="button" title="every column + the diagnostics behind them, tab-separated&#10;copies the orders the filters show">Copy TSV</button>
     <span id="copyStatusOrd" class="hint"></span>
     <span class="hint">· cell → copy</span>
   </div>
@@ -452,12 +453,12 @@
   <div class="tablewrap">
     <table id="ordTbl">
       <thead><tr>
-        <th data-key="charName">Character</th>
-        <th data-key="name">Item</th>
+        <th data-key="charName" title="which of your logged-in characters owns the order">Character</th>
+        <th data-key="name" title="the name as EVE spells it&#10;click a cell to copy it">Item</th>
         <th title="chart: 120d daily average&#10;markers: your price · best competing sell&#10;a price the market left behind shows at a glance">History</th>
         <th data-key="price" class="num" title="what your order asks (sell) or offers (buy)">Your price</th>
         <th data-key="volumeRemain" class="num" title="units left / size the order went up as">Qty left / total</th>
-        <th data-key="locName">Location</th>
+        <th data-key="locName" title="station or structure the order sits in">Location</th>
         <th data-key="ageDays" class="num" title="days since issue">Age (d)</th>
         <th data-key="daysLeft" class="num" title="duration − age">Days left</th>
         <th data-key="iskTied" class="num" title="price × units remaining&#10;ISK on the market instead of in your wallet">ISK tied up</th>
@@ -1447,8 +1448,9 @@ function rebuild(keepChecks = true){
     rows.push(row);
   }
 
+  // stored biggest-net-first only so the array has a deterministic order — nothing reads a
+  // position off it any more. What "first" means is decided by the view, and printed in #.
   rows.sort((a, b) => b.totalNet - a.totalNet);
-  rows.forEach((r, idx) => r.rank = idx + 1);
 
   state.rows = rows;
   state.unpriced = unpriced.sort((a, b) => a.name.localeCompare(b.name));
@@ -1851,27 +1853,43 @@ function toggleDetail(key){
   render();
 }
 
-function sortedRows(){
+/* THE ordering of the Sell mode. The column you sorted by, ties broken by expected net and
+   then by name. The table reads it, the # column counts it out, "Tick top N" walks it and
+   both exports come out in it — so nothing in this mode is ordered by something off
+   screen. Every branch falls through to the same tie-break, so the order is total. */
+const TEXT_KEYS = new Set(['name', 'strategy']);   // read A→Z on the default direction
+// the fixed part of the ISK/slot-day header tooltip; render() appends the live part
+const PERSLOT_TIP = 'expected net ÷ expected days on the market\nINSTANT uses no slot — not ranked here';
+function rowCmp(a, b){
   const k = state.sortKey, d = state.sortDir;
-  const rows = state.rows.filter(rowFilter);
-  rows.sort((a, b) => {
-    let x = a[k], y = b[k];
-    if (k === 'strategy' || k === 'name'){ return String(x).localeCompare(String(y)) * -d; }
-    if (k === 'flags'){ return (a.flags.length - b.flags.length) * d; }
-    if (k === 'checked'){ return ((a.checked === true) - (b.checked === true)) * d; }
-    x = x == null ? -Infinity : x; y = y == null ? -Infinity : y;
-    return (x - y) * d || a.rank - b.rank;
-  });
-  return rows;
+  let prim;
+  if (TEXT_KEYS.has(k))     prim = String(a[k]).localeCompare(String(b[k])) * -d;
+  else if (k === 'flags')   prim = (a.flags.length - b.flags.length) * d;
+  // the Import column sorts on membership, which is what the column shows: a latent tick
+  // on an INSTANT row is not in the list, so it must not sort as though it were
+  else if (k === 'checked') prim = ((a.inImport === true) - (b.inImport === true)) * d;
+  else {
+    const x = a[k] == null ? -Infinity : a[k], y = b[k] == null ? -Infinity : b[k];
+    prim = (x - y) * d;                            // both null -> NaN -> falls to the tie-break
+  }
+  return prim || (b.totalNet - a.totalNet) || a.name.localeCompare(b.name);
 }
+// the rows on screen, in the order they are on screen
+function sortedRows(){ return state.rows.filter(rowFilter).sort(rowCmp); }
+// every row, in that same order — what the exports hand over
+function rowsForExport(){ return state.rows.slice().sort(rowCmp); }
+
+// effective import membership: a latent tick AND a plan with a price to import
+function markImport(){ for (const r of state.rows) r.inImport = r.checked && r.strategy !== 'imm'; }
 
 function render(){
-  // effective import membership: latent tick AND an importable plan
-  for (const r of state.rows) r.inImport = r.checked && r.strategy !== 'imm';
+  markImport();
   const tbody = $('tblBody');
   tbody.textContent = '';
   const frag = document.createDocumentFragment();
+  let pos = 0;                       // the # column: where the row sits in THIS view
   for (const r of sortedRows()){
+    pos++;
     const tr = document.createElement('tr');
     tr.dataset.key = r.key;
     // dim only rows that end up in neither artifact (instants always go to the checklist)
@@ -1897,7 +1915,7 @@ function render(){
     const priceCopy = n => n == null ? '' : fmtExport(n);
     const signCls = n => n == null ? '' : n > 0 ? ' pos' : n < 0 ? ' neg' : '';
     for (const [cls, text, copy, title] of [
-      ['num', String(r.rank), ''],
+      ['num', String(pos), ''],
       ['name', r.name, r.name],
       ['num', fmt.format(r.qty), String(r.qty)],
       ['num', fmtIsk(r.bestBuy), priceCopy(r.bestBuy)],
@@ -1992,14 +2010,19 @@ function render(){
       : 'no rows match the filters';
     tr.appendChild(td); tbody.appendChild(tr);
   }
-  document.querySelectorAll('thead th').forEach(th => {
+  document.querySelectorAll('#tbl thead th').forEach(th => {
     th.classList.remove('s-asc', 's-desc');
-    if (th.dataset.key === state.sortKey){
-      // string columns display A→Z on the default (-1) direction, numeric ones high→low
-      const asc = (state.sortKey === 'name' || state.sortKey === 'strategy') ? state.sortDir === -1 : state.sortDir === 1;
+    if (th.dataset.key && th.dataset.key === state.sortKey){
+      // the arrow reads off the same rule the comparator uses, so it cannot disagree with it
+      const asc = TEXT_KEYS.has(state.sortKey) ? state.sortDir === -1 : state.sortDir === 1;
       th.classList.add(asc ? 's-asc' : 's-desc');
     }
   });
+  // ISK/slot-day is empty without history — say so on the header rather than let the
+  // column imply a ranking it is not doing
+  const unrated = state.rows.filter(r => r.strategy !== 'imm' && r.perSlot == null).length;
+  const psTh = document.querySelector('#tbl thead th[data-key="perSlot"]');
+  if (psTh) psTh.title = PERSLOT_TIP + (unrated ? `\nno rate yet: ${unrated} rows — fetch history` : '');
   const shown = state.rows.filter(rowFilter).length;
   const hiddenTicked = state.rows.filter(r => r.inImport && !rowFilter(r)).length;
   $('fltCount').textContent = (shown === state.rows.length
@@ -2048,9 +2071,7 @@ function renderSummary(){
 function renderPreview(){
   // import list: every ticked ORDER/SPLIT row, independent of the view filters
   // (a ticked SPLIT contributes only its listed-remainder leg to this side's net)
-  const imp = state.rows
-    .filter(r => r.inImport && r.exportPrice != null)
-    .sort((a, b) => a.rank - b.rank);
+  const imp = rowsForExport().filter(r => r.inImport && r.exportPrice != null);
   $('preview').value = imp.map(r => [r.name, fmtExport(r.exportPrice)].join('\t')).join('\n');
   const impNet = imp.reduce((s, r) => s + (r.strategy === 'split' ? r.orderLegNet : r.totalNet), 0);
   const hiddenImp = imp.filter(r => !rowFilter(r)).length;
@@ -2066,10 +2087,9 @@ function renderPreview(){
 
 // instant items (plus instant legs of ticked SPLITs) as Name⇥Qty lines
 function instantListText(){
-  return state.rows
+  return rowsForExport()
     .filter(r => (r.strategy === 'imm' && !r.unsellable)
               || (r.strategy === 'split' && r.inImport))
-    .sort((a, b) => a.rank - b.rank)
     .map(r => `${r.name}\t${r.strategy === 'split' ? r.splitFill : r.qty}`)
     .join('\n');
 }
@@ -2112,7 +2132,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 function fullTsv(){
   const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Fill est. days','Chance %','ISK/slot-day','Net instant ISK','Net listing plan ISK','Expected net ISK','Order Δ ISK','Trend %/wk','Pct rank 60d','Undercut %/day','Broker at risk ISK','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
-  for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
+  for (const r of rowsForExport()){
     lines.push([
       r.name, r.qty,
       r.bestBuy ?? '', r.bestSell ?? '',
@@ -2716,13 +2736,18 @@ function ordFilterMatch(r){
     .some(x => x && String(x).toLowerCase().includes(q));
 }
 
+/* Whether a column reads as text is decided once, per column, off the rows themselves —
+   and the same answer is handed to the arrow in renderOrders(), so the indicator can never
+   point the opposite way to the sort. Deciding it per comparison (the old shape) also made
+   the comparator non-transitive on a column with a null in it. */
+function ordIsText(k, list){ return list.some(r => typeof r[k] === 'string'); }
 function ordSorted(list){
   const k = state.ordSortKey, d = state.ordSortDir;
+  const text = ordIsText(k, list);
   return list.slice().sort((a, b) => {
-    let x = a[k], y = b[k];
-    if (typeof x === 'string' || typeof y === 'string')
-      return String(x == null ? '' : x).localeCompare(String(y == null ? '' : y)) * -d;
-    x = x == null ? -Infinity : x; y = y == null ? -Infinity : y;
+    if (text) return String(a[k] == null ? '' : a[k])
+      .localeCompare(String(b[k] == null ? '' : b[k])) * -d;
+    const x = a[k] == null ? -Infinity : a[k], y = b[k] == null ? -Infinity : b[k];
     return (x - y) * d || (b.iskTied - a.iskTied);
   });
 }
@@ -2763,7 +2788,7 @@ function renderOrders(){
   document.querySelectorAll('#ordTbl thead th').forEach(th => {
     th.classList.remove('s-asc', 's-desc');
     if (th.dataset.key && th.dataset.key === state.ordSortKey){
-      const str = th.dataset.key === 'name' || th.dataset.key === 'charName' || th.dataset.key === 'locName';
+      const str = ordIsText(th.dataset.key, ordRows());
       const asc = str ? state.ordSortDir === -1 : state.ordSortDir === 1;
       th.classList.add(asc ? 's-asc' : 's-desc');
     }
@@ -3438,7 +3463,9 @@ function ordTsv(){
     'Hold ISK','Reprice ISK','Dump ISK','Reprice price','Relist fee ISK','Side'];
   const num = (v, dp) => v == null ? '' : Number(v).toFixed(dp);
   const lines = [head.join('\t')];
-  const rows = ordSorted(ordRows().filter(r => state.ordShowBuy || !r.isBuy));
+  // the same rows the table is showing, in the same order — a filtered table that copies
+  // the orders it just hid would be a second, invisible scope
+  const rows = ordSorted(ordRows().filter(ordFilterMatch).filter(r => state.ordShowBuy || !r.isBuy));
   for (const r of rows){
     lines.push([
       r.charName, r.name || ('type ' + r.typeId), r.typeId,
@@ -3669,21 +3696,28 @@ $('btnClear').addEventListener('click', () => {
 });
 $('btnEsi').addEventListener('click', runEsi);
 
-// selection buttons act on the rows passing the current filters, and only pick
-// ORDER/SPLIT rows — instant items have no price to choose, so importing them is pointless
+/* The three selection buttons obey one rule: a bulk button SETS the import list, it never
+   adds to it. Whatever it does not tick it unticks — everywhere, including rows a filter
+   is hiding and latent ticks left behind on INSTANT rows. Only the per-row checkbox is
+   additive. That is what makes "Tick top 20" mean twenty: after any of the three, every
+   ticked row is on screen, so the count in the echo is checkable by eye. */
+function selectable(r){ return rowFilter(r) && r.strategy !== 'imm' && !r.unsellable; }
+function setSelection(keys){
+  for (const r of state.rows) r.checked = keys.has(r.key);
+  render(); persist();
+}
+// "top" is the top of the table as it is sorted right now — the order the # column
+// prints. Rows that cannot be ticked are passed over, and both reasons are visible on the
+// row itself: an INSTANT shows ⚡ instead of a checkbox, an unsellable one carries a flag.
 $('btnTop').addEventListener('click', () => {
   const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
-  let left = n;
-  for (const r of [...state.rows].sort((a, b) => a.rank - b.rank)){
-    if (!rowFilter(r) || r.strategy === 'imm') continue;   // instants have no import tick
-    r.checked = !r.unsellable && left > 0;
-    if (r.checked) left--;
-  }
-  render(); persist();
+  markImport();                       // the Import column can be the sort key
+  setSelection(new Set(sortedRows().filter(selectable).slice(0, n).map(r => r.key)));
 });
-$('btnAll').addEventListener('click', () => { for (const r of state.rows) if (rowFilter(r) && r.strategy !== 'imm') r.checked = !r.unsellable; render(); persist(); });
-// None empties the entire import list — filters don't scope it, that's what "None" means
-$('btnNone').addEventListener('click', () => { for (const r of state.rows) r.checked = false; render(); persist(); });
+$('btnAll').addEventListener('click', () => {
+  setSelection(new Set(state.rows.filter(selectable).map(r => r.key)));
+});
+$('btnNone').addEventListener('click', () => setSelection(new Set()));
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
 $('fltText').addEventListener('input', () => { state.filterText = $('fltText').value.trim().toLowerCase(); render(); });
@@ -3712,9 +3746,10 @@ $('tblBody').addEventListener('keydown', e => {
   if (tr && tr.dataset.key) toggleDetail(tr.dataset.key);
 });
 
-document.querySelectorAll('thead th').forEach(th => {
+document.querySelectorAll('#tbl thead th').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.key;
+    if (!k) return;                   // # is a position in this view, not a value to sort on
     if (state.sortKey === k) state.sortDir *= -1;
     else { state.sortKey = k; state.sortDir = -1; }
     render();

@@ -139,6 +139,27 @@ H.run('density', async () => {
       await s.close();
     }
 
+    /* ---------- (a2) every column heading explains itself ----------
+       A heading is copy like any other, and the tightest copy in the tool: one glyph is
+       allowed to stand for a column only if a tooltip says what the glyph means. The `#`
+       column shipped without one, which is how an ordering nobody could see stayed
+       invisible. This is the ratchet for that. */
+    section('every column heading carries its explanation');
+    for (const [file, tables] of [['index.html', ['#tbl', '#ordTbl']]]) {
+      const hp = await openPage(browser, server, file, {});
+      const hs = await hp.page.evaluate(sel => sel.map(id =>
+        [...document.querySelectorAll(id + ' thead th')]
+          .map(th => ({ tbl: id, t: th.textContent.trim(), tip: th.title }))), tables);
+      const all = [].concat.apply([], hs);
+      check('there are headings to measure', all.length > 20, String(all.length));
+      const bare = all.filter(h => !h.tip.trim()).map(h => h.tbl + ' ' + h.t);
+      eq('no column heading is left unexplained', JSON.stringify(bare), '[]');
+      const wordy = all.filter(h => h.tip.split('\n').some(l => l.length > TIP_LINE_MAX)
+        || /\. [A-Z]/.test(h.tip)).map(h => h.t);
+      eq('...and every heading tooltip is short lines, not a paragraph', JSON.stringify(wordy), '[]');
+      await hp.close();
+    }
+
     /* ---------- (b) the Sell table, with rows in it ---------- */
     section('the Sell table states numbers, not sentences');
     const s = await openPage(browser, server, 'index.html');

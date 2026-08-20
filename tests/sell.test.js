@@ -479,6 +479,256 @@ H.run('sell', async () => {
       keptTicks.after.join(','), keptTicks.before.join(','));
     await s2.close();
 
+    /* ================================================================================
+       THE REPORTED BUG, and the rule that answers it.
+
+       Reported verbatim: "when u click on select top N, it selects based on their number
+       in the # column (which idk what that is) but the default sort is isk/slot-day".
+       Both halves were true. # was a position by expected net ISK fixed at plan time, the
+       table opened sorted by ISK/slot-day, and "Tick top N" walked the first of those —
+       so the rows that got ticked were not the rows at the top of the screen, and nothing
+       on the page said which order was in charge.
+
+       The rule now: THE SCREEN IS THE ORDER. # counts the view out, "Tick top N" ticks
+       # 1…N, and the exports come out in the same order. What follows pins that, and
+       pins scenario S2 — a bulk button can no longer leave more rows in the import list
+       than it says on its face.
+       ================================================================================ */
+    section('# is the row’s position in the view, not a hidden score');
+    const s3 = await openSell(browser, server);
+    await fetchInventory(s3.page, PASTE);
+
+    const viewOf = page => page.evaluate(() => [...document.querySelectorAll('#tblBody tr')]
+      .filter(tr => tr.children.length > 3)
+      .map(tr => ({ pos: tr.children[1].textContent, name: tr.children[2].textContent })));
+
+    let view = await viewOf(s3.page);
+    check('the table has rows to number', view.length >= 5, JSON.stringify(view));
+    eq('# counts the rendered rows 1..n, top down',
+      view.map(v => v.pos).join(','), view.map((_v, i) => i + 1).join(','));
+    const byPerSlot = view.map(v => v.name);
+
+    await s3.page.click('#tbl thead th[data-key="qty"]');
+    await s3.page.waitForFunction(() => state.sortKey === 'qty');
+    view = await viewOf(s3.page);
+    const byQty = view.map(v => v.name);
+    check('sorting by another column really reorders the table',
+      byQty.join(',') !== byPerSlot.join(','), byQty.join(',') + ' vs ' + byPerSlot.join(','));
+    eq('...and # renumbers with it rather than staying pinned to the row',
+      view.map(v => v.pos).join(','), view.map((_v, i) => i + 1).join(','));
+    eq('...so # 1 is whatever is on top now', view[0].name, byQty[0]);
+
+    await s3.page.fill('#fltText', 'widget');
+    await s3.page.dispatchEvent('#fltText', 'input');
+    await s3.page.waitForFunction(() => state.filterText === 'widget');
+    view = await viewOf(s3.page);
+    check('a filter narrows the table', view.length < byQty.length, JSON.stringify(view));
+    eq('...and # starts again at 1 — it numbers what you can see', view[0].pos, '1');
+    await s3.page.fill('#fltText', '');
+    await s3.page.dispatchEvent('#fltText', 'input');
+    await s3.page.waitForFunction(() => state.filterText === '');
+
+    const sortState = await s3.page.evaluate(() => {
+      const before = { k: state.sortKey, d: state.sortDir };
+      document.querySelector('#tbl thead th.nosort').click();
+      return { before: before, after: { k: state.sortKey, d: state.sortDir } };
+    });
+    eq('# is not a sort key — clicking it changes nothing',
+      JSON.stringify(sortState.after), JSON.stringify(sortState.before));
+    eq('...and it does not offer a sort cursor either',
+      await s3.page.$eval('#tbl thead th.nosort', el => getComputedStyle(el).cursor), 'default');
+
+    section('every column in the Sell table says what it is');
+    const heads = await s3.page.evaluate(() =>
+      [...document.querySelectorAll('#tbl thead th')].map(th => ({ t: th.textContent, tip: th.title })));
+    const mute = heads.filter(h => !h.tip.trim()).map(h => h.t);
+    eq('no header is left unexplained', JSON.stringify(mute), '[]');
+    const hashTip = heads.find(h => h.t === '#').tip;
+    check('...and # says plainly that it is a position in this view',
+      /position in the table as sorted/.test(hashTip) && /renumbers/.test(hashTip), hashTip);
+    check('...and names the button that walks it',
+      /Tick top N works down this order/.test(hashTip), hashTip);
+
+    section('the ranking column owns up when it has no rates');
+    /* Without history there is no fill estimate, so ISK/slot-day is null on every row and
+       the sort quietly falls through to expected net — while the header still shows ▼ over
+       "ISK/slot-day". The header counts the rows it has no rate for rather than implying a
+       ranking it is not doing. */
+    const rateTip = await s3.page.evaluate(() => ({
+      unrated: state.rows.filter(r => r.strategy !== 'imm' && r.perSlot == null).length,
+      total: state.rows.length,
+      tip: document.querySelector('#tbl thead th[data-key="perSlot"]').title,
+    }));
+    check('this fixture is fetched without history, so there are no rates',
+      rateTip.unrated > 0, JSON.stringify(rateTip));
+    check('...and the header says how many rows have no rate yet',
+      rateTip.tip.includes(`no rate yet: ${rateTip.unrated} rows`), rateTip.tip);
+    check('...on top of what the column means, still in short lines',
+      /expected net ÷ expected days/.test(rateTip.tip)
+      && rateTip.tip.split('\n').every(l => l.length <= 130), JSON.stringify(rateTip.tip));
+
+    section('Tick top N ticks the rows numbered 1..N — under any sort');
+    /* The owner's case, run twice over two different sorts. Under the old code the ticked
+       set was the same both times, because it came off a column the sort never touched. */
+    const tickTop = async (page, n) => {
+      await page.fill('#topN', String(n));
+      await page.click('#btnTop');
+      return page.evaluate(() => ({
+        ticked: state.rows.filter(r => r.inImport).map(r => r.name).sort(),
+        view: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
+          .map(tr => {
+            const row = state.rows.find(r => r.key === tr.dataset.key);
+            return { pos: tr.children[1].textContent, name: tr.children[2].textContent,
+                     ticked: !!tr.children[0].querySelector('input:checked'),
+                     sel: !!row && selectable(row) };
+          }),
+        echo: document.getElementById('impEcho').textContent,
+        preview: document.getElementById('preview').value,
+        hiddenTicked: state.rows.filter(r => r.inImport && !rowFilter(r)).length,
+      }));
+    };
+
+    await s3.page.click('#tbl thead th[data-key="perSlot"]');
+    await s3.page.waitForFunction(() => state.sortKey === 'perSlot' && state.sortDir === -1);
+    const topPerSlot = await tickTop(s3.page, 2);
+    const prefix = v => v.filter(x => x.sel).map(x => x.ticked ? 'T' : '.').join('');
+    check('the ticked rows are the TOP of the view — no tickable row above an unticked one',
+      /^T*\.*$/.test(prefix(topPerSlot.view)), prefix(topPerSlot.view));
+    eq('exactly 2 rows are in the import list', topPerSlot.ticked.length, 2);
+    const perSlotPick = topPerSlot.ticked.join(',');
+
+    await s3.page.click('#tbl thead th[data-key="qty"]');
+    await s3.page.waitForFunction(() => state.sortKey === 'qty' && state.sortDir === -1);
+    const topQty = await tickTop(s3.page, 2);
+    eq('...still exactly 2 after re-sorting and clicking again', topQty.ticked.length, 2);
+    check('...and they are again the top of the view',
+      /^T*\.*$/.test(prefix(topQty.view)), prefix(topQty.view));
+    check('THE BUG: a different sort picks a different top 2',
+      topQty.ticked.join(',') !== perSlotPick, topQty.ticked.join(',') + ' vs ' + perSlotPick);
+    eq('...and they are the first two tickable rows the # column numbered',
+      topQty.view.filter(v => v.ticked).map(v => v.pos).join(','),
+      topQty.view.filter(v => v.sel).slice(0, 2).map(v => v.pos).join(','));
+    /* A row it passes over says why on its own face — a ⚡ where the checkbox would be, or
+       an unsellable flag — so a top-2 that lands on # 1 and # 3 is readable, not silent. */
+    const skipped = topQty.view.filter(v => !v.sel);
+    check('a row it passes over is visibly untickable',
+      skipped.length === 0 || (await s3.page.evaluate(names => names.every(n => {
+        const tr = [...document.querySelectorAll('#tblBody tr')]
+          .find(x => x.children.length > 3 && x.children[2].textContent === n);
+        const r = state.rows.find(y => y.name === n);
+        return !tr.children[0].querySelector('input') || (r && r.unsellable && r.flags.length > 0);
+      }), skipped.map(v => v.name))), JSON.stringify(skipped.map(v => v.name)));
+    check('...and the button says so rather than promising 1..N',
+      /passes over/.test(await s3.page.$eval('#btnTop', el => el.title)),
+      await s3.page.$eval('#btnTop', el => el.title));
+
+    section('S2 — "top N" can never leave more than N rows in the import list');
+    /* Old behaviour: the button cleared ticks only among the rows the filter showed, so a
+       second click under a disjoint filter ADDED to the list. Two clicks of "top 2" left
+       four rows in it, and the ⚠ that said so disappeared the moment the filter cleared —
+       exactly when the list was at its most wrong. */
+    await s3.page.click('#tbl thead th[data-key="perSlot"]');
+    await s3.page.waitForFunction(() => state.sortKey === 'perSlot' && state.sortDir === -1);
+    const s2a = await tickTop(s3.page, 2);
+    eq('unfiltered, "top 2" is 2', s2a.ticked.length, 2);
+
+    /* 'trinket' is disjoint from that first pick on this fixture, which is the case the old
+       code got wrong: it cleared ticks only among the rows the filter showed, so the two
+       already-ticked rows survived off screen and "top 2" left THREE in the list. */
+    await s3.page.fill('#fltText', 'trinket');
+    await s3.page.dispatchEvent('#fltText', 'input');
+    await s3.page.waitForFunction(() => state.filterText === 'trinket');
+    const s2b = await tickTop(s3.page, 2);
+    check('a second "top 2" under a disjoint filter leaves at most 2 — not 3',
+      s2b.ticked.length <= 2 && s2b.ticked.length >= 1, JSON.stringify(s2b.ticked));
+    check('...and none of the first pick survived off screen',
+      s2a.ticked.every(n => !s2b.ticked.includes(n)),
+      JSON.stringify(s2a.ticked) + ' then ' + JSON.stringify(s2b.ticked));
+    eq('...and the import echo agrees with the checkboxes',
+      s2b.echo.split(' ')[0], String(s2b.ticked.length));
+    eq('...every ticked row is on screen, so the count is checkable by eye', s2b.hiddenTicked, 0);
+    check('...and nothing warns about hidden ticks, because there are none',
+      !/⚠/.test(s2b.echo), s2b.echo);
+    check('the rows it ticked are the ones the filter shows',
+      s2b.ticked.every(n => /trinket/i.test(n)), JSON.stringify(s2b.ticked));
+
+    await s3.page.fill('#fltText', '');
+    await s3.page.dispatchEvent('#fltText', 'input');
+    await s3.page.waitForFunction(() => state.filterText === '');
+    const afterClear = await s3.page.evaluate(() => ({
+      ticked: state.rows.filter(r => r.inImport).map(r => r.name).sort(),
+      echo: document.getElementById('impEcho').textContent,
+    }));
+    eq('clearing the filter reveals no extra ticks — the list was always the whole list',
+      afterClear.ticked.join(','), s2b.ticked.join(','));
+    check('...and the echo never moved', /^\d+ items/.test(afterClear.echo)
+      && afterClear.echo.split(' ')[0] === String(s2b.ticked.length), afterClear.echo);
+
+    section('the three bulk buttons agree about what a filter is');
+    /* One rule for all three: a bulk button SETS the import list, it never adds to it.
+       So after any of them, nothing ticked is off screen. Only the checkbox is additive. */
+    for (const [label, btn] of [['Tick top N', '#btnTop'], ['All', '#btnAll'], ['None', '#btnNone']]) {
+      await s3.page.click('#btnAll');                       // start from a full list
+      await s3.page.fill('#fltText', 'widget');
+      await s3.page.dispatchEvent('#fltText', 'input');
+      await s3.page.waitForFunction(() => state.filterText === 'widget');
+      await s3.page.click(btn);
+      const st = await s3.page.evaluate(() => ({
+        hidden: state.rows.filter(r => r.inImport && !rowFilter(r)).length,
+        shownTicked: state.rows.filter(r => r.inImport && rowFilter(r)).length,
+        latentOnInstant: state.rows.filter(r => r.checked && r.strategy === 'imm').length,
+      }));
+      eq(label + ' leaves nothing ticked off screen', st.hidden, 0);
+      eq('...and clears the latent ticks on INSTANT rows too', st.latentOnInstant, 0);
+      if (btn === '#btnNone') eq('...None empties it outright', st.shownTicked, 0);
+      else check('...' + label + ' leaves a list you can see', st.shownTicked > 0, String(st.shownTicked));
+      await s3.page.fill('#fltText', '');
+      await s3.page.dispatchEvent('#fltText', 'input');
+      await s3.page.waitForFunction(() => state.filterText === '');
+    }
+    check('every bulk button states its scope on its tooltip',
+      (await s3.page.evaluate(() => ['btnTop', 'btnAll', 'btnNone']
+        .map(i => document.getElementById(i).title)))
+        .every(t => /import list|filters/.test(t) && t.split('\n').length >= 2),
+      JSON.stringify(await s3.page.evaluate(() => ['btnTop', 'btnAll', 'btnNone']
+        .map(i => document.getElementById(i).title))));
+
+    section('the exports come out in the order on screen');
+    await s3.page.click('#btnAll');
+    await s3.page.click('#tbl thead th[data-key="name"]');
+    await s3.page.waitForFunction(() => state.sortKey === 'name');
+    const ordered = await s3.page.evaluate(() => ({
+      view: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
+        .filter(tr => tr.children[0].querySelector('input:checked'))
+        .map(tr => tr.children[2].textContent),
+      preview: document.getElementById('preview').value.split('\n').filter(Boolean).map(l => l.split('\t')[0]),
+      tsv: fullTsv().split('\n').slice(1).map(l => l.split('\t')[0]),
+      allView: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
+        .map(tr => tr.children[2].textContent),
+    }));
+    eq('the import list pastes in the order the table shows',
+      ordered.preview.join(','), ordered.view.join(','));
+    eq('...and so does the TSV', ordered.tsv.slice(0, ordered.allView.length).join(','),
+      ordered.allView.join(','));
+
+    section('the Import column sorts on membership, not on the latent tick');
+    /* A tick survives a re-plan, so an INSTANT row can carry one while showing a ⚡ and
+       sitting outside the import list. It must not sort as though it were in the list. */
+    const impSort = await s3.page.evaluate(() => {
+      for (const r of state.rows) r.checked = r.strategy === 'imm';
+      state.sortKey = 'checked'; state.sortDir = -1;
+      render();
+      const first = document.querySelector('#tblBody tr');
+      return { top: first.children[2].textContent,
+               topIsInstant: first.children[0].textContent.trim() === '⚡',
+               echo: document.getElementById('impEcho').textContent };
+    });
+    check('a latent tick on an INSTANT row does not sort to the top of Import',
+      !impSort.topIsInstant, JSON.stringify(impSort));
+    eq('...and it is not in the import list either', impSort.echo, 'nothing ticked');
+    await s3.page.click('#btnNone');
+    await s3.close();
+
     /* ================= the decision layer ================= */
     /* The ⏳ wait tag used to fire whenever an order at the p90 of the history window
        would net more than the current plan. p90 is a LEVEL, so on a declining item it is
