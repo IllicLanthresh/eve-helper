@@ -11,6 +11,24 @@ leaves your machine. Open any page in a browser or use the GitHub Pages deployme
 | **Industry** | `industry.html` | Full-market build-vs-buy scan: every blueprint product (T1, T2 invention, reactions, capitals) priced against the live Jita book with your facilities, rigs, skills, owned blueprints and shipping — ranked by profit, ROI, ISK/h, with a per-item cost drilldown. |
 | **Structures** | `structures.html` | The one place player structures are managed: one record per structure with its identity (auto-detected) plus the facts ESI never publishes — owner-set market broker %, facility job tax, installed Standup rigs (with the rig-inference wizard), reprocessing rig, hull role bonuses, industry activities and notes. Every other tool *selects* a structure and reads those facts — the one exception is Sell's broker box, which writes the rate it asks you to read off the market window straight onto the record. |
 
+## On-screen text is terse by design
+
+The pages state facts, not sentences. A cell carries a number and its unit; a reason is a
+short chip (`minfee`, `dup×2`, `▼4.1%/wk`, `8%<55%`) with its arithmetic on the tooltip; a
+status line is dot-separated (`Jita 4-4 · 250 items · 14:32`); the plan and verdict
+tooltips are `key: value` lines rather than paragraphs. Every explanatory paragraph that
+used to sit on screen now hides behind a small **?** that starts **closed**, and the
+per-section *Notes & assumptions* lists stay collapsed.
+
+**Nothing was deleted — it moved.** Every fact is still reachable: hover a chip, open a
+**?**, expand a row's chart, or hit **Copy TSV** (both the Sell table and the My-orders
+triage have one, and the TSV carries the working numbers the table compresses: queue,
+days to fill, chance, trend, the three verdict values, the relist fee).
+
+**This README is the long-form reference.** When the screen says `q52d>12d` and you want
+the sentence, it is here. A test suite (`tests/density.test.js`) keeps the copy from
+drifting back into prose.
+
 ## EVE login (optional)
 
 "Log in with EVE" in the top bar pulls your skill levels and standings to auto-fill what
@@ -24,8 +42,8 @@ Tatara 55% / anything else 50%) and its system's security band are **auto-detect
 while the reprocessing **rig** is read from the structure's central record (managed on the
 **Structures** page — ESI exposes no fittings) and the **implant stays manual** on the Mine
 page, because it is the pilot's, not the structure's. The facility line shows the recorded
-rig next to a **manage structure** link into that record; a structure with no reprocessing
-rig recorded says *"no reprocessing rig set — configure it in the structure manager"* and
+rig next to a **record ↗** link into that record; a structure with no reprocessing
+rig recorded says *"no rig set"* (the tooltip names the record as the place to fix it) and
 is computed with **no rig bonus** rather than a guessed one. An **imported-skills panel** under the facility row lists
 every reprocessing skill that was pulled, what it governs, and the resulting yield % at
 the current facility. Everything stays client-side: it's the OAuth2 **PKCE** flow, so
@@ -130,7 +148,7 @@ remembered.
 1. **Paste your inventory** (select items in a hangar/container → Ctrl-C).
 2. **Pick a market**: Jita 4-4, Amarr, Dodixie, Rens, Hek — or a saved player structure
    (see *Player structure markets* below).
-3. **Fetch prices (ESI)** — pulls the live order book per item (optionally plus ~13 months
+3. **Fetch prices** — pulls the live order book per item (optionally plus ~13 months
    of daily price history) for the chosen hub.
 4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%), set your **patience**
    (*in a rush* / *balanced* / *patient*), and choose where the competitive list price `L`
@@ -154,7 +172,8 @@ remembered.
      recommendation picked.
    The split point is chosen by comparing the actual net of every cut of the buy book, so
    the 100 ISK per-order minimum is priced in: on a cheap stack it can tip the plan to
-   INSTANT, and rows where it binds carry a `min fee 100 ISK → x.x%` flag.
+   INSTANT, and rows where it binds carry a `minfee` chip whose tooltip gives the floor,
+   the effective rate and the nominal one.
 6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
    plan. The table opens sorted by **ISK/slot-day**, descending. Filters are a viewing aid
    only — ticked rows hidden by a filter stay in the import list (the toolbar says so).
@@ -166,9 +185,11 @@ remembered.
      rows have a checkbox — INSTANT rows show ⚡ instead, since there is nothing to import.
    - **Instant checklist**: the INSTANT items as `Item name ⇥ Qty` (plus the instant legs
      of ticked SPLITs as partial stacks) — sell these directly in the hangar.
-8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets, including
+8. **Copy TSV** pastes the whole analysis into Excel / Google Sheets, including
    the working numbers the table keeps in tooltips (trend %/week, percentile rank, undercut
-   velocity, the broker fee at risk).
+   velocity, the broker fee at risk). *My orders* has its own **Copy TSV** with the triage
+   diagnostics: queue ahead, days to fill, chance, trend, the hold / reprice / dump values
+   and the relist fee.
 
 ## The decision layer
 
@@ -298,7 +319,7 @@ saved yet the modal says so and still links to the manager, and logged out it of
 structures are listed in the same modal to pick from — the modal is a **selector only**:
 renaming, editing and removing happen in the
 [Structure Manager](#structure-manager-structureshtml), which the modal's footer link and
-the **manage structures** link next to the market selector both open (deep-linked to the
+the **structures ↗** link next to the market selector both open (deep-linked to the
 selected structure's record). Removing a structure there drops it from the market list and
 falls back to Jita — including live in an already-open Sell tab, which restores the NPC
 hub's own broker fee, clears the structure's order book and says why. Typing in the broker
@@ -322,8 +343,9 @@ With a structure selected, a price run fetches:
   fallbacks are region-wide, and the status line says so).
 
 The **owner-set broker fee is not in ESI** (there is no endpoint for it). With a structure
-selected, the fees box says so — *"broker % at ‹structure›: owner-set rate from the
-structure manager"* — and links straight to that record. Read the rate once from the
+selected, the fee line says so — *"⚑ broker 4.5% — ‹structure›: owner-set"*, or
+*"⚑ owner broker % — ‹structure›: none recorded yet · pricing with 1.50% (stand-in)"* —
+and links straight to that **record**. Read the rate once from the
 in-game sell window and type it into the broker % field: typing it here writes it onto the
 **structure's central record**, exactly as if it had been entered on the Structures page
 (and a change made there reaches an open Sell tab immediately). Switching back to an NPC hub
@@ -371,27 +393,32 @@ to sell *to* you, and the ISK is in escrow), so none of the sell-side triage is 
 
 ### Stalled, and why
 
-An order is **stalled** when any of these is true, and the row says which in words:
+An order is **stalled** when any of these is true. The Stalled cell shows one chip per
+reason; the chip's tooltip carries the numbers:
 
-- the **chance** of filling at your price is under your patience mode's floor (75 / 55 / 35%);
-- the **queue** at your price cannot clear before the order expires (fill est. > days left);
-- you sit **above the best sell on a falling market**, where the gap only widens — this one
-  needs the chance to be under 90% as well, because an order that is going to fill anyway is
-  not stalled whatever the trend does.
+| Chip | Reason |
+| --- | --- |
+| `8%<55%` | The **chance** of filling at your price is under your patience mode's floor (75 / 55 / 35%). |
+| `q52d>12d` | The **queue** at your price cannot clear before the order expires (fill est. > days left). |
+| `+4.1%▼` | You sit **above the best sell on a falling market**, where the gap only widens. This one needs the chance under 90% as well — an order that is going to fill anyway is not stalled whatever the trend does. |
 
-The header states the total the way you would ask it: *N orders stalled, X ISK frozen, of
-which Y recoverable now by dumping* — and the table sorts by the ISK frozen in stalled
-orders, worst first.
+The header states the totals as facts — *stalled: N orders · X ISK frozen* and
+*recoverable: Y ISK by dumping* — with the exact figures on hover, and the table sorts by
+the ISK frozen in stalled orders, worst first.
 
 ### The verdict
 
 Three futures over the days that are actually left, all net of sales tax:
 
-| Verdict | Arithmetic (shown on hover) |
+| Verdict | Arithmetic (one `key: value` line each, on hover) |
 | --- | --- |
 | **HOLD** | `chance × units × your price × (1 − tax) + (1 − chance) × (dumping at the end of the window, carried by the trend)` |
-| **REPRICE to X** | the same at the competitive price X (the best competing sell, one tick under if you have that ticked), **minus the relist fee** |
+| **REPRICE → X** | the same at the competitive price X (the best competing sell, one tick under if you have that ticked), **minus the relist fee** |
 | **CANCEL & DUMP** | what the buy book pays for the remaining units **right now**, walked depth-first with `min_volume` respected, minus tax |
+
+The badge's tooltip prints all three values plus a `sunk:` line and, when the order is
+stalled, a `stalled:` line listing the chips. **Copy TSV** above the table hands the same
+numbers to a spreadsheet, one row per order.
 
 The highest number wins; a tie goes to the option that **frees the market slot**, exactly as
 the Sell mode refuses to list unless a listing strictly beats selling now. Slots, not ISK,
@@ -417,8 +444,9 @@ relist fee = max(100 ISK, relist % × units × the new price)
 with the skill resolved **by name** through the same `/universe/ids` lookup the rest of the
 site uses (no hardcoded type id), and the same flat 100 ISK per-order floor the broker fee
 has. Following the precedent set by the broker-fee work, the resulting % is shown in a box
-above the table, is **hand-editable**, asks you to check it against your client's own
-modify-order dialog, and your correction is **saved** and used everywhere. Neither number is
+above the table (*UNVERIFIED · 1.50% broker − 5%/lvl Advanced Broker Relations (level 4)*),
+is **hand-editable**, and its tooltip asks you to check it against your client's own
+modify-order dialog. Your correction is **saved** and used everywhere. Neither number is
 verified — yours at least came from a client.
 
 ### Honest caveats
@@ -438,20 +466,28 @@ verified — yours at least came from a client.
 
 The other half of the problem is not creating stalled orders in the first place. When you are
 about to list something you **already have an order for at that market**, the row is flagged
-`already listed here ×N @ price`. A second order competes with your own, in the same queue,
+`dup×N` (the price it is already up at is on the chip's tooltip). A second order competes
+with your own, in the same queue,
 for a second broker fee.
 
 ## Flags
 
 | Flag | Meaning |
 | --- | --- |
-| `suspect price` | Top buy above best sell — a thin or broken market. Check in game. |
-| `sell ≫ / ≪ history` | Current best sell is far (±50%) from the chosen history statistic. |
+Every chip is at most ten-odd characters and carries its numbers on hover.
+
+| Chip | Meaning (the tooltip carries the numbers) |
+| --- | --- |
+| `suspect` | Top buy above best sell — a thin or broken market. Check in game. |
+| `≫hist` / `≪hist` | Current best sell is far (±50%) from the chosen history statistic; the tooltip gives both prices and the ratio. |
 | `depth x/y` | The buy book can only absorb x of your y units at any price. |
-| `↓ x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
-| `no history — using current sell` / `no sell orders — using history price` | The chosen list-price source wasn't available for this item; the other one was used. |
-| `already listed here ×N @ price` | You already have an open sell order for this item at this market (from *My orders*' last pull). A second order competes with your own. |
-| `unsellable?` | Ice Storm / Expired filaments the market refuses. Auto-excluded from the export (re-tickable). |
+| `▼x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
+| `minfee` | The flat 100 ISK per-order broker fee beats the percentage; the tooltip gives the effective and nominal rates. |
+| `L=sell` / `L=hist` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `>best` | The list price `L` sits above the current best sell. |
+| `no buy` / `no sell` | That side of the book is empty at this hub. |
+| `dup×N` | You already have N open sell orders for this item at this market (from *My orders*' last pull). A second order competes with your own; the tooltip gives the price. |
+| `unsellable` | Ice Storm / Expired filaments the market refuses. Auto-excluded from the export (re-tickable). |
 
 Items with no orders and no history at the hub are listed separately and never pollute the ranking.
 
@@ -484,7 +520,7 @@ Items with no orders and no history at the hub are listed separately and never p
 
 ## Development
 
-Plain HTML/CSS/JS in one file — no build step. `Load sample data` fills the input with a
+Plain HTML/CSS/JS in one file — no build step. `Sample` fills the input with a
 real 250-item hangar for instant experimentation (fetch prices to value it).
 
 ---
@@ -505,7 +541,7 @@ instant view swap over shared state: prices, skills, facility and pastes all car
 
 The refine section's facility row is either the **NPC station** (50% base) or one player
 structure. The dropdown lists **every structure on the shared saved list** (exactly what
-the Sell page's market selector offers), and *choose structure…* opens the shared
+the Sell page's market selector offers), and *structure…* opens the shared
 **structure picker** to add one. What the row does with that choice:
 
 - the **refinery base** (Athanor 52% / Tatara 55%) comes from the structure's hull and the
@@ -516,7 +552,7 @@ the Sell page's market selector offers), and *choose structure…* opens the sha
   structure, so it lives on the record: the row shows the recorded tier next to a **manage
   structure** link that deep-links to that record in the
   [Structure Manager](#structure-manager-structureshtml). With nothing recorded the row says
-  *"no reprocessing rig set — configure it in the structure manager"* and the yield is
+  *"no rig set"* — the tooltip names the record as the place to fix it — and the yield is
   computed with **no rig bonus** rather than an invented one;
 - the **implant** stays a control on this page — it is the pilot's, not the structure's.
 
@@ -615,13 +651,13 @@ by** selector next to the ISK/h toggle picks whose **sales tax** nets the displa
 values: with a seller chosen, both value columns and everything derived from them (ISK/h,
 field totals) are net of that character's `7.5% × (1 − 0.11 × Accounting)` tax — tax
 only, no broker fee, since the loot valuation assumes instant-style disposal — and a
-note says exactly which basis is showing ("net of X's 3.38% sales tax" / "gross — no
-seller selected", the logged-out default). Netting is a uniform scale, so the ranking
+note says exactly which basis is showing ("⚡ net · tax 3.38% — X" / "gross · no seller",
+the logged-out default). Netting is a uniform scale, so the ranking
 order never changes — only the ISK becomes honest for a separate market alt. Toggle
 **ISK/h** to enter your ship's yield (m³/h directly, or m³ per cycle + cycle seconds,
 converted live) and the table adds ISK/h on both bases plus time-to-clear per ore and for
 the whole field. Paste, toggles, yield inputs, the role characters and the chosen mode
-persist; a **Load sample scan** button ships a realistic mixed scan (ore variants, a moon
+persist; a **Sample scan** button ships a realistic mixed scan (ore variants, a moon
 ore, Mercoxit, ice) to try it dry.
 
 ---
@@ -644,7 +680,7 @@ generated, not committed — for a local checkout, build them once from an extra
 `node tools/build-industry-data.mjs --sde <dir> --out data/industry.json`. The page's
 status line shows the SDE version and blueprint count it loaded.
 
-## Live data — one "Update ESI data" button
+## Live data — one "Update ESI" button
 
 All of it public ESI, all cached in **IndexedDB** (the order book is far too big for
 localStorage), each dataset with its own age label:
@@ -948,6 +984,11 @@ Plain Node scripts — no framework — driving the real pages in a headless bro
 ESI/SSO call intercepted; each prints one `PASS`/`FAIL` line per check. See
 [`tests/README.md`](tests/README.md) for the per-suite breakdown and the house rules (chief
 among them: **never wait on time, wait on a signal**).
+
+`density.test.js` is the copy ratchet: it opens every page and asserts the rules this
+README's *On-screen text is terse by design* section describes — `?` disclosures closed,
+no prose connectives in always-visible copy, table cells under 24 characters, chips under
+12 **and carrying the tooltip that holds what the chip replaced**.
 
 Three suites cover the structure centralisation from different angles, and all three have to
 stay green for it to count as working:
