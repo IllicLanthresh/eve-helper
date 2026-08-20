@@ -982,6 +982,11 @@ H.run('structures-manager', async () => {
           .some(a => /structures\.html#s\d+\/rigs$/.test(a.getAttribute('href')))));
 
       section('(f) the computed job cost is the closed form of the legacy facts');
+      // loadCaches() restores book/adjusted/indices from IndexedDB asynchronously and
+      // overwrites each with `x || null`; the fixtures have to be written after it has
+      // landed or they are clobbered. #dataAges is filled at the tail of loadCaches.
+      await page.waitForFunction(() => document.getElementById('dataAges').children.length > 0,
+        null, { timeout: 25000 });
       await page.evaluate(d => { book = d.book; adjusted = d.adjusted; indices = d.indices; },
         { book: IND_BOOK, adjusted: IND_ADJUSTED, indices: IND_INDICES });
       await page.evaluate(() => computeAll());

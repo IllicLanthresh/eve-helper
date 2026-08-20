@@ -356,7 +356,12 @@ H.run('structures', async () => {
     await ip.waitForFunction(() => !!document.querySelector('#facList .facGone'), null, { timeout: 20000 });
     check('the card is flagged',
       /no longer in the Structure Manager/.test(await ip.$eval('#facList .facGone', el => el.textContent)));
-    // a book has to exist or the earlier "no order book" guard answers first
+    // a book has to exist or the earlier "no order book" guard answers first — and it has
+    // to be written AFTER loadCaches() has restored book/adjusted/indices from IndexedDB,
+    // or that restore overwrites it with null. #dataAges is filled by renderAges() at the
+    // tail of loadCaches: the page's own marker that the restore has landed.
+    await ip.waitForFunction(() => document.getElementById('dataAges').children.length > 0,
+      null, { timeout: 20000 });
     await ip.evaluate(() => { book = { fetched: Date.now(), pages: 1, typeCount: 0, types: {} }; });
     await ip.evaluate(() => computeAll());
     check('...and computing refuses rather than inventing a facility',

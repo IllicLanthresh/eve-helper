@@ -381,6 +381,44 @@ const industryLegacy = () => [
   }],
 ];
 
+/* The Industry page reaches its computed state in stages, two of which are asynchronous
+   and invisible from the outside. Both builds have both, so both captures have to be
+   taken past both or the comparison straddles them.
+
+   1. loadCaches() restores book/adjusted/indices from IndexedDB AFTER the static data has
+      landed, then overwrites each with `x || null`. A fixture written into those globals
+      before that restore lands is silently clobbered back to null, and the compute either
+      refuses ('no order book') or prices nothing. renderAges() runs at the tail of
+      loadCaches and fills #dataAges — the page's own marker that the restore is done.
+   2. Demand / D.O.S. are filled in LAZILY, per visible row: the IntersectionObserver on
+      #twrap calls needHist(tid) -> histWorker -> applyHist, which writes r.demand/r.dos
+      and then calls refineRow(tid) to RE-PLAN the batch against the real demand, replacing
+      the whole row object. So a row is one of two different things depending on whether
+      its history has arrived, and a snapshot taken mid-flight compares a settled row
+      against an unsettled one — the failure read `[0].demand: 0 -> undefined`.
+
+   needHist() is idempotent, so ask for every row's history outright instead of depending
+   on scroll position, then wait for refineRow's OWN no-op guard —
+   `row.planDemand === histMem.get(tid).demand` — to hold for every row. Once it does, no
+   further async re-plan is possible and both captures are taken in the same state, with
+   the demand-refined values still compared rather than excluded. */
+const indCachesRestored = page =>
+  page.waitForFunction(() => document.getElementById('dataAges').children.length > 0,
+    null, { timeout: 20000 });
+
+const indComputed = page =>
+  page.waitForFunction(() => document.getElementById('compStatus').className === 'ok'
+    && state.rows.length > 0, null, { timeout: 20000 });
+
+async function indDemandSettled(page) {
+  await page.evaluate(() => state.rows.forEach(r => needHist(r.tid)));
+  await page.waitForFunction(() => state.rows.every(r => {
+    const h = histMem.get(r.tid);
+    if (!h || h === 'loading') return false;      // history still in flight
+    return !!r.err || r.planDemand === h.demand;  // refineRow is a no-op now: settled
+  }), null, { timeout: 20000 });
+}
+
 async function captureIndustry(browser, server) {
   const context = await browser.newContext();
   await H.seedStorage(context, server.url, industryLegacy());
@@ -390,11 +428,13 @@ async function captureIndustry(browser, server) {
   H.watchPage(page, 'industry@' + server.url);
   await page.goto(server.url + '/industry.html');
   await page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+  await indCachesRestored(page);   // ...or the restore clobbers the fixtures below
   // hand the page its ESI datasets directly — the real Update button would hit the network
   await page.evaluate(d => { book = d.book; adjusted = d.adjusted; indices = d.indices; },
     { book: IND_BOOK, adjusted: IND_ADJUSTED, indices: IND_INDICES });
   await page.evaluate(() => computeAll());
-  await page.waitForFunction(() => state.rows.length > 0, null, { timeout: 20000 });
+  await indComputed(page);
+  await indDemandSettled(page);    // ...or the two captures straddle the demand refinement
   const snap = await page.evaluate(tids => {
     const walk = n => ({
       tid: n.tid, name: n.name, decision: n.decision, qty: n.qty,
@@ -553,6 +593,7 @@ H.run('equivalence', async () => {
     await ip.goto(serverNew.url + '/industry.html');
     await ip.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
     await ip.waitForFunction(() => activeProfile().facilities[0].ref != null, null, { timeout: 20000 });
+    await indCachesRestored(ip);   // same IndexedDB restore race as captureIndustry
     const fac = await ip.evaluate(() => JSON.parse(localStorage.getItem('eveHelper.industryProfiles.v1')).profiles[0].facilities[0]);
     eq('the stored facility references the structure', fac.ref, RAITARU.id);
     check('...and copies none of its facts any more',
@@ -570,7 +611,10 @@ H.run('equivalence', async () => {
     await ip.evaluate(d => { book = d.book; adjusted = d.adjusted; indices = d.indices; },
       { book: IND_BOOK, adjusted: IND_ADJUSTED, indices: IND_INDICES });
     await ip.evaluate(() => computeAll());
-    await ip.waitForFunction(() => state.rows.length > 0, null, { timeout: 20000 });
+    await indComputed(ip);
+    // settle the demand cycle here too: nothing may still be re-planning rows while the
+    // structure edits below fire EveStructures.subscribe -> clearEngines/markStale
+    await indDemandSettled(ip);
     check('a fresh table is not stale', await ip.evaluate(() => document.getElementById('staleBanner').hidden));
     const sigBefore = await ip.evaluate(() => curSig());
     await ip.evaluate(id => EveStructures.update(id, { facilityTax: 4 }), RAITARU.id);

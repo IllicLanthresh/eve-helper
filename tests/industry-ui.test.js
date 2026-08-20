@@ -91,6 +91,12 @@ async function openIndustry(browser, server) {
   H.watchPage(page, 'industry');
   await page.goto(server.url + '/industry.html');
   await page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+  // loadCaches() restores book/adjusted/indices from IndexedDB after the static data lands
+  // and overwrites each with `x || null` — writing the fixtures before that restore lands
+  // gets them clobbered back to null. renderAges() fills #dataAges at the tail of
+  // loadCaches: that is the page's own marker that the restore is done.
+  await page.waitForFunction(() => document.getElementById('dataAges').children.length > 0,
+    null, { timeout: 20000 });
   // hand the page its ESI datasets directly — the real Update button would hit the network
   await page.evaluate(d => {
     book = d.book; adjusted = d.adjusted; indices = d.indices;
