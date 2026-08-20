@@ -379,7 +379,15 @@
       if (!mark.mine || !mark.mineStruct){
         const mine = readJson('eveHelper.mine.v1');
         const fac = mine && mine.fac && typeof mine.fac === 'object' ? mine.fac : null;
-        const sid = fac && /^s:\d+$/.test(String(fac.struct)) ? String(fac.struct).slice(2) : null;
+        // The rig was a PAGE-level field on the old Mine tool: switching the facility back
+        // to "NPC station" left `struct: 'npc'` but kept both the rig and the identity
+        // snapshot of the structure it was fitted to. Reading only the SELECTION would
+        // silently drop that rig (and the refinery record with it) for everyone who was
+        // not sitting on their structure when they last used the page, so the retained
+        // snapshot is the fallback.
+        const sid = !fac ? null
+          : /^s:\d+$/.test(String(fac.struct)) ? String(fac.struct).slice(2)
+          : (fac.structInfo && fac.structInfo.id != null ? String(fac.structInfo.id) : null);
         if (sid){
           // the refinery the Mine tool had selected belongs in the shared list even when no
           // rig was ever recorded for it — otherwise that page's own "configure it in the
@@ -562,8 +570,21 @@
       const missing = loggedIn ? NEEDED_SCOPES.filter(s => !EveAuth.tokenScopes().includes(s)) : [];
       const searchable = loggedIn && !missing.length;
       if (!loggedIn){
-        msg.textContent = 'log in with EVE first — the search runs as your character';
+        // the topbar's own SSO button is behind this overlay (.eveModal is z-index 100,
+        // #topbar is 20), so "log in first" with no login control is a dead end — offer
+        // the action here, the same way the missing-scopes branch offers the panel
         msg.className = 'msg err';
+        msg.textContent = 'log in with EVE first — the search runs as your character: ';
+        const link = document.createElement('span');
+        link.className = 'evePermLink';
+        link.id = 'structLogin';
+        link.textContent = 'log in with EVE';
+        link.title = 'starts the EVE SSO login — the picker closes first, since it covers the topbar button';
+        link.addEventListener('click', () => {
+          done(null);
+          if (window.EveAuth && EveAuth.login) EveAuth.login();
+        });
+        msg.appendChild(link);
       } else if (missing.length){
         // don't just describe the problem — hand the user the panel that fixes it
         msg.className = 'msg err';
@@ -620,13 +641,25 @@
       // happen in one place, the manager, which is what the footer link opens
       function renderSaved(){
         savedBox.textContent = '';
-        if (!opts.list || !list.length) return;
+        if (!opts.list) return;
         const cap = document.createElement('div');
         cap.className = 'sect';
         cap.textContent = 'saved';
         const rows = document.createElement('div');
         rows.className = 'rows';
-        for (const s of saved()) rows.appendChild(rowEl(s));
+        // "no structures yet" is the state a first-time user is IN, and rendering it as
+        // literally nothing (title, blank strip, search box) tells them neither that the
+        // list is empty nor where structures are managed — so say both, and keep the
+        // footer link, which used to disappear with the list
+        if (list.length) for (const s of saved()) rows.appendChild(rowEl(s));
+        else {
+          const none = document.createElement('div');
+          none.className = 'msg';
+          none.id = 'structNone';
+          none.textContent = 'no saved structures yet — search for one above, or add and edit them in the '
+            + 'Structure Manager';
+          rows.appendChild(none);
+        }
         const foot = document.createElement('div');
         foot.className = 'msg';
         const link = document.createElement('a');

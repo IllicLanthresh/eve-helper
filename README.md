@@ -153,7 +153,9 @@ when all permissions are granted the site says nothing at all.
 Sell where your alliance actually trades: the market selector's **+ add structure…**
 option opens the structure picker — a modal with live search that runs **as your
 logged-in character** (so it only finds structures that character has access to). Results
-show name, system and structure type; pick with the mouse or ↑/↓ + Enter. Saved
+show name, system and structure type; pick with the mouse or ↑/↓ + Enter. With nothing
+saved yet the modal says so and still links to the manager, and logged out it offers the
+**log in with EVE** action itself (it covers the topbar's own button). Saved
 structures are listed in the same modal to pick from — the modal is a **selector only**:
 renaming, editing and removing happen in the
 [Structure Manager](#structure-manager-structureshtml), which the modal's footer link and
@@ -162,7 +164,10 @@ selected structure's record). Removing a structure there drops it from the marke
 falls back to Jita — including live in an already-open Sell tab, which restores the NPC
 hub's own broker fee, clears the structure's order book and says why. Typing in the broker
 box records the structure's owner-set rate; **emptying** it records *not known* rather than
-0%. The saved list is **shared with every tool**. This
+0%. Selecting a structure with **no rate recorded** never inherits the rate of the market
+you came from: the box goes back to the NPC-hub rate from your skills and the fee line
+names it as a stand-in until the real one is typed in. The saved list is **shared with
+every tool**. This
 needs the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
 `esi-search.search_structures.v1` scopes — if your character logged in before these were
 requested, log in again ("+ alt" on the same character works).
@@ -241,11 +246,14 @@ instant view swap over shared state: prices, skills, facility and pastes all car
 ## Refining facility (a selector, not an editor)
 
 The refine section's facility row is either the **NPC station** (50% base) or one player
-structure chosen through the shared **structure picker** — the same modal, and the same
-shared saved list, the Sell and Industry pages use. What the row does with that choice:
+structure. The dropdown lists **every structure on the shared saved list** (exactly what
+the Sell page's market selector offers), and *choose structure…* opens the shared
+**structure picker** to add one. What the row does with that choice:
 
 - the **refinery base** (Athanor 52% / Tatara 55%) comes from the structure's hull and the
-  **security band** from its system — both read off the record, neither hand-picked;
+  **security band** from its system — both read off the record, neither hand-picked, and
+  both re-read when the record changes (re-resolving an identity that had no security
+  moves the band, and the rig multiplier with it, without a reload);
 - the **reprocessing rig** is *displayed*, never edited here. It is a fact about the
   structure, so it lives on the record: the row shows the recorded tier next to a **manage
   structure** link that deep-links to that record in the
@@ -256,7 +264,10 @@ shared saved list, the Sell and Industry pages use. What the row does with that 
 
 Editing that record (here or in another tab) re-prices the page immediately: the store
 notifies every open tool. Structures picked here are saved centrally, so the same structure
-is one click away in the Sell market list and as an Industry facility.
+is one click away in the Sell market list and as an Industry facility. A structure
+**removed** in the manager stops being an option here and the facility falls back to the
+NPC station, with a line naming which structure went — the fallback the manager's remove
+confirm promises, rather than a selection pointing at nothing.
 
 ## Exact SDE data
 
@@ -556,13 +567,21 @@ conflicts). Clicking a card opens its editor:
   Industry profile routing work here computes with these.
 - **Notes**, and a **used by** line naming the tools and profiles currently pointing at
   the structure. Removing a structure asks for confirmation, names exactly that, and is
-  honest about the cost: Sell and Mine fall back to their own defaults, while an Industry
-  facility routing work there **stops computing** until the structure is added back (the
-  pre-refactor facts a profile still carries from before the import are kept for exactly
-  that case, and go back onto the record when it returns).
+  honest about the cost — naming the fallback each tool really performs: **Sell reverts to
+  Jita**, **Mine to the NPC station**, while an Industry facility routing work there
+  **stops computing** until the structure is added back (the pre-refactor facts a profile
+  still carries from before the import are kept for exactly that case, and go back onto
+  the record when it returns).
+
+A record whose ESI identity is incomplete — no system, no security, because the blob it
+was built from never carried them — is flagged on the card and on any Industry facility
+using it: a missing system makes the job cost index count as **0** and a missing security
+bands the structure as **highsec** (which makes reactor rigs inert). *Re-resolve* fixes it.
 
 A deep link to a record that is not in the list any more (a tool still pointing at a
-removed structure) says so at the top of the page instead of doing nothing.
+removed structure) says so at the top of the page instead of doing nothing, and the
+Industry facility card offers to **add this structure back** rather than to "edit" a
+record that is not there.
 
 Everything saves the moment it changes. `structures.html#s<id>` opens straight to one
 record — that is what the *manage* links on the Sell, Mine and Industry pages use — and
@@ -577,8 +596,10 @@ quantities and the job duration. The **"infer rigs…" wizard** (it used to live
 Industry page; it now edits the central record) picks a probe blueprint per rig domain —
 blueprints the Industry tool knows you own come first, since their ME/TE are known, with
 an unresearched-BPC toggle otherwise — tells you what to look up in game, then strips
-blueprint ME/TE, the hull's role bonuses and the chosen character's Industry / Advanced
-Industry / Reactions skills from the numbers you enter. The residual is matched against
+blueprint ME/TE, the structure's role bonuses **as the record has them** (a hand-corrected
+set, not the hull preset — the same numbers the Industry engine computes with, or the
+residual would carry the difference and match the wrong rig) and the chosen character's
+Industry / Advanced Industry / Reactions skills from the numbers you enter. The residual is matched against
 the rig catalog for that hull size and security band using the exact in-game rounding
 (quantities are rounded to 2 decimals then ceiled, so each shown integer pins an ME
 interval — a second material or the job time disambiguates T1 vs T2). Verdicts are exact /
@@ -595,7 +616,8 @@ normalized — every managed fact gets its default — and rewritten in the v2 s
 load. `structures.js` exposes the record API (`get`, `facts`, `update`, `addConflict`,
 `dismissConflict`, `refresh`, `roleBonuses`, `defaultActivities`) next to
 `pick` / `info` / `saved` / `remember` / `remove` — `pick({title, list})` is now a pure
-**selector** (it lists the saved structures and links to the manager; it no longer removes
+**selector** (it lists the saved structures and links to the manager — including when the
+list is empty, which is exactly when that link matters most; it no longer removes
 anything) — plus **`subscribe(fn)`**: it fires on
 every mutation made through the API on this page *and* on a `storage` event from another
 tab, which is how an edit in the manager re-prices an open Mine or Industry tab live.
@@ -611,7 +633,11 @@ and the Sell one carries none; each pass is guarded on its own and **writes the 
 soon as it finishes**, so a pass that throws (a hand-edited profile blob, a full origin)
 never makes the passes that already succeeded run a second time over your edits.
 
-- Mine's facility snapshot rig → `reproRig`. The refinery itself gets a record either way —
+- Mine's facility snapshot rig → `reproRig`. The rig was a *page*-level field there, so it
+  survived switching the facility back to "NPC station": the structure it belongs to is
+  taken from the retained snapshot when the selection is not one, and not from the
+  selection alone (which would drop the rig, and a few percent of yield, for anyone not
+  sitting on their refinery). The refinery itself gets a record either way —
   built from the snapshot when it was never in the saved list, and created even when no rig
   was ever recorded, so the Mine page's *"configure it in the structure manager"* note
   always has a record to point at;

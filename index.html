@@ -1263,7 +1263,9 @@ function renderMarketOptions(){
   for (const s of savedStructures()) add('s:' + s.id, s.name);
   add('__add', '+ add structure…');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'jita';
-  $('manageStructs').hidden = !savedStructures().length;
+  // shown even with nothing saved: with no structures the manager is exactly where you
+  // go, and hiding the only route to it was the state a first-time user is in
+  $('manageStructs').hidden = false;
   renderFeeSrc();
 }
 
@@ -1284,6 +1286,11 @@ function syncBrokerForMarket(){
     if (!marketWasStructure) hubBrokerFee = $('brokerFee').value;
     const pct = structBrokerOf(h.structure);
     if (pct != null) $('brokerFee').value = String(pct);
+    // A structure with no recorded rate must not inherit the number left in the box: that
+    // is another owner's rate (or, from a hub, the skills/standings NPC rate), and keeping
+    // it would price every order here with it while the fee line says nothing is recorded.
+    // The NPC-hub value is the page's stand-in, and renderFeeSrc names it as one.
+    else if (hubBrokerFee != null) $('brokerFee').value = hubBrokerFee;
   } else if (marketWasStructure && hubBrokerFee != null){
     $('brokerFee').value = hubBrokerFee;
   }
@@ -1306,8 +1313,12 @@ function renderFeeSrc(){
   const pct = structBrokerOf(h.structure);
   const txt = document.createElement('span');
   txt.textContent = pct == null
-    ? `broker % at ${h.label}: owner-set rate from the structure manager — none recorded yet; `
-      + 'read it off the in-game sell window and type it here (it is saved on the structure). '
+    // never let the number in the box pass for a fact about this structure: name it as
+    // the stand-in it is, so a plan priced with it is not read as the owner's rate
+    ? `broker % at ${h.label}: owner-set rate from the structure manager — none recorded yet, so the `
+      + `plan below is priced with the ${$('brokerFee').value}% in the box (the NPC-hub rate from your `
+      + 'skills and standings) as a stand-in; read the real one off the in-game sell window and type it '
+      + 'here (it is saved on the structure). '
     : `broker % at ${h.label}: owner-set rate from the structure manager — typing here updates that record. `;
   const a = document.createElement('a');
   a.href = 'structures.html#s' + h.structure;
@@ -1587,11 +1598,17 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
   }
   const h = hub();
   const pct = h.structure ? structBrokerOf(h.structure) : null;
-  renderFeeSrc();
   if (pct != null && $('brokerFee').value !== String(pct)){
     $('brokerFee').value = String(pct);
+    renderFeeSrc();
     rebuild();
-  }
+  } else if (h.structure && pct == null && hubBrokerFee != null && $('brokerFee').value !== hubBrokerFee){
+    // the rate was CLEARED in the manager — leaving the old number in the box would go on
+    // pricing every order with a rate the record no longer claims
+    $('brokerFee').value = hubBrokerFee;
+    renderFeeSrc();
+    rebuild();
+  } else renderFeeSrc();
 });
 
 $('inv').addEventListener('input', () => rebuild());

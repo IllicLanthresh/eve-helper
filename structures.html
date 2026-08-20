@@ -301,12 +301,14 @@ function render(){
     x.addEventListener('click', e => {
       e.stopPropagation();
       const used = usedBy(rec.id);
-      // be exact about what "removed" costs each tool: Sell and Mine fall back to their
-      // own defaults, but an Industry facility routes work to a structure it can no
-      // longer read, so it stops computing until the structure is added back
+      // be exact about what "removed" costs each tool — naming the fallback each one
+      // actually performs: Sell reverts to Jita, Mine to the NPC station (both of which
+      // change the numbers they show), while an Industry facility routes work to a
+      // structure it can no longer read and stops computing until it is added back
       const where = used.length ? '\n\nIt is currently used by:\n· ' + used.join('\n· ')
-        + '\n\nSell and Mine fall back to their defaults; an Industry facility cannot be computed '
-        + 'until this structure is added back.' : '\n\nNothing is using it right now.';
+        + '\n\nThe Sell tool falls back to Jita and the Mine tool to the NPC station; an Industry '
+        + 'facility cannot be computed until this structure is added back.'
+        : '\n\nNothing is using it right now.';
       if (!window.confirm(`Remove "${rec.name}" and everything recorded about it — the owner-set `
           + `rates, the rigs and the notes?${where}`)) return;
       open.delete(rec.id);
@@ -400,6 +402,24 @@ function fillBody(body, rec){
   });
   ident.append(re, reMsg);
   body.appendChild(ident);
+  // a record can exist without a system or a security — one built from a legacy blob that
+  // never carried them, or from a cold ESI cache. Nothing downstream can guess them: the
+  // Industry cost index for a null system reads as 0 and a null security is treated as
+  // highsec, which silently zeroes every reactor rig. Say so where it can be fixed.
+  if (rec.systemId == null || rec.security == null){
+    const gap = document.createElement('div');
+    gap.className = 'hint warn';
+    gap.id = 'identGap' + rec.id;
+    gap.style.marginTop = '4px';
+    gap.textContent = (rec.systemId == null && rec.security == null
+        ? 'no system or security recorded for this structure'
+        : rec.systemId == null ? 'no system recorded for this structure'
+        : 'no security recorded for this structure')
+      + ' — until it is, Industry counts the system cost index as 0'
+      + (rec.security == null ? ' and applies highsec rig multipliers' : '')
+      + '. Press re-resolve (needs a logged-in character that can see the structure).';
+    body.appendChild(gap);
+  }
 
   /* owner-set rates */
   const rates = document.createElement('div');
@@ -722,7 +742,12 @@ function wizParseDur(str){
    exact matQty (round to 2 decimals, then ceil), so a candidate matches only
    if it reproduces the shown integer for EVERY entered material. */
 function wizSolve(o){
-  const roles = S.roleBonuses(o.rec.typeId);
+  // the structure's EFFECTIVE role bonuses, not the hull preset: a record whose bonuses
+  // were corrected by hand (or imported as an override from a profile) is what the
+  // Industry engine computes with, so stripping the preset instead would leave the
+  // difference in the residual and match the wrong rig — or none at all
+  const f = S.facts(o.rec.id);
+  const roles = f ? f.bonuses : S.roleBonuses(o.rec.typeId);
   const structMe = roles.me || 0, structTe = roles.te || 0;
   const band = secBand(o.rec.security);
   const effMe = rig => {

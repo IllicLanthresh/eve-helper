@@ -656,6 +656,36 @@ function reproRig(){
   const f = window.EveStructures ? EveStructures.facts(st.id) : null;
   return f && RIG_BONUS[f.reproRig] != null ? f.reproRig : 'none';
 }
+/* The shared saved list is the source of truth for WHICH structures exist and WHAT they
+   are: this page only holds an identity snapshot so it can render while offline. Two
+   things have to be re-read from the record rather than trusted from that snapshot:
+   - a structure removed in the manager is not selectable any more, so the facility falls
+     back to the NPC station — which is exactly what the manager's remove confirm promises;
+   - the security band is a cached derivative of the record's security, and the rig bonus
+     is scaled by it, so a record whose identity was re-resolved centrally (security null →
+     real) must move the band here too, or the refine % stays quietly wrong.
+   Returns true when something changed and the caller should persist. */
+let facGoneName = null;          // a selection dropped because its record is gone
+function syncFacFromRecords(){
+  const st = state.fac.structInfo;
+  if (!st || !window.EveStructures) return false;
+  const rec = EveStructures.get(st.id);
+  if (!rec){
+    if (state.fac.struct === 'npc') return false;
+    facGoneName = st.name;
+    state.fac.struct = 'npc';
+    return true;
+  }
+  let changed = false;
+  const ident = identOf(rec);
+  if (JSON.stringify(ident) !== JSON.stringify(st)){ state.fac.structInfo = ident; changed = true; }
+  if (rec.security != null){
+    const band = secBandOf(rec.security);
+    if (band !== state.fac.sec){ state.fac.sec = band; changed = true; }
+  }
+  return changed;
+}
+
 function facilityBasePct(){
   if (state.fac.struct === 'npc') return FACILITY_BASE.npc;
   const st = state.fac.structInfo;
@@ -783,6 +813,8 @@ function renderRoles(){
 }
 
 /* ---------- facility controls (structure picked via the shared modal) ---------- */
+// the facility widgets only mean anything once the character's reprocessing skills are in
+const facSkillsOn = () => !!(charSkills && charSkills.groups && Object.keys(charSkills.groups).length);
 function facNoteText(){
   if (state.fac.struct === 'npc') return '';
   const st = state.fac.structInfo || {};
@@ -802,19 +834,20 @@ function renderRigNote(isStruct){
   const st = state.fac.structInfo;
   el.textContent = '';
   el.hidden = !isStruct;
-  if (!isStruct) return;
-  const rig = reproRig();
-  const labels = (window.EveStructures && EveStructures.REPRO_RIGS) || {};
-  // the structure was removed in the manager: this page still has its identity snapshot,
-  // so it keeps working — but "configure the rig in the manager" would send the user to a
-  // record that is not there any more, so say what actually happened
-  if (window.EveStructures && st && !EveStructures.get(st.id)){
+  // the selected structure was removed in the manager, so this page did what the remove
+  // confirm promises and fell back to the NPC station — silently swapping the facility
+  // (and the yield with it) would be the worst of both, so it says so until the next pick
+  if (!isStruct && facGoneName && facSkillsOn()){
+    el.hidden = false;
     el.className = 'hint warn';
-    el.textContent = 'this structure is no longer in the Structure Manager — add it back there to '
-      + 'record its reprocessing rig (the yield below assumes none)';
+    el.textContent = `“${facGoneName}” is no longer in the Structure Manager — refining fell back to `
+      + 'the NPC station (50%). Add it back there to refine at it again.';
     el.title = 'the structure manager holds every fact about a structure; this page only selects one';
     return;
   }
+  if (!isStruct) return;
+  const rig = reproRig();
+  const labels = (window.EveStructures && EveStructures.REPRO_RIGS) || {};
   if (rig === 'none'){
     el.className = 'hint warn';
     el.textContent = 'no reprocessing rig set — configure it in the structure manager';
@@ -832,7 +865,7 @@ function renderRigNote(isStruct){
 // The rig itself is never edited here: it belongs to the structure, so the line only
 // mirrors what the central record says and the "manage" link opens that record.
 function renderFacControls(){
-  const on = !!(charSkills && charSkills.groups && Object.keys(charSkills.groups).length);
+  const on = facSkillsOn();
   const st = state.fac.structInfo;
   const isStruct = state.fac.struct !== 'npc' && !!st;
   const sel = $('facStruct');
@@ -843,13 +876,18 @@ function renderFacControls(){
     sel.appendChild(o);
   };
   add('npc', 'NPC station · 50%');
-  if (st) add('s:' + st.id, st.name);
+  // every structure the shared list holds, exactly as the Sell page's market selector
+  // offers them — one saved list, visible from every tool, rather than a dropdown that
+  // only ever contained the one structure already picked here
+  const savedList = window.EveStructures ? EveStructures.saved() : [];
+  for (const s of savedList) add('s:' + s.id, s.name);
+  // without the shared store (script blocked) the snapshot is all there is — still offer
+  // the one it names, but only while this page is actually still pointing at it
+  if (isStruct && !savedList.some(s => s.id === st.id)) add('s:' + st.id, st.name);
   sel.value = isStruct ? 's:' + st.id : 'npc';
   sel.disabled = !on;
   $('facPick').disabled = !on;
   $('facImp').disabled = !on;
-  $('facSec').disabled = true;   // never hand-picked: detected from the structure's system
-  $('facSec').value = state.fac.sec;
   $('facManage').hidden = !(on && isStruct);
   if (isStruct) $('facManage').href = 'structures.html#s' + st.id;
   renderRigNote(on && isStruct);
@@ -2673,6 +2711,9 @@ function restore(){
       state.fac.structInfo = s.fac.structInfo;
   }
   if (state.fac.struct !== 'npc' && !state.fac.structInfo) state.fac.struct = 'npc';
+  // the shared list decides what is selectable and what the band is — a structure removed
+  // in the manager since this page was last open falls back to the NPC station here
+  syncFacFromRecords();
   if (s.roles && typeof s.roles === 'object'){
     state.roles.repro = numOrNull(s.roles.repro);
     state.roles.seller = numOrNull(s.roles.seller);
@@ -2740,7 +2781,17 @@ $('refine').addEventListener('change', () => { $('refine').value = String(state.
 $('facStruct').addEventListener('change', () => {
   const v = $('facStruct').value;
   if (v === 'npc') state.fac.struct = 'npc';
-  else if (state.fac.structInfo && v === 's:' + state.fac.structInfo.id) state.fac.struct = v;
+  else {
+    // any structure on the shared saved list can be picked straight from here — take its
+    // identity and security band off the record, exactly as the picker does
+    const rec = window.EveStructures ? EveStructures.get(Number(v.slice(2))) : null;
+    if (rec){
+      state.fac.struct = v;
+      state.fac.structInfo = identOf(rec);
+      if (rec.security != null) state.fac.sec = secBandOf(rec.security);
+      facGoneName = null;
+    } else if (state.fac.structInfo && v === 's:' + state.fac.structInfo.id) state.fac.struct = v;
+  }
   renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('facPick').addEventListener('click', async () => {
@@ -2749,13 +2800,17 @@ $('facPick').addEventListener('click', async () => {
     state.fac.struct = 's:' + s.id;
     state.fac.structInfo = identOf(s);
     if (s.security != null) state.fac.sec = secBandOf(s.security);
+    facGoneName = null;
   }
   renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 // the rig is edited on the structure record, not here — but a change made in the manager
-// (or another tab) must re-price this page immediately
+// (or another tab) must re-price this page immediately, and the identity this page
+// snapshotted (security band above all — it scales the rig bonus) has to follow it
 if (window.EveStructures) EveStructures.subscribe(() => {
+  const changed = syncFacFromRecords();
   renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet();
+  if (changed) persist();
 });
 $('facImp').addEventListener('change', () => {
   const v = Number($('facImp').value);

@@ -88,6 +88,8 @@
   .fac .acts label{display:inline-flex;gap:4px;margin:0 12px 0 0;color:var(--text);font-size:12px;align-items:center}
   .fac .kv{display:inline-flex;gap:5px;align-items:center;margin:0 14px 0 0;font-size:12px;color:var(--dim)}
   .fac .kv input{width:64px;padding:3px 6px;font-size:12px}
+  .fac .warnbox{margin-top:6px;padding:6px 10px;border:1px solid #6b571f;background:#3a2f14;
+    color:var(--amber);border-radius:8px;font-size:12px}
   .rig{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px}
   .rig select{width:230px;font-size:12px;padding:3px 6px}
   .rig .x{cursor:pointer;color:var(--dim);padding:0 5px;border-radius:4px}
@@ -1162,7 +1164,14 @@ function renderFacilities(){
     x.className = 'x'; x.textContent = '×'; x.title = 'remove facility';
     x.addEventListener('click', () => { p.facilities.splice(fi, 1); saveProfiles(); renderFacilities(); });
     head.append(up, down, label, sub);
-    if (!f.npc) head.appendChild(manageLink(v, 'edit in the structure manager'));
+    if (!f.npc){
+      // a record that is not in the manager any more cannot be "edited" there — the only
+      // thing that link can do for this facility is get the structure back, so say that
+      const ml = manageLink(v, v.ok ? 'edit in the structure manager' : 'add this structure back');
+      if (!v.ok) ml.title = 'open the Structure Manager — it names this structure as missing from your '
+        + 'saved list and how to add it back, which is what this facility needs';
+      head.appendChild(ml);
+    }
     head.appendChild(x);
     card.appendChild(head);
 
@@ -1170,9 +1179,7 @@ function renderFacilities(){
     // quietly computing with a structure that has no hull, no rigs and no tax
     if (!v.ok){
       const gone = document.createElement('div');
-      gone.className = 'facGone';
-      gone.style.cssText = 'margin-top:6px;padding:6px 10px;border:1px solid #6b571f;background:#3a2f14;'
-        + 'color:var(--amber);border-radius:8px;font-size:12px';
+      gone.className = 'facGone warnbox';
       gone.textContent = 'this structure is no longer in the Structure Manager — nothing can be computed '
         + 'here until it is added back (or this facility is removed)'
         // the pre-refactor copy this profile still carries is the only surviving one: it is
@@ -1183,6 +1190,27 @@ function renderFacilities(){
       card.appendChild(gone);
       box.appendChild(card);
       return;
+    }
+
+    // The record is here but its ESI identity is incomplete — a record built from a legacy
+    // blob that never carried a system, or created while the identity cache was cold.
+    // Nothing on this page can guess either value, and both fail SILENTLY: a null system
+    // makes indices.map[null] read as a cost index of 0, and a null security is banded as
+    // highsec, which zeroes every reactor rig. So name it where it is acted on.
+    if (!f.npc && (v.system == null || v.security == null)){
+      const gap = document.createElement('div');
+      gap.className = 'facIdentGap warnbox';
+      gap.append(document.createTextNode(
+        (v.system == null && v.security == null ? 'this structure has no system or security recorded'
+          : v.system == null ? 'this structure has no system recorded'
+          : 'this structure has no security recorded')
+        + ' — until it does, '
+        + (v.system == null ? 'the system cost index below counts as 0' : '')
+        + (v.system == null && v.security == null ? ' and ' : '')
+        + (v.security == null ? 'rigs are computed with highsec multipliers (reactor rigs are inert there)' : '')
+        + '. Re-resolve the identity on the record:'));
+      gap.appendChild(manageLink(v, 'open the record'));
+      card.appendChild(gap);
     }
 
     // NPC stations need a system for the cost index — free-text, resolved via ESI

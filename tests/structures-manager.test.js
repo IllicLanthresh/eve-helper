@@ -651,8 +651,13 @@ H.run('structures-manager', async () => {
       check('the confirm names the Sell tool', /Sell tool/.test(dialog), dialog);
       check('...the Mine tool', /Mine tool/.test(dialog), dialog);
       check('...and the Industry profile by name', /Alpha/.test(dialog), dialog);
-      check('...and warns those will fall back to their defaults',
-        /fall back to their defaults/.test(dialog), dialog);
+      // "those will fall back to their defaults" was one blanket promise for three tools
+      // that behave differently — the confirm now names the fallback each one performs,
+      // and every one of these is asserted against the tool itself further down
+      check('...and names the fallback Sell performs', /falls back to Jita/.test(dialog), dialog);
+      check('...the one Mine performs', /Mine tool to the NPC station/.test(dialog), dialog);
+      check('...and that an Industry facility instead stops computing',
+        /Industry facility cannot be computed until this structure is added back/.test(dialog), dialog);
       eq('the record really is gone', await s.page.evaluate(() => EveStructures.saved().length), 0);
       eq('...from storage too', await storedRec(s.page, RAITARU), null);
       await s.close();
@@ -1313,6 +1318,292 @@ H.run('structures-manager', async () => {
       check('...and the other profile’s is not dropped in silence',
         f.conflicts.some(c => /disagreed about rigs/.test(c.text)
           && /Alpha/.test(c.text) && /Bravo/.test(c.text)), JSON.stringify(f.conflicts));
+      await s.close();
+    }
+
+    /* ================================================================================
+       (h) one case per finding of the second review round: dead ends and stale state,
+           the empty/logged-out picker, and the two correctness bugs
+       ================================================================================ */
+    section('Mine’s legacy rig follows the structure it was fitted to, not the selection');
+    {
+      // the old Mine tool kept the rig as a PAGE-level field: switching the facility back
+      // to "NPC station" left `struct: 'npc'` with both the rig and the structure's own
+      // identity snapshot intact, and reading only the selection dropped the rig for good
+      const s = await openManager(browser, server, [auth(), infoCache([TATARA]),
+        ['eveHelper.mine.v1', { fac: { struct: 'npc', rig: 't2', sec: 'ns', imp: 4,
+                                       structInfo: IDENT[TATARA] } }]]);
+      const rec = await recOf(s.page, TATARA);
+      check('the refinery still gets a record', !!rec, JSON.stringify(rec));
+      eq('...named from the snapshot the page kept', rec && rec.name, 'Test Tatara');
+      eq('...carrying the rig that would otherwise have been dropped',
+        (await factsOf(s.page, TATARA)).reproRig, 't2');
+      const mark = await s.page.evaluate(() =>
+        JSON.parse(localStorage.getItem('eveHelper.structMigration.v1')));
+      check('...with the pass marked done, so it never runs over a later edit',
+        mark && mark.mine === 1 && mark.mineStruct === 1, JSON.stringify(mark));
+      await s.close();
+    }
+
+    section('the rig wizard strips the record’s corrected role bonuses, not the hull preset');
+    {
+      // a Raitaru whose ME role bonus was corrected from the 1% preset to 5% — that is the
+      // set the Industry engine computes with (facts().bonuses), so it is the one the
+      // wizard has to strip before matching the residual against the catalog
+      const s = await openManager(browser, server,
+        [auth(), infoCache([RAITARU]), ['eveHelper.structures.v1', { v: 2, structures: [
+          Object.assign({}, IDENT[RAITARU], { roleBonus: { me: 5, te: 15, cost: 3 } }),
+        ] }]], { esi: { skills: {} } });
+      const page = s.page;
+      eq('the record’s effective ME bonus is the correction, not the preset',
+        (await factsOf(page, RAITARU)).bonuses.me, 5);
+      // what the in-game industry window shows at THIS structure with a T2 rig fitted
+      const shown = await page.evaluate(t => IndustryEngine.matQty(1000, 1, 10, 5, t), EFF_T2);
+      eq('the quantity a T2 rig produces here is a single integer', shown, 812);
+      check('...which the 1% PRESET explains with no catalog rig at all — the old wizard '
+        + 'would have reported a conflict', await page.evaluate(t =>
+          [0, t.t1, t.t2].every(r => IndustryEngine.matQty(1000, 1, 10, 1, r) !== t.shown),
+          { shown, t1: EFF_T1, t2: EFF_T2 }));
+      await expand(page, RAITARU);
+      await page.click('#s' + RAITARU + ' .rig-add + button.mini');
+      await page.waitForSelector('#rigWizard #wizProbe', { timeout: 10000 });
+      await page.selectOption('#rigWizard #wizDom', 'Basic Medium Ships');
+      await page.waitForFunction(() => document.querySelector('#rigWizard #wizProbe').options.length > 0);
+      await page.selectOption('#rigWizard #wizProbe', String(T.WIDGET));
+      await page.click('#rigWizard .wbtns button.primary');
+      await page.waitForSelector('#rigWizard #wizQty1', { timeout: 10000 });
+      await page.fill('#rigWizard #wizBpMe', '10');
+      await page.fill('#rigWizard #wizQty1', String(shown));
+      await page.click('#rigWizard #wizSolveBtn');
+      await page.waitForSelector('#rigWizard #wizInstall', { timeout: 10000 });
+      const verdict = await page.$eval('#rigWizard .res', el => el.textContent);
+      check('the wizard detects the rig that is actually fitted',
+        /Material Efficiency II \(T2\)/.test(verdict), verdict);
+      check('...rather than reporting a conflict', !/CONFLICT/.test(verdict), verdict);
+      await s.close();
+    }
+
+    section('the picker’s empty state says it is empty and offers the manager');
+    {
+      // a first-time user: nothing saved anywhere. The picker used to render a title, a
+      // blank strip and a search box — and the Sell page hid its own manage link too
+      const context = await baseContext(browser, [auth()], {
+        esi: { skills: { accounting: 5, brokerRelations: 5 }, standings: {},
+               typeIds: SELL_TYPE_IDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'sell-empty');
+      await page.goto(server.url + '/index.html');
+      await page.waitForFunction(() => typeof hub === 'function' && /⚡/.test(document.body.textContent),
+        null, { timeout: 20000 });
+      check('with nothing saved the Sell page still shows the way to the manager',
+        !(await page.$eval('#manageStructs', el => el.hidden)));
+      await page.selectOption('#market', '__add');
+      await page.waitForSelector('#structPicker #structNone', { timeout: 15000 });
+      const none = await page.$eval('#structPicker #structNone', el => el.textContent);
+      check('the picker says there is nothing saved yet', /no saved structures yet/.test(none), none);
+      check('...and still links to the Structure Manager', await page.evaluate(() =>
+        !!document.querySelector('#structSaved a[href="structures.html"]')));
+      check('...with the search box left usable', await page.$eval('#structSearch', el => !el.disabled));
+      await page.keyboard.press('Escape');
+      await context.close();
+    }
+
+    section('the logged-out picker offers the login it asks for');
+    {
+      // .eveModal is z-index 100 over a z-index 20 topbar, so the SSO button the message
+      // points at is behind the overlay — the action has to be inside it
+      const s = await openManager(browser, server, []);
+      await s.page.evaluate(() => { window.__logins = 0; EveAuth.login = () => { window.__logins++; }; });
+      await s.page.click('#btnAdd');
+      await s.page.waitForSelector('#structPicker #structMsg.err', { timeout: 15000 });
+      const msg = await s.page.$eval('#structPicker #structMsg', el => el.textContent);
+      check('it still says a login is needed', /log in with EVE first/.test(msg), msg);
+      check('...and now carries the action itself',
+        await s.page.evaluate(() => !!document.getElementById('structLogin')));
+      await s.page.click('#structLogin');
+      await s.page.waitForFunction(() => !document.getElementById('structPicker'), null, { timeout: 10000 });
+      eq('...which closes the picker covering the topbar', await s.page.evaluate(() => window.__logins), 1);
+      await s.close();
+    }
+
+    section('Sell never carries one market’s broker rate into a structure that has none');
+    {
+      const context = await baseContext(browser, [auth(), infoCache([KEEPSTAR, RAITARU]),
+        ['eveHelper.structures.v1', { v: 2, structures: [
+          Object.assign({}, IDENT[KEEPSTAR], { marketBroker: 4.5 }),
+          Object.assign({}, IDENT[RAITARU]),
+        ] }]], {
+        esi: { skills: { accounting: 5, brokerRelations: 5 }, standings: {},
+               typeIds: SELL_TYPE_IDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'sell-carry');
+      await page.goto(server.url + '/index.html');
+      // settled = the skills-driven NPC-hub rate has been auto-filled at Jita
+      await page.waitForFunction(() => document.getElementById('brokerFee').value === '1.50'
+        && /⚡/.test(document.body.textContent), null, { timeout: 20000 });
+      await page.selectOption('#market', 's:' + KEEPSTAR);
+      await page.waitForFunction(() => document.getElementById('brokerFee').value === '4.5',
+        null, { timeout: 15000 });
+      await page.selectOption('#market', 's:' + RAITARU);
+      await page.waitForFunction(id => hub().structure === id, RAITARU, { timeout: 15000 });
+      eq('a structure with no recorded rate does not inherit the last one',
+        await page.$eval('#brokerFee', el => el.value), '1.50');
+      near('...and the fee model prices with that, not with 4.5%',
+        await page.evaluate(() => feePct('brokerFee')), 0.015, 1e-12);
+      const src = await page.$eval('#feeSrc', el => el.textContent);
+      check('the fee line still says nothing is recorded', /none recorded yet/.test(src), src);
+      check('...and names the number in the box as a stand-in', /stand-in/.test(src), src);
+
+      // and the same hole cross-tab: clearing the rate in the manager must not leave the
+      // old number pricing every order here
+      await page.selectOption('#market', 's:' + KEEPSTAR);
+      await page.waitForFunction(() => document.getElementById('brokerFee').value === '4.5',
+        null, { timeout: 15000 });
+      const mgr = await context.newPage();
+      H.watchPage(mgr, 'manager-clear');
+      await mgr.goto(server.url + '/structures.html');
+      await mgr.waitForFunction(id => !!EveStructures.get(id), KEEPSTAR, { timeout: 20000 });
+      await mgr.evaluate(id => EveStructures.update(id, { marketBroker: null }), KEEPSTAR);
+      await page.waitForFunction(() => document.getElementById('brokerFee').value === '1.50',
+        null, { timeout: 15000 });
+      eq('clearing the rate centrally drops it out of the box too',
+        await page.$eval('#brokerFee', el => el.value), '1.50');
+      await context.close();
+    }
+
+    section('Mine offers the shared saved list and falls back when a structure is removed');
+    {
+      const context = await baseContext(browser, [auth(), infoCache([TATARA, RAITARU]),
+        ['eveHelper.structures.v1', { v: 2, structures: [
+          Object.assign({}, IDENT[TATARA], { reproRig: 't2' }),
+          Object.assign({}, IDENT[RAITARU]),
+        ] }],
+        ['eveHelper.mine.v1', { fac: { struct: 's:' + TATARA, sec: 'ns', imp: 4,
+                                       structInfo: IDENT[TATARA] } }]], {
+        esi: { skills: MINE_SKILLS, standings: {}, typeIds: MINE_TIDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'mine-list');
+      await page.goto(server.url + '/mine.html');
+      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+        null, { timeout: 25000 });
+      await page.waitForFunction(() => !document.getElementById('facStruct').disabled,
+        null, { timeout: 15000 });
+      const opts = await page.$$eval('#facStruct option', els => els.map(o => o.value));
+      eq('the facility dropdown offers every saved structure, not just the selected one',
+        opts.join(','), ['npc', 's:' + TATARA, 's:' + RAITARU].join(','));
+      near('the selected refinery is the T2-rigged Tatara', await page.evaluate(() => facilityBasePct()),
+        55 * (1 + 0.03 * 1.12), 1e-9);
+      // switching straight from the dropdown, with no modal in between
+      await page.selectOption('#facStruct', 's:' + RAITARU);
+      await page.waitForFunction(id => state.fac.structInfo && state.fac.structInfo.id === id,
+        RAITARU, { timeout: 15000 });
+      eq('picking another saved structure switches the facility from the list itself',
+        await page.evaluate(() => state.fac.structInfo.name), 'Test Raitaru');
+      await page.selectOption('#facStruct', 's:' + TATARA);
+      await page.waitForFunction(id => state.fac.structInfo && state.fac.structInfo.id === id,
+        TATARA, { timeout: 15000 });
+
+      // the manager's remove confirm promises Mine falls back to its default — so it must
+      await page.evaluate(id => EveStructures.remove(id), TATARA);
+      await page.waitForFunction(() => state.fac.struct === 'npc', null, { timeout: 15000 });
+      near('a removed structure really does fall back to the NPC station',
+        await page.evaluate(() => facilityBasePct()), 50, 1e-9);
+      const gone = await page.$eval('#facRigNote', el => el.textContent);
+      check('...and the page says which structure went and what it fell back to',
+        /Test Tatara/.test(gone) && /NPC station/.test(gone), gone);
+      const opts2 = await page.$$eval('#facStruct option', els => els.map(o => o.value));
+      check('...and the dropdown stops offering it', !opts2.includes('s:' + TATARA), opts2.join(','));
+      eq('...with the fallback persisted, not just displayed', await page.evaluate(() =>
+        JSON.parse(localStorage.getItem('eveHelper.mine.v1')).fac.struct), 'npc');
+      await context.close();
+    }
+
+    section('Mine re-reads the security band a central identity refresh changes');
+    {
+      // the case structures.js's "saved before type/security were tracked" path exists for:
+      // the record's security is filled in centrally, and the band scales the rig bonus
+      const bandless = Object.assign({}, IDENT[TATARA], { security: null, reproRig: 't2' });
+      const context = await baseContext(browser, [auth(),
+        ['eveHelper.structInfo.v1', { [TATARA]: Object.assign({}, IDENT[TATARA], { security: null }) }],
+        ['eveHelper.structures.v1', { v: 2, structures: [bandless] }],
+        ['eveHelper.mine.v1', { fac: { struct: 's:' + TATARA, sec: 'hs', imp: 4,
+                                       structInfo: Object.assign({}, IDENT[TATARA], { security: null }) } }]], {
+        esi: { skills: MINE_SKILLS, standings: {}, typeIds: MINE_TIDS, books: {} },
+      });
+      await mockIdentity(context);
+      const page = await context.newPage();
+      H.watchPage(page, 'mine-band');
+      await page.goto(server.url + '/mine.html');
+      await page.waitForFunction(() => /per-ore refine from Miquel Dreamer/.test(document.body.textContent),
+        null, { timeout: 25000 });
+      near('with no security recorded the rig is scaled by the highsec ×1',
+        await page.evaluate(() => facilityBasePct()), 55 * (1 + 0.03 * 1), 1e-9);
+      await page.evaluate(id => EveStructures.refresh(id), TATARA);
+      await page.waitForFunction(() => state.fac.sec === 'ns', null, { timeout: 20000 });
+      near('re-resolving the identity centrally moves the band here, and the yield with it',
+        await page.evaluate(() => facilityBasePct()), 55 * (1 + 0.03 * 1.12), 1e-9);
+      check('...and the facility note stops claiming the old multiplier',
+        /nullsec.*×1\.12/.test(await page.$eval('#facNote', el => el.textContent)),
+        await page.$eval('#facNote', el => el.textContent));
+      await context.close();
+    }
+
+    section('a record with no system or security says so where it is used');
+    {
+      // a record can exist without either — built from a legacy blob that never carried
+      // them, or created while the ESI identity cache was cold. Both fail silently: the
+      // cost index reads as 0 and the security bands as highsec
+      const storage = [auth(),
+        ['eveHelper.structures.v1', { v: 2, structures: [
+          { id: RAITARU, name: 'Test Raitaru', typeId: 35825, typeName: 'Raitaru' },
+        ] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [{ uid: 'f1', npc: false, ref: RAITARU, activities: ['man'],
+                                    scope: [], sciOverride: null }]),
+        ] }]];
+      const s = await openIndustry(browser, server, storage, { identity: {} });
+      await s.page.waitForSelector('.fac .facIdentGap', { timeout: 15000 });
+      const gap = await s.page.$eval('.fac .facIdentGap', el => el.textContent);
+      check('the facility card names the gap', /no system or security recorded/.test(gap), gap);
+      check('...and what it silently costs — a cost index of 0', /cost index below counts as 0/.test(gap), gap);
+      check('...and highsec rig multipliers', /highsec multipliers/.test(gap), gap);
+      check('...with a link to the record that can fix it', await s.page.evaluate(() =>
+        !!document.querySelector('.fac .facIdentGap a[href="structures.html#s1035000000001"]')));
+      eq('...which is exactly the system the engine would have been fed',
+        await s.page.evaluate(() => facilityToEngine(IndustryPage.activeProfile().facilities[0]).system), null);
+      await s.close();
+      const m = await openManager(browser, server, storage);
+      await expand(m.page, RAITARU);
+      const flag = await m.page.$eval('#identGap' + RAITARU, el => el.textContent);
+      check('the manager’s own record flags it too', /no system or security recorded/.test(flag), flag);
+      check('...and names re-resolve as the fix', /re-resolve/.test(flag), flag);
+      await m.close();
+    }
+
+    section('the Industry link on a facility whose record is gone offers to add it back');
+    {
+      const s = await openIndustry(browser, server, [auth(),
+        // already imported once, and the record removed in the manager since
+        ['eveHelper.structMigration.v1',
+          { v: 1, sell: 1, mine: 1, mineStruct: 1, industry: 1, industryBonus: 1 }],
+        ['eveHelper.structures.v1', { v: 2, structures: [IDENT[TATARA]] }],
+        ['eveHelper.industryProfiles.v1', { active: 'pA', profiles: [
+          profile('pA', 'Alpha', [{ uid: 'f1', npc: false, ref: RAITARU, activities: ['man'],
+                                    scope: [], sciOverride: null }]),
+        ] }]]);
+      await s.page.waitForSelector('.fac .facGone', { timeout: 15000 });
+      const link = await s.page.$eval('.fac .fhead a', el => ({ t: el.textContent, h: el.getAttribute('href') }));
+      check('the one offered action is not called "edit" any more',
+        !/edit in the structure manager/.test(link.t), JSON.stringify(link));
+      check('...but says what it can actually do', /add this structure back/.test(link.t), JSON.stringify(link));
+      eq('...and still deep-links to the record the manager will explain',
+        link.h, 'structures.html#s' + RAITARU);
       await s.close();
     }
 
