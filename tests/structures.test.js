@@ -1,11 +1,13 @@
 /* The central structure store (structures.js) and the Structure Manager page.
 
    One record per structure: identity from ESI plus the facts a human has to supply
-   (owner-set broker %, facility tax %, rigs, reprocessing rig, activities, notes). This
-   suite covers the schema bump, the one-time import of the facts the three tools used to
-   keep on their own, the conflict note two disagreeing Industry profiles produce, the
-   manager's editors, and the fact that the Industry page now reads rigs/tax from the
-   record rather than from its profile.
+   (owner-set broker %, facility tax %, rigs, reprocessing rig, hull role bonuses,
+   activities, notes). This suite covers the schema bump, the one-time import of the facts
+   the three tools used to keep on their own, the conflict note two disagreeing Industry
+   profiles produce, the manager's editors, and the Industry page reading every structure
+   fact off the record — read-only, with a deep link back to the manager (and to its rig
+   wizard), an alias note when a profile had renamed the facility, and a refusal to compute
+   when the record is gone.
 
    data/industry.json is gitignored (CI builds it from the SDE), so the page's fetch of it
    is intercepted and served a small SDE-shaped fixture — enough of a rig catalog and
@@ -112,7 +114,8 @@ H.run('structures', async () => {
     eq('...with the hull rig slot count', rec.rigSlots, 3);
     check('every managed fact exists on the record',
       'marketBroker' in rec && 'facilityTax' in rec && 'rigs' in rec && 'reproRig' in rec
-      && 'industryActivities' in rec && 'notes' in rec, JSON.stringify(Object.keys(rec)));
+      && 'roleBonus' in rec && 'industryActivities' in rec && 'notes' in rec,
+      JSON.stringify(Object.keys(rec)));
     eq('a structure only the Mine tool knew about was created too',
       (store.structures.find(r => r.id === TATARA) || {}).name, 'Test Tatara');
 
@@ -213,6 +216,27 @@ H.run('structures', async () => {
     check('...and unticking it again leaves the rest alone',
       (await factsOf(page, RAITARU)).industryActivities.join(','), 'man,inv,cop,me,te');
 
+    section('the hull role bonuses are a fact of the structure, preset until corrected');
+    let bf = await factsOf(page, RAITARU);
+    eq('the Raitaru preset applies while nothing is recorded', bf.bonuses.te, 15);
+    check('...and is marked as a preset', bf.bonusesAreDefault, JSON.stringify(bf.bonuses));
+    eq('...which the profiles agreed with, so nothing was imported',
+      await page.evaluate(id => EveStructures.get(id).roleBonus, RAITARU), null);
+    eq('the manager shows the preset in an editable field',
+      await page.$eval('#s' + RAITARU + ' [data-f="bonusTe"]', el => el.value), '15');
+    await page.fill('#s' + RAITARU + ' [data-f="bonusTe"]', '18');
+    await page.dispatchEvent('#s' + RAITARU + ' [data-f="bonusTe"]', 'change');
+    await page.waitForFunction(id => EveStructures.facts(id).bonuses.te === 18, RAITARU);
+    bf = await factsOf(page, RAITARU);
+    eq('a correction is written to the record', bf.bonuses.te, 18);
+    check('...and stops being a preset', !bf.bonusesAreDefault);
+    eq('...leaving the other two bonuses at the hull values', bf.bonuses.me + '/' + bf.bonuses.cost, '1/3');
+    await page.click('#s' + RAITARU + ' .bonus-reset');
+    await page.waitForFunction(id => EveStructures.facts(id).bonusesAreDefault, RAITARU);
+    eq('resetting goes back to the hull preset', (await factsOf(page, RAITARU)).bonuses.te, 15);
+    eq('...by clearing the override, not by copying the preset in',
+      await page.evaluate(id => EveStructures.get(id).roleBonus, RAITARU), null);
+
     section('a conflict note is dismissed by hand');
     await page.click('#s' + RAITARU + ' .conflict-dismiss');
     await page.waitForFunction(id => EveStructures.facts(id).conflicts.length === 1, RAITARU);
@@ -291,7 +315,61 @@ H.run('structures', async () => {
         && !document.querySelector('#facList select[class], #facList .rig select')));
     check('...replaced by a link into the manager',
       await ip.evaluate(() => [...document.querySelectorAll('#facList a')].some(a => /structures\.html#s/.test(a.getAttribute('href')))));
+
+    section('...and a structure facility is read-only there: it only routes work');
+    const facUi = await ip.evaluate(() => {
+      const card = document.querySelector('#facList .fac');
+      return {
+        nums: card.querySelectorAll('input[type=number]').length,
+        texts: card.querySelectorAll('input[type=text]').length,
+        label: (card.querySelector('b.flabel') || {}).textContent || null,
+        text: card.textContent,
+        links: [...card.querySelectorAll('a')].map(a => a.getAttribute('href')),
+      };
+    });
+    eq('the structure names itself — no per-profile label input', facUi.texts, 0);
+    eq('...and the record supplies the name', facUi.label, 'Test Raitaru');
+    eq('the only number input left is the cost-index estimate', facUi.nums, 1);
+    check('the owner-set job tax is shown, not editable', /facility tax 3%/.test(facUi.text), facUi.text);
+    check('...as are the hull role bonuses, flagged as a preset',
+      /role bonuses ME 1% · TE 15% · cost 3% \(preset\)/.test(facUi.text), facUi.text);
+    check('...and the cost-index override says it is a per-profile estimate',
+      await ip.evaluate(() => [...document.querySelectorAll('#facList .kv')]
+        .some(k => /stays with THIS profile/.test(k.title))));
+    check('the record is one click away', facUi.links.includes('structures.html#s' + RAITARU), JSON.stringify(facUi.links));
+    check('...and so is the rig-inference wizard',
+      facUi.links.includes('structures.html#s' + RAITARU + '/rigs'), JSON.stringify(facUi.links));
+
+    section('a facility renamed inside a profile keeps that alias as a note on the record');
+    const notesBefore = await ip.evaluate(id => EveStructures.facts(id).conflicts.length, RAITARU);
+    await ip.evaluate(() => { activeProfile().facilities[0].label = 'Home yard'; migrateFacilityRefs(); });
+    const notesAfter = await ip.evaluate(id => EveStructures.facts(id).conflicts, RAITARU);
+    eq('one note is added', notesAfter.length, notesBefore + 1);
+    check('...naming the alias and the profile',
+      /Home yard/.test(notesAfter[notesAfter.length - 1].text) && /Alpha|Bravo/.test(notesAfter[notesAfter.length - 1].text),
+      notesAfter[notesAfter.length - 1].text);
+    check('...and the per-profile label is gone',
+      await ip.evaluate(() => activeProfile().facilities[0].label === undefined));
+
+    section('a facility whose structure was removed says so instead of computing with nothing');
+    await ip.evaluate(id => EveStructures.remove(id), RAITARU);
+    await ip.waitForFunction(() => !!document.querySelector('#facList .facGone'), null, { timeout: 20000 });
+    check('the card is flagged',
+      /no longer in the Structure Manager/.test(await ip.$eval('#facList .facGone', el => el.textContent)));
+    // a book has to exist or the earlier "no order book" guard answers first
+    await ip.evaluate(() => { book = { fetched: Date.now(), pages: 1, typeCount: 0, types: {} }; });
+    await ip.evaluate(() => computeAll());
+    check('...and computing refuses rather than inventing a facility',
+      /no longer in the Structure Manager/.test(await ip.$eval('#compStatus', el => el.textContent)),
+      await ip.$eval('#compStatus', el => el.textContent));
     await ctx.close();
+
+    section('the Industry page hands a structure straight to the rig wizard');
+    const wz = await openManager(browser, server, { hash: '#s' + RAITARU + '/rigs' });
+    await wz.page.waitForSelector('#rigWizard', { timeout: 20000 });
+    check('the deep link opens the wizard on that structure',
+      /Test Raitaru/.test(await wz.page.$eval('#rigWizard h3', el => el.textContent)));
+    await wz.close();
 
     /* ---------- the picker is a selector, nothing more ---------- */
     section('the shared picker selects a structure — it never edits or removes one');

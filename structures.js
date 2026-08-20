@@ -3,9 +3,10 @@
    ONE record per structure, shared by every tool. A record carries the auto-detected
    IDENTITY (name/type/system/security/region/size) and the structure-INTRINSIC facts a
    human has to supply because ESI does not publish them (owner-set market broker %,
-   facility tax %, installed rigs, reprocessing rig tier, which industry activities the
-   structure can run, free-text notes). Per-tool PREFERENCES — which profile routes what
-   here, product scopes, the pilot's implant, cost-index overrides — stay with the tool.
+   facility tax %, installed rigs, reprocessing rig tier, the hull's role bonuses, which
+   industry activities the structure can run, free-text notes). Per-tool PREFERENCES —
+   which profile routes what here, product scopes, the pilot's implant, cost-index
+   overrides — stay with the tool.
    The manager UI is structures.html; every other page merely SELECTS a structure.
 
    window.EveStructures:
@@ -18,7 +19,8 @@
    - get(id) → record|null · facts(id) → managed facts with type defaults filled in
    - update(id, patch) → record — validated write of the managed facts
    - addConflict(id, text)/dismissConflict(id, cid) — migration conflict notes
-   - roleBonuses(typeId) — the hull's ME/TE/cost role bonuses (presets, verify in game)
+   - roleBonuses(typeId) — the hull's ME/TE/cost role bonus PRESETS (verify in game); a
+     record whose roleBonus is set overrides them — facts(id).bonuses is the effective set
    - useTypeMap(map)/typeInfo(typeId)/defaultActivities(typeId) — the structure map from
      data/industry.json (size, rig slots, hull kind); pages that load that file hand it
      over once and it is cached in localStorage for the pages that don't
@@ -33,7 +35,8 @@
    entry/record = {
      id, name, typeId, typeName, refinery, systemId, systemName, security, regionId,
      size, groupId, rigSlots,                 // identity (auto-detected)
-     marketBroker, facilityTax, rigs, reproRig, industryActivities, notes, conflicts
+     marketBroker, facilityTax, rigs, reproRig, roleBonus, industryActivities, notes,
+     conflicts
    }
 */
 'use strict';
@@ -117,8 +120,14 @@
   /* ---------- the store ---------- */
   function blankFacts(){
     return { marketBroker: null, facilityTax: null, rigs: [], reproRig: 'none',
-             industryActivities: null, notes: '', conflicts: [] };
+             roleBonus: null, industryActivities: null, notes: '', conflicts: [] };
   }
+  // null = "use the hull preset"; anything else is coerced to a full {me,te,cost}
+  function coerceBonus(v){
+    if (!v || typeof v !== 'object') return null;
+    return { me: num(v.me) || 0, te: num(v.te) || 0, cost: num(v.cost) || 0 };
+  }
+  const sameBonus = (a, b) => !!a && !!b && a.me === b.me && a.te === b.te && a.cost === b.cost;
   // fills in the managed keys and coerces every field — safe to run on a v1 record,
   // on a freshly picked entry and on anything a page hands to remember()
   function normalize(rec){
@@ -143,6 +152,7 @@
     const slots = r.rigSlots || DEFAULT_RIG_SLOTS;
     if (r.rigs.length > slots) r.rigs = r.rigs.slice(0, slots);
     r.reproRig = REPRO_RIGS[r.reproRig] ? r.reproRig : 'none';
+    r.roleBonus = coerceBonus(r.roleBonus);
     r.industryActivities = Array.isArray(r.industryActivities)
       ? ACTIVITIES.filter(a => r.industryActivities.includes(a)) : null;
     r.notes = typeof r.notes === 'string' ? r.notes : '';
@@ -216,10 +226,14 @@
       rigs: r.rigs.slice(), reproRig: r.reproRig, notes: r.notes,
       industryActivities: r.industryActivities || defaultActivities(r.typeId),
       activitiesAreDefault: !r.industryActivities,
+      // the hull's role bonuses: the preset unless this record overrides them
+      bonuses: r.roleBonus ? { ...r.roleBonus } : roleBonuses(r.typeId),
+      bonusesAreDefault: !r.roleBonus,
       rigSlots: r.rigSlots || DEFAULT_RIG_SLOTS, size: r.size, conflicts: r.conflicts.slice(),
     };
   }
-  const MANAGED = ['marketBroker', 'facilityTax', 'rigs', 'reproRig', 'industryActivities', 'notes', 'conflicts'];
+  const MANAGED = ['marketBroker', 'facilityTax', 'rigs', 'reproRig', 'roleBonus',
+                   'industryActivities', 'notes', 'conflicts'];
   function update(id, patch){
     const i = idx(id);
     if (i < 0 || !patch) return null;
@@ -339,7 +353,9 @@
       mark.mine = 1;
     }
 
-    if (!mark.industry){
+    // the rig/tax import and the later role-bonus one are marked separately: a browser
+    // that already ran the first must still get the second
+    if (!mark.industry || !mark.industryBonus){
       const store = readJson('eveHelper.industryProfiles.v1');
       const profiles = store && Array.isArray(store.profiles) ? store.profiles.slice() : [];
       // no timestamps are kept per profile, so "most recently saved" is read as: the
@@ -348,11 +364,35 @@
       const owner = {};   // "<id>:<field>" → profile name that supplied it
       for (const p of profiles){
         for (const f of (p.facilities || [])){
-          if (!f || f.npc || f.id == null) continue;
-          const rec = ensureRecord(f.id, {
-            id: Number(f.id), name: f.label || ('structure ' + f.id), typeId: f.typeId, typeName: f.typeName,
+          // a facility written before the profiles referenced structures by id carries
+          // the id itself; a migrated one carries only the reference
+          const fid = f && !f.npc ? (f.ref != null ? f.ref : f.id) : null;
+          if (fid == null) continue;
+          const rec = ensureRecord(fid, {
+            id: Number(fid), name: f.label || ('structure ' + fid), typeId: f.typeId, typeName: f.typeName,
             systemId: f.system, systemName: f.systemName, security: f.security,
           });
+          if (!mark.industryBonus && f.bonuses && typeof f.bonuses === 'object'){
+            // per-facility role bonuses that were left at the hull preset carry no
+            // information — only a hand-corrected set becomes a fact about the structure
+            const want = coerceBonus(f.bonuses);
+            const preset = roleBonuses(rec.typeId);
+            if (want && !sameBonus(want, preset)){
+              const cur = (get(rec.id) || rec).roleBonus;
+              const key = rec.id + ':bonus';
+              if (cur && !sameBonus(cur, want) && owner[key])
+                addConflict(rec.id, `profile "${owner[key]}" said role bonuses ME ${cur.me}% / TE ${cur.te}% / `
+                  + `cost ${cur.cost}% and "${p.name}" said ME ${want.me}% / TE ${want.te}% / cost ${want.cost}%; `
+                  + `kept "${p.name}"'s`);
+              if (!sameBonus(cur, want)){
+                setFact(rec.id, 'roleBonus', want);
+                log.push(`Industry "${p.name}": role bonuses ME ${want.me}% / TE ${want.te}% / `
+                  + `cost ${want.cost}% → ${rec.name}`);
+              }
+              owner[key] = p.name;
+            }
+          }
+          if (mark.industry) continue;                    // rigs and tax came over already
           const tids = (f.rigs || []).map(r => r && r.tid).map(Number).filter(Number.isFinite);
           if (tids.length){
             const cur = (get(rec.id) || rec).rigs;
@@ -385,6 +425,7 @@
         }
       }
       mark.industry = 1;
+      mark.industryBonus = 1;
     }
 
     mark.v = 1;

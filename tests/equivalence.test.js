@@ -30,6 +30,12 @@ const { check, eq, section } = H;
 const PRE = '2e8a68b';
 const PRE_FILES = ['index.html', 'mine.html', 'auth.js', 'structures.js'];
 
+/* Industry moved one milestone later: profiles used to keep a COPY of every structure
+   fact (hull, system, security, role bonuses) next to their routing. This is the last
+   build that did, and the same comparison is run against it. */
+const PRE_IND = '8bfaaf0';
+const PRE_IND_FILES = ['industry.html', 'industry-engine.js', 'auth.js', 'structures.js'];
+
 const CHAR = { id: 93813310, name: 'Miquel Dreamer' };
 
 /* ---------- the structures the legacy storage talks about ---------- */
@@ -142,16 +148,18 @@ const mineLegacy = () => [
 ];
 
 /* ---------- the pre-migration build, straight out of git ---------- */
-function checkoutPreBuild() {
+function checkoutPreBuild(commit, files) {
+  commit = commit || PRE;
+  files = files || PRE_FILES;
   try {
-    execFileSync('git', ['-C', H.REPO, 'cat-file', '-e', PRE + '^{commit}'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', H.REPO, 'cat-file', '-e', commit + '^{commit}'], { stdio: 'ignore' });
   } catch (_e) {
     return null;   // shallow clone or no git — the caller reports it as a failed check
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eve-pre-migration-'));
-  for (const f of PRE_FILES)
+  for (const f of files)
     fs.writeFileSync(path.join(dir, f),
-      execFileSync('git', ['-C', H.REPO, 'show', PRE + ':' + f], { maxBuffer: 128 << 20 }));
+      execFileSync('git', ['-C', H.REPO, 'show', commit + ':' + f], { maxBuffer: 128 << 20 }));
   return dir;
 }
 
@@ -291,12 +299,142 @@ async function captureMine(browser, server) {
   return snap;
 }
 
+/* ================= Industry =================
+   A profile facility used to be a self-contained copy of the structure: hull, system,
+   security, role bonuses (hand-corrected here: TE 18 where the Raitaru preset says 15),
+   plus its routing. It is a REFERENCE now — every one of those facts is read from the
+   central record, and the hand-corrected bonuses moved there with it. The engine itself
+   is byte-identical in both builds, so any difference in a computed cost or job time can
+   only come from the feed the page assembles. */
+const RAITARU = { id: 1035466617947, name: 'Test Raitaru', typeId: 35825, typeName: 'Raitaru',
+  refinery: null, systemId: 30000999, systemName: 'TEST-1', security: -0.42, regionId: 10000999 };
+const IND_T = { WIDGET: 1001, PLATE: 2001, MINERAL: 3001 };
+const RIG_ME = 37147;      // M-Set ME II: 2.4% base, widgets only
+const RIG_TE = 37148;      // M-Set TE I: 20% base, widgets and plates
+const IND_FIXTURE = {
+  v: 'equivalence-industry-fixture',
+  types: {
+    [IND_T.WIDGET]: ['Test Widget', 5, 5, 100, 200, null],
+    [IND_T.PLATE]: ['Test Plate', 2, 2, 101, 201, null],
+    [IND_T.MINERAL]: ['Test Mineral', 0.01, 0.01, 102, 202, null],
+  },
+  groups: { 100: ['Widgets', 6], 101: ['Plates', 6], 102: ['Minerals', 4] },
+  marketGroups: { 200: ['Manufactured', 0], 201: ['Components', 0], 202: ['Minerals', 0] },
+  skills: { 3380: 'Industry', 3388: 'Advanced Industry' },
+  rigs: {
+    [RIG_ME]: { n: 'Standup M-Set Basic Medium Ship Manufacturing Material Efficiency II',
+      sz: 'M', me: 2.4, te: 0, cost: 0, sec: { hs: 1, ls: 1.9, ns: 2.1 },
+      scope: [100], act: ['man'], fit: [1657, 1404, 1406], dom: 'Basic Medium Ships' },
+    [RIG_TE]: { n: 'Standup M-Set Basic Medium Ship Manufacturing Time Efficiency I',
+      sz: 'M', me: 0, te: 20, cost: 0, sec: { hs: 1, ls: 1.9, ns: 2.1 },
+      scope: [100, 101], act: ['man'], fit: [1657, 1404, 1406], dom: 'Basic Medium Ships' },
+  },
+  structures: { 35825: ['Raitaru', 1404, 'M', 3] },
+  blueprints: {
+    9001: { limit: 20, man: { t: 1200, m: [[IND_T.PLATE, 4]], p: [[IND_T.WIDGET, 1]], s: [] } },
+    9003: { limit: 50, man: { t: 400, m: [[IND_T.MINERAL, 100]], p: [[IND_T.PLATE, 1]], s: [] } },
+  },
+};
+const IND_SYS = RAITARU.systemId;
+const IND_BOOK = {
+  fetched: 1700000000000, pages: 1, typeCount: 3,
+  types: {
+    [IND_T.WIDGET]: { s: [[900000, 500, 1]], b: [[700000, 500, 1]] },
+    [IND_T.PLATE]: { s: [[120000, 5000, 1]], b: [[90000, 5000, 1]] },
+    [IND_T.MINERAL]: { s: [[1000, 1e6, 1]], b: [[900, 1e6, 1]] },
+  },
+};
+const IND_ADJUSTED = { fetched: 1700000000000,
+  map: { [IND_T.WIDGET]: 800000, [IND_T.PLATE]: 110000, [IND_T.MINERAL]: 950 } };
+const IND_INDICES = { fetched: 1700000000000,
+  map: { [IND_SYS]: { man: 0.042, rea: 0.01, inv: 0.02, cop: 0.02, me: 0.02, te: 0.02 } } };
+
+/* Storage exactly as the old Industry page wrote it: the structure's rigs and owner-set
+   tax already central (they moved a milestone earlier), the hull facts and the corrected
+   role bonuses still copied into the facility. */
+const industryLegacy = () => [
+  ['eveHelper.auth.v1', H.authState([CHAR])],
+  ['eveHelper.structInfo.v1', { [RAITARU.id]: RAITARU }],
+  ['eveHelper.structures.v1', { v: 2, structures: [Object.assign({}, RAITARU, {
+    marketBroker: null, facilityTax: 2.5, rigs: [RIG_ME, RIG_TE], reproRig: 'none',
+    industryActivities: null, notes: '', conflicts: [] })] }],
+  ['eveHelper.industryProfiles.v1', {
+    active: 'p1',
+    profiles: [{
+      id: 'p1', name: 'Test',
+      facilities: [{
+        uid: 'f1', npc: false, id: RAITARU.id, label: RAITARU.name,
+        typeId: RAITARU.typeId, typeName: RAITARU.typeName,
+        system: RAITARU.systemId, systemName: RAITARU.systemName, security: RAITARU.security,
+        activities: ['man'], scope: [],
+        bonuses: { me: 1, te: 18, cost: 3 },     // TE hand-corrected away from the preset
+        sciOverride: null,
+      }],
+      market: { auto: false, inputSide: 'sell', outputSide: 'sellOrder',
+                brokerPct: 1.5, taxPct: 3.37, buyerBrokerPct: 1.5,
+                buyerChar: CHAR.id, sellerChar: CHAR.id, manufChar: CHAR.id },
+      shipping: { base: 10000000, perM3: 653.4, collateralPct: 1, roundUp: true, inbound: false, outbound: false },
+      assumptions: { ownedBpoMe: 10, ownedBpoTe: 20, decryptor: null, sccPct: 4 },
+      planning: { capital: null, slots: { man: 1, science: 1, reaction: 1 }, demandCapPct: 100, maxHaulM3: 350000 },
+      forceBuy: [], forceBuild: [],
+    }],
+  }],
+];
+
+async function captureIndustry(browser, server) {
+  const context = await browser.newContext();
+  await H.seedStorage(context, server.url, industryLegacy());
+  await H.mockEsi(context, { skills: { accounting: 5, brokerRelations: 5 }, standings: {} });
+  await context.route('**/data/industry.json', route => route.fulfill(H.json(IND_FIXTURE)));
+  const page = await context.newPage();
+  H.watchPage(page, 'industry@' + server.url);
+  await page.goto(server.url + '/industry.html');
+  await page.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+  // hand the page its ESI datasets directly — the real Update button would hit the network
+  await page.evaluate(d => { book = d.book; adjusted = d.adjusted; indices = d.indices; },
+    { book: IND_BOOK, adjusted: IND_ADJUSTED, indices: IND_INDICES });
+  await page.evaluate(() => computeAll());
+  await page.waitForFunction(() => state.rows.length > 0, null, { timeout: 20000 });
+  const snap = await page.evaluate(tids => {
+    const walk = n => ({
+      tid: n.tid, name: n.name, decision: n.decision, qty: n.qty,
+      buyCost: n.buyCost, buildCost: n.buildCost, cost: n.cost,
+      job: n.job ? {
+        activity: n.job.activity, facilityLabel: n.job.facilityLabel, runs: n.job.runs,
+        time: n.job.time, eiv: n.job.eiv, costBreakdown: n.job.costBreakdown,
+        mods: n.job.matModifierBreakdown,
+      } : null,
+      children: (n.children || []).map(walk),
+    });
+    const strip = r => {
+      const out = {};
+      // everything the row model carries except the blueprint descriptor's object handle
+      for (const [k, v] of Object.entries(r)) out[k] = k === 'bp' ? v.label : v;
+      return out;
+    };
+    return {
+      // the facilities exactly as the engine sees them
+      feed: activeProfile().facilities.map(f => facilityToEngine(f)),
+      // every computed table row, and the full cost/time tree of each product
+      rows: state.rows.map(strip).sort((a, b) => a.tid - b.tid),
+      trees: tids.map(tid => walk(evalOne(tid).tree)),
+      totals: tids.map(tid => evalOne(tid).totals),
+    };
+  }, [IND_T.WIDGET, IND_T.PLATE]);
+  await context.close();
+  return snap;
+}
+
 H.run('equivalence', async () => {
   const preDir = checkoutPreBuild();
   if (!check('the pre-migration build can be checked out of git (commit ' + PRE + ')', !!preDir,
       'git or the commit is unavailable — the comparison cannot run')) return;
+  const preIndDir = checkoutPreBuild(PRE_IND, PRE_IND_FILES);
+  if (!check('...and the pre-reference Industry build (commit ' + PRE_IND + ')', !!preIndDir,
+      'git or the commit is unavailable — the comparison cannot run')) return;
   const serverNew = await H.startServer();
   const serverOld = await H.startServer(preDir);
+  const serverOldInd = await H.startServer(preIndDir);
   const browser = await H.launch();
   try {
     /* ---------- Sell ---------- */
@@ -383,10 +521,76 @@ H.run('equivalence', async () => {
     check('the yield falls back to the plain Tatara base, no invented rig bonus',
       Math.abs(bareBase - 55) < 1e-9, bareBase);
     await mctx.close();
+
+    /* ---------- Industry ---------- */
+    section('Industry: a profile references the structure instead of copying it, the numbers do not move');
+    const indBefore = await captureIndustry(browser, serverOldInd);
+    const indAfter = await captureIndustry(browser, serverNew);
+    eq('the old build fed the engine one facility', indBefore.feed.length, 1);
+    eq('...with the structure record\u2019s owner-set tax', indBefore.feed[0].tax, 2.5);
+    eq('...its two recorded rigs', indBefore.feed[0].rigs.length, 2);
+    check('...at the nullsec multiplier (2.4 \u00d7 2.1 ME)',
+      Math.abs(indBefore.feed[0].rigs[0].me - 5.04) < 1e-9, indBefore.feed[0].rigs[0].me);
+    same('the engine facility feed is identical before and after', indBefore.feed, indAfter.feed);
+    eq('the corrected TE role bonus survived the move to the record', indAfter.feed[0].bonuses.te, 18);
+    check('...and it really differs from the hull preset the app ships',
+      indAfter.feed[0].bonuses.te !== 15, indAfter.feed[0].bonuses.te);
+    eq('both products computed', indBefore.rows.length, 2);
+    check('...with a build tree that spends job time', indBefore.trees[0].job.time > 0,
+      JSON.stringify(indBefore.trees[0].job));
+    check('...and a real cost', indBefore.rows[0].cost > 0, indBefore.rows[0].cost);
+    same('every row of the computed table is identical before and after', indBefore.rows, indAfter.rows);
+    same('...as is every cost and job time in both product trees', indBefore.trees, indAfter.trees);
+    same('...and every batch total', indBefore.totals, indAfter.totals);
+
+    section('...and the profile keeps only its routing');
+    const ictx = await browser.newContext();
+    await H.seedStorage(ictx, serverNew.url, industryLegacy());
+    await H.mockEsi(ictx, { skills: { accounting: 5, brokerRelations: 5 }, standings: {} });
+    await ictx.route('**/data/industry.json', route => route.fulfill(H.json(IND_FIXTURE)));
+    const ip = await ictx.newPage();
+    H.watchPage(ip, 'industry-store');
+    await ip.goto(serverNew.url + '/industry.html');
+    await ip.waitForFunction(() => typeof D !== 'undefined' && D !== null, null, { timeout: 20000 });
+    await ip.waitForFunction(() => activeProfile().facilities[0].ref != null, null, { timeout: 20000 });
+    const fac = await ip.evaluate(() => JSON.parse(localStorage.getItem('eveHelper.industryProfiles.v1')).profiles[0].facilities[0]);
+    eq('the stored facility references the structure', fac.ref, RAITARU.id);
+    check('...and copies none of its facts any more',
+      ['id', 'label', 'typeId', 'typeName', 'system', 'systemName', 'security', 'bonuses', 'tax', 'rigs']
+        .every(k => fac[k] === undefined), JSON.stringify(Object.keys(fac)));
+    check('...keeping exactly the routing: activities, scope, cost-index override, order',
+      fac.activities.join(',') === 'man' && Array.isArray(fac.scope) && fac.sciOverride === null,
+      JSON.stringify(fac));
+    const bonusRec = await ip.evaluate(id => EveStructures.facts(id).bonuses, RAITARU.id);
+    eq('the corrected role bonus lives on the record now', bonusRec.te, 18);
+    check('...marked as an override, not a preset',
+      await ip.evaluate(id => !EveStructures.facts(id).bonusesAreDefault, RAITARU.id));
+
+    section('editing the structure in the manager makes the computed Industry table stale');
+    await ip.evaluate(d => { book = d.book; adjusted = d.adjusted; indices = d.indices; },
+      { book: IND_BOOK, adjusted: IND_ADJUSTED, indices: IND_INDICES });
+    await ip.evaluate(() => computeAll());
+    await ip.waitForFunction(() => state.rows.length > 0, null, { timeout: 20000 });
+    check('a fresh table is not stale', await ip.evaluate(() => document.getElementById('staleBanner').hidden));
+    const sigBefore = await ip.evaluate(() => curSig());
+    await ip.evaluate(id => EveStructures.update(id, { facilityTax: 4 }), RAITARU.id);
+    check('...the tax edit changes the staleness signature',
+      await ip.evaluate(() => curSig()) !== sigBefore);
+    check('...and the banner is up', await ip.evaluate(() => !document.getElementById('staleBanner').hidden));
+    eq('...with the new tax already in the engine feed',
+      await ip.evaluate(() => facilityToEngine(activeProfile().facilities[0]).tax), 4);
+    const sigTax = await ip.evaluate(() => curSig());
+    await ip.evaluate(id => EveStructures.update(id, { rigs: [] }), RAITARU.id);
+    check('...as does pulling the rigs out', await ip.evaluate(() => curSig()) !== sigTax);
+    eq('...which the engine feed sees too',
+      await ip.evaluate(() => facilityToEngine(activeProfile().facilities[0]).rigs.length), 0);
+    await ictx.close();
   } finally {
     await browser.close();
     await serverNew.close();
     await serverOld.close();
+    await serverOldInd.close();
     fs.rmSync(preDir, { recursive: true, force: true });
+    fs.rmSync(preIndDir, { recursive: true, force: true });
   }
 });

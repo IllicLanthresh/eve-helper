@@ -81,6 +81,7 @@
   .fac{border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:10px 12px;margin-top:10px}
   .fac .fhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .fac input.flabel{width:230px}
+  .fac b.flabel{font-size:14px}
   .fac .sub{color:var(--dim);font-size:12px}
   .fac .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:16px;padding:0 4px;border-radius:4px}
   .fac .x:hover{color:var(--red);background:#242e42}
@@ -175,7 +176,10 @@
     <button id="btnAddStruct" type="button">+ structure…</button>
     <button id="btnAddNpc" type="button">+ NPC station</button>
     <span class="hint">ordered list — jobs run at the FIRST facility that offers the activity (and whose
-      product scope covers the end product)</span>
+      product scope covers the end product). A structure facility is a REFERENCE: its hull, rigs,
+      role bonuses and owner-set job tax come from
+      <a href="structures.html" style="color:var(--cyan)">Structures</a> and are the same in every
+      profile; this list only decides what THIS profile sends there.</span>
   </div>
 
   <div class="rowline" style="align-items:stretch">
@@ -343,14 +347,19 @@
           facilities its scope selects; intermediates are not re-scoped mid-tree.</li>
       <li>Owned-blueprint ME/TE applies to the end product's own blueprint; intermediate blueprints use the
           "unowned BPO" defaults above. Owned T2 BPCs are shown in the BP column but priced via invention.</li>
-      <li>Structure role bonuses are hardcoded presets (marked "verify in game") — override them per
-          facility if your numbers differ. Rigs are the REAL Standup catalog extracted from the SDE
-          (per-rig ME/TE/cost base %, product scope and security multipliers: engineering HS ×1.0,
-          LS ×1.9, NS/WH ×2.1 — an Efficiency rig grants BOTH ME and TE, e.g. XL T1 in null =
-          4.2% / 42%). Rigs and the owner-set job tax belong to the structure, not to a profile:
-          they are recorded once in <a href="structures.html" style="color:var(--cyan)">Structures</a>
-          and every profile pointing at that structure uses them. Not the structure owner? ESI hides
-          fittings, but the manager's "infer rigs…" wizard works the installed rigs out from the
+      <li>A profile facility carries only what is a PREFERENCE: which structure (or NPC station) it points
+          at, which activities this profile routes there, the product scope, the order, and the manual
+          cost-index override (an estimate, so it is deliberately per profile — other profiles using the
+          same structure keep the ESI indices). Everything intrinsic to the structure — hull, system,
+          security, rigs, role bonuses and the owner-set job tax — is read from its one record in
+          <a href="structures.html" style="color:var(--cyan)">Structures</a>, so two profiles can never
+          disagree about the same building, and editing it there re-prices every profile at once.</li>
+      <li>Structure role bonuses are hardcoded presets per hull (marked "verify in game") — correct them
+          on the structure's record if your numbers differ. Rigs are the REAL Standup catalog extracted
+          from the SDE (per-rig ME/TE/cost base %, product scope and security multipliers: engineering
+          HS ×1.0, LS ×1.9, NS/WH ×2.1 — an Efficiency rig grants BOTH ME and TE, e.g. XL T1 in null =
+          4.2% / 42%). Not the structure owner? ESI hides fittings, but the manager's "infer rigs…"
+          wizard (linked from every structure facility here) works the installed rigs out from the
           bonused quantities and job duration the in-game industry window shows anyone who can use
           the facility.</li>
     </ul>
@@ -730,30 +739,54 @@ const LEGACY_RIG_PRESETS = {
 function secBand(sec){ return sec == null || sec >= 0.45 ? 'hs' : sec > 0 ? 'ls' : 'ns'; }
 function secLabel(sec){ return sec == null ? 'HS' : sec >= 0.45 ? 'HS' : sec > 0 ? 'LS' : 'NS/WH'; }
 const rigShortName = n => n.replace(/^Standup /, '');
-function structInfo(f){ return !f.npc && D && D.structures && f.typeId ? D.structures[f.typeId] || null : null; }
-/* ----- the structure's central record: rigs and the owner-set job tax are facts about
-   the STRUCTURE, so every profile that points at it sees the same values. They are read
-   here and edited in structures.html (the Structure Manager). ----- */
-function facRecord(f){
-  return !f.npc && f.id != null && window.EveStructures ? EveStructures.facts(f.id) : null;
+function hullInfo(typeId){ return D && D.structures && typeId ? D.structures[typeId] || null : null; }
+/* ----- A profile facility is a ROUTING decision: which structure (by reference) or NPC
+   station this profile sends work to, which activities it routes there, for which
+   products, in what order, plus its own cost-index estimate. Everything intrinsic to the
+   structure — name, hull, system, security, installed rigs, the owner-set job tax and the
+   hull's role bonuses — is READ from the central record and edited in exactly one place,
+   structures.html. facView() is that merge; nothing else on this page reads a structure
+   fact directly. An NPC station has no record, so its facts stay in the profile. ----- */
+function facRef(f){ return f.npc ? null : (f.ref != null ? Number(f.ref) : f.id != null ? Number(f.id) : null); }
+const NO_BONUS = { me: 0, te: 0, cost: 0 };
+function facView(f){
+  // no reference = nothing central to read: an NPC station, or a facility stored before
+  // structures had records. Either way it is self-contained and keeps its own facts.
+  if (f.npc || facRef(f) == null)
+    return { ok: true, npc: true, ref: null, label: f.label || 'NPC station',
+             typeId: null, typeName: 'NPC station', size: null,
+             system: f.system, systemName: f.systemName, security: f.security,
+             tax: f.tax || 0, taxKnown: true, bonuses: { ...NO_BONUS, ...(f.bonuses || {}) },
+             bonusesAreDefault: true, rigs: [], rigSlots: 0 };
+  const ref = facRef(f);
+  const rec = ref != null && window.EveStructures ? EveStructures.get(ref) : null;
+  const fx = rec ? EveStructures.facts(ref) : null;
+  if (!rec)   // the record was removed in the manager — the facility cannot be computed
+    return { ok: false, npc: false, ref, label: 'structure ' + ref, typeId: null, typeName: null,
+             size: null, system: null, systemName: null, security: null,
+             tax: 0, taxKnown: false, bonuses: { ...NO_BONUS }, bonusesAreDefault: true,
+             rigs: [], rigSlots: 0 };
+  return { ok: true, npc: false, ref: rec.id, label: rec.name,
+           typeId: rec.typeId, typeName: rec.typeName, size: fx.size,
+           system: rec.systemId, systemName: rec.systemName, security: rec.security,
+           tax: fx.facilityTax != null ? fx.facilityTax : 0, taxKnown: fx.facilityTax != null,
+           bonuses: fx.bonuses, bonusesAreDefault: fx.bonusesAreDefault,
+           rigs: fx.rigs, rigSlots: fx.rigSlots };
 }
-function facRigTids(f){ const r = facRecord(f); return r ? r.rigs : []; }
-function facTax(f){
-  const r = facRecord(f);
-  return r && r.facilityTax != null ? r.facilityTax : (f.tax || 0);
-}
-function manageLink(f, label){
+const facUsable = f => f.npc || facView(f).ok;
+function manageLink(v, label, sub){
   const a = document.createElement('a');
   a.className = 'hint';
   a.style.marginLeft = '8px';
-  a.href = 'structures.html#s' + f.id;
+  a.href = 'structures.html#s' + v.ref + (sub || '');
   a.textContent = label;
-  a.title = 'open this structure in the Structure Manager — rigs, owner-set tax, broker rate and notes';
+  a.title = 'open this structure in the Structure Manager — rigs, role bonuses, owner-set tax, '
+    + 'broker rate and notes, shared by every profile and every tool';
   return a;
 }
 /* rigs a facility's hull accepts: size match + the rig's canFitShipGroup list */
-function rigsForFacility(f){
-  const st = structInfo(f);
+function rigsForFacility(v){
+  const st = hullInfo(v.typeId);
   if (!st || !D.rigs) return [];
   return Object.entries(D.rigs)
     .filter(([, r]) => r.sz === st[2] && r.fit.includes(st[1]))
@@ -761,15 +794,15 @@ function rigsForFacility(f){
     .sort((a, b) => a[1].dom.localeCompare(b[1].dom) || a[1].n.localeCompare(b[1].n));
 }
 /* effective %s of a rig at a facility (base × the facility's security-band multiplier) */
-function rigEffective(rig, f){
-  const mult = rig.sec[secBand(f.security)] || 0;
+function rigEffective(rig, v){
+  const mult = rig.sec[secBand(v.security)] || 0;
   return { me: rig.me * mult, te: rig.te * mult, cost: rig.cost * mult, mult };
 }
-function rigEffText(rig, f){
-  const e = rigEffective(rig, f);
+function rigEffText(rig, v){
+  const e = rigEffective(rig, v);
   const parts = [];
   if (rig.me) parts.push(`ME ${e.me.toFixed(2)}%`);
-  if (rig.thuk && secBand(f.security) === 'ls') parts.push(`ME ${(rig.thuk.me * e.mult).toFixed(2)}% (capital comps)`);
+  if (rig.thuk && secBand(v.security) === 'ls') parts.push(`ME ${(rig.thuk.me * e.mult).toFixed(2)}% (capital comps)`);
   if (rig.te) parts.push(`TE ${e.te.toFixed(1)}%`);
   if (rig.cost) parts.push(`job cost ${e.cost.toFixed(1)}%`);
   if (rig.unk) parts.push('⚠ unmapped scope — inert');
@@ -778,10 +811,10 @@ function rigEffText(rig, f){
 }
 /* one selected rig → engine rig entries ({match, me, te, cost, act, n}); Thukker rigs
    add a second LOWSEC-only entry carrying the enhanced capital-component ME */
-function rigEngineEntries(f, tid){
+function rigEngineEntries(v, tid){
   const rig = D && D.rigs ? D.rigs[tid] : null;
   if (!rig) return [];
-  const band = secBand(f.security);
+  const band = secBand(v.security);
   const mult = rig.sec[band] || 0;
   const out = [{ n: rigShortName(rig.n),
     match: rig.unk ? [] : (rig.scope ? rig.scope.slice() : null), // null = every product
@@ -818,6 +851,10 @@ function normalizeProfile(p){
   pl.slots = Object.assign({ man: null, science: null, reaction: null }, pl.slots || {});
   if (pl.demandCapPct == null) pl.demandCapPct = 100;
   if (pl.maxHaulM3 == null) pl.maxHaulM3 = 350000;
+  for (const f of p.facilities || []){
+    if (f.npc && !f.bonuses) f.bonuses = { me: 0, te: 0, cost: 0 };
+    if (!f.scope) f.scope = [];
+  }
   return p;
 }
 /* One-time migration of legacy generic rig rows ({preset, scope:[topMgids]}) to real
@@ -842,7 +879,8 @@ function migrateRigs(){
     const mapped = [], dropped = [];
     for (const f of p.facilities || []){
       if (!f.rigs || !f.rigs.some(r => r && r.preset != null)) continue;
-      const valid = rigsForFacility(f);
+      const v = facView(f);
+      const valid = rigsForFacility(v);
       const next = [];
       for (const r of f.rigs){
         if (!r || r.preset == null){ if (r && r.tid != null) next.push(r); continue; }
@@ -851,7 +889,7 @@ function migrateRigs(){
         const frag = pr && scopeIds.length === 1 ? LEGACY_SCOPE_DOMAIN[scopeIds[0]] : null;
         const cands = frag ? valid.filter(([, rig]) => rig.n.includes(frag) && rig.act.includes('man')
           && (pr.attr === 'me' ? rig.me === pr.base : pr.attr === 'te' ? rig.te === pr.base : false)) : [];
-        const label = `${f.label}: ${pr ? pr.label : r.preset} (${scopeSummary(scopeIds)})`;
+        const label = `${v.label}: ${pr ? pr.label : r.preset} (${scopeSummary(scopeIds)})`;
         if (cands.length === 1 && next.length < 3){
           if (next.some(x => x.tid === cands[0][0]))
             mapped.push(`${label} → ${rigShortName(cands[0][1].n)} (merged — one rig grants both)`);
@@ -869,16 +907,50 @@ function migrateRigs(){
   // hand the per-profile rig lists over to the central records, then drop them here
   for (const p of profStore.profiles){
     for (const f of p.facilities || []){
-      if (!f.rigs || f.npc || f.id == null) continue;
+      const ref = facRef(f);
+      if (!f.rigs || f.npc || ref == null) continue;
       const tids = f.rigs.map(r => r && r.tid).map(Number).filter(Number.isFinite);
-      const rec = window.EveStructures ? EveStructures.facts(f.id) : null;
+      const rec = window.EveStructures ? EveStructures.facts(ref) : null;
       if (tids.length && !rec) continue;      // no central record to hand them to — keep them
-      if (tids.length && !rec.rigs.length) EveStructures.update(f.id, { rigs: tids });
+      if (tids.length && !rec.rigs.length) EveStructures.update(ref, { rigs: tids });
       delete f.rigs;
       changed = true;
     }
   }
-  if (changed){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} }
+  if (changed) writeProfiles();
+}
+/* A structure facility used to carry a COPY of the structure's identity and of the facts
+   that belong to it (hull, system, security, role bonuses, owner-set tax). Those live on
+   the central record now — EveStructures imported them on load — so the stored facility
+   keeps only the reference plus this profile's own routing. NPC stations are untouched:
+   they have no record, so their facts stay here. */
+const FAC_COPIED = ['id', 'label', 'typeId', 'typeName', 'system', 'systemName', 'security',
+                    'bonuses', 'tax', 'rigs'];
+function migrateFacilityRefs(){
+  let changed = false;
+  for (const p of profStore.profiles){
+    for (const f of p.facilities || []){
+      if (f.npc) continue;
+      const ref = facRef(f);
+      if (ref == null){
+        // a facility that never referenced a structure carries all its own facts —
+        // that is what an NPC station is here, so make it one rather than lose them
+        f.npc = true;
+        if (!f.label) f.label = 'facility';
+        changed = true;
+        continue;
+      }
+      if (f.ref !== ref){ f.ref = ref; changed = true; }
+      // a facility renamed inside a profile loses that alias — the record's own name is
+      // what every tool shows now, so leave a note on the record rather than drop it
+      const rec = window.EveStructures ? EveStructures.get(ref) : null;
+      if (rec && f.label && f.label !== rec.name)
+        EveStructures.addConflict(ref, `Industry profile "${p.name}" called this structure `
+          + `"${f.label}"; the record's own name is used everywhere now`);
+      for (const k of FAC_COPIED) if (k in f){ delete f[k]; changed = true; }
+    }
+  }
+  if (changed) writeProfiles();
 }
 let profStore = { active: null, profiles: [] };
 function loadProfiles(){
@@ -888,7 +960,8 @@ function loadProfiles(){
   profStore.profiles.forEach(normalizeProfile);
   if (!profStore.profiles.some(p => p.id === profStore.active)) profStore.active = profStore.profiles[0].id;
 }
-function saveProfiles(){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} markStale(); }
+function writeProfiles(){ try{ localStorage.setItem(PROF_KEY, JSON.stringify(profStore)); }catch(_e){} }
+function saveProfiles(){ writeProfiles(); markStale(); }
 const activeProfile = () => profStore.profiles.find(p => p.id === profStore.active);
 
 function renderProfBar(){
@@ -967,9 +1040,9 @@ function scopePicker(ids, onChange){
   return det;
 }
 
-function facilityIdxText(f){
+function facilityIdxText(f, v){
   const acts = f.activities || [];
-  const m = indices && f.system != null ? indices.map[f.system] : null;
+  const m = indices && v.system != null ? indices.map[v.system] : null;
   const bits = acts.map(a => a + ' ' + (f.sciOverride != null ? (+f.sciOverride).toFixed(2) + '%*'
     : m && m[a] != null ? (m[a] * 100).toFixed(2) + '%' : '—'));
   return 'cost index: ' + (bits.join(' · ') || '—');
@@ -1012,8 +1085,10 @@ function renderFacilities(){
     return;
   }
   p.facilities.forEach((f, fi) => {
+    const v = facView(f);
     const card = document.createElement('div');
     card.className = 'fac';
+    if (!f.npc) card.dataset.ref = v.ref;
 
     const head = document.createElement('div');
     head.className = 'fhead';
@@ -1022,19 +1097,43 @@ function renderFacilities(){
     up.addEventListener('click', () => { p.facilities.splice(fi - 1, 0, p.facilities.splice(fi, 1)[0]); saveProfiles(); renderFacilities(); });
     const down = document.createElement('button'); down.className = 'mini'; down.textContent = '↓'; down.disabled = fi === p.facilities.length - 1;
     down.addEventListener('click', () => { p.facilities.splice(fi + 1, 0, p.facilities.splice(fi, 1)[0]); saveProfiles(); renderFacilities(); });
-    const label = document.createElement('input');
-    label.type = 'text'; label.className = 'flabel'; label.value = f.label;
-    label.addEventListener('change', () => { f.label = label.value.trim() || f.label; saveProfiles(); });
+    // an NPC station is named here; a structure IS the record, so its name comes from there
+    let label;
+    if (f.npc){
+      label = document.createElement('input');
+      label.type = 'text'; label.className = 'flabel'; label.value = f.label;
+      label.addEventListener('change', () => { f.label = label.value.trim() || f.label; saveProfiles(); });
+    } else {
+      label = document.createElement('b');
+      label.className = 'flabel';
+      label.textContent = v.label;
+    }
     const sub = document.createElement('span');
     sub.className = 'sub';
-    sub.textContent = [f.systemName || (f.npc ? null : '?'),
-      f.security != null ? 'sec ' + f.security.toFixed(2) + ' (' + secLabel(f.security) + ')' : null,
-      f.typeName].filter(Boolean).join(' · ');
+    sub.textContent = [v.systemName || (f.npc ? null : '?'),
+      v.security != null ? 'sec ' + v.security.toFixed(2) + ' (' + secLabel(v.security) + ')' : null,
+      v.typeName].filter(Boolean).join(' · ');
     const x = document.createElement('span');
     x.className = 'x'; x.textContent = '×'; x.title = 'remove facility';
     x.addEventListener('click', () => { p.facilities.splice(fi, 1); saveProfiles(); renderFacilities(); });
-    head.append(up, down, label, sub, x);
+    head.append(up, down, label, sub);
+    if (!f.npc) head.appendChild(manageLink(v, 'edit in the structure manager'));
+    head.appendChild(x);
     card.appendChild(head);
+
+    // the record this facility points at is gone from the manager — say so instead of
+    // quietly computing with a structure that has no hull, no rigs and no tax
+    if (!v.ok){
+      const gone = document.createElement('div');
+      gone.className = 'facGone';
+      gone.style.cssText = 'margin-top:6px;padding:6px 10px;border:1px solid #6b571f;background:#3a2f14;'
+        + 'color:var(--amber);border-radius:8px;font-size:12px';
+      gone.textContent = 'this structure is no longer in the Structure Manager — nothing can be computed '
+        + 'here until it is added back (or this facility is removed)';
+      card.appendChild(gone);
+      box.appendChild(card);
+      return;
+    }
 
     // NPC stations need a system for the cost index — free-text, resolved via ESI
     if (f.npc){
@@ -1098,32 +1197,42 @@ function renderFacilities(){
       wrap.append(document.createTextNode(labelTxt + ' '), inp);
       return wrap;
     };
-    const bonusTitle = 'structure role bonus preset from the detected type — VERIFY IN GAME, then override here if needed';
-    kvs.append(
-      mkNum('ME bonus %', () => f.bonuses.me, v => { f.bonuses.me = v || 0; }, bonusTitle),
-      mkNum('TE bonus %', () => f.bonuses.te, v => { f.bonuses.te = v || 0; }, bonusTitle),
-      mkNum('cost bonus %', () => f.bonuses.cost, v => { f.bonuses.cost = v || 0; }, bonusTitle),
-    );
     if (f.npc){
-      kvs.append(mkNum('facility tax %', () => f.tax, v => { f.tax = v || 0; },
-        'NPC station job fee (0.25% by default)', '0.01'));
+      const bonusTitle = 'role bonuses of this station — NPC stations have none, but the fields are here '
+        + 'if you are standing in for something the app does not model';
+      kvs.append(
+        mkNum('ME bonus %', () => f.bonuses.me, val => { f.bonuses.me = val || 0; }, bonusTitle),
+        mkNum('TE bonus %', () => f.bonuses.te, val => { f.bonuses.te = val || 0; }, bonusTitle),
+        mkNum('cost bonus %', () => f.bonuses.cost, val => { f.bonuses.cost = val || 0; }, bonusTitle),
+        mkNum('facility tax %', () => f.tax, val => { f.tax = val || 0; },
+          'NPC station job fee (0.25% by default)', '0.01'));
     } else {
-      // the owner-set job tax belongs to the STRUCTURE, not to this profile
+      // hull role bonuses and the owner-set job tax belong to the STRUCTURE: read here,
+      // edited once in the manager, identical in every profile that points at it
+      const bon = document.createElement('span');
+      bon.className = 'kv';
+      bon.id = 'facBonus' + f.uid;
+      bon.title = 'the hull’s ME/TE/job-cost role bonuses, kept on the structure record'
+        + (v.bonusesAreDefault ? ' — preset for this hull type, verify in game' : ' — corrected by hand');
+      bon.append(document.createTextNode(`role bonuses ME ${v.bonuses.me}% · TE ${v.bonuses.te}% · `
+        + `cost ${v.bonuses.cost}%${v.bonusesAreDefault ? ' (preset)' : ''}`), manageLink(v, 'edit'));
       const tx = document.createElement('span');
       tx.className = 'kv';
+      tx.id = 'facTax' + f.uid;
       tx.title = 'owner-set job tax, kept on the structure record — ESI does not publish it; '
         + 'read it off the in-game industry window and record it once in the Structure Manager';
-      const rec = facRecord(f);
-      tx.append(document.createTextNode('facility tax ' + (rec && rec.facilityTax != null
-        ? rec.facilityTax + '%' : '— (not recorded)')), manageLink(f, 'edit'));
-      kvs.append(tx);
+      tx.append(document.createTextNode('facility tax ' + (v.taxKnown ? v.tax + '%' : '— (not recorded)')),
+        manageLink(v, 'edit'));
+      kvs.append(bon, tx);
     }
     const idx = document.createElement('span');
     idx.className = 'kv';
-    idx.textContent = facilityIdxText(f);
+    idx.textContent = facilityIdxText(f, v);
     idx.title = 'system cost indices from the ESI cache (Update ESI data refreshes them)';
-    const ovr = mkNum('override %', () => f.sciOverride, v => { f.sciOverride = v; renderFacilities(); },
-      'manual cost-index override in % — applies to every activity at this facility; clear to go back to ESI values', '0.01');
+    const ovr = mkNum('override %', () => f.sciOverride, val => { f.sciOverride = val; renderFacilities(); },
+      'manual cost-index override in % — an estimate, so it stays with THIS profile: it applies to every '
+      + 'activity at this facility here only, and other profiles using the same structure keep the ESI '
+      + 'values. Clear it to go back to ESI.', '0.01');
     kvs.append(idx, ovr);
     card.appendChild(kvs);
 
@@ -1131,9 +1240,9 @@ function renderFacilities(){
       // rigs are a fact about the structure: shown here, edited in the Structure Manager
       const rigBox = document.createElement('div');
       rigBox.style.marginTop = '6px';
-      const st = structInfo(f);
-      const tids = facRigTids(f);
-      const slots = st ? st[3] : 3;
+      const st = hullInfo(v.typeId);
+      const tids = v.rigs;
+      const slots = v.rigSlots || (st ? st[3] : 3);
       const cap = document.createElement('span');
       cap.className = 'hint';
       cap.title = 'real Standup rig catalog from the SDE — bonuses shown are base % × this '
@@ -1141,9 +1250,15 @@ function renderFacilities(){
         + 'reactor rigs: LS ×1.0, NS/WH ×1.1, never HS). The fitting belongs to the structure, '
         + 'so it is recorded once in the Structure Manager and every profile sees the same rigs.';
       cap.textContent = st
-        ? `rigs — ${st[2]}-Set, ${tids.length}/${slots} slots, ${secLabel(f.security)} multipliers`
+        ? `rigs — ${st[2]}-Set, ${tids.length}/${slots} slots, ${secLabel(v.security)} multipliers`
         : 'rigs — unknown structure type, catalog unavailable';
-      rigBox.append(cap, manageLink(f, tids.length ? 'manage' : 'add rigs'));
+      rigBox.append(cap, manageLink(v, tids.length ? 'manage' : 'add rigs'));
+      // not the owner? the manager works the fitting out from the in-game industry window
+      const wiz = manageLink(v, 'infer rigs…', '/rigs');
+      wiz.title = 'open the Structure Manager’s rig-inference wizard for this structure — it reads the '
+        + 'bonused quantities and job duration the in-game industry window shows anyone who can use the '
+        + 'facility, so structure ownership is not needed';
+      rigBox.appendChild(wiz);
       for (const tid of tids){
         const row = document.createElement('div');
         row.className = 'rig';
@@ -1152,7 +1267,7 @@ function renderFacilities(){
         nm.textContent = rig ? rigShortName(rig.n) : 'rig type ' + tid;
         const eff = document.createElement('span');
         eff.className = 'hint';
-        eff.textContent = rig ? rigEffText(rig, f) : '→ unknown rig (not in the catalog)';
+        eff.textContent = rig ? rigEffText(rig, v) : '→ unknown rig (not in the catalog)';
         row.append(nm, eff);
         rigBox.appendChild(row);
       }
@@ -1171,11 +1286,11 @@ function renderFacilities(){
 
 $('btnAddNpc').addEventListener('click', () => {
   const p = activeProfile();
+  // an NPC station has no central record, so it keeps carrying its own facts
   p.facilities.push({
-    uid: uid(), npc: true, id: null, label: 'NPC station', typeId: null, typeName: 'NPC station',
-    system: null, systemName: null, security: null,
+    uid: uid(), npc: true, label: 'NPC station', system: null, systemName: null, security: null,
     activities: ['man', 'inv', 'cop', 'me', 'te'], scope: [],
-    bonuses: { me: 0, te: 0, cost: 0 }, tax: 0.25, sciOverride: null, rigs: [],
+    bonuses: { me: 0, te: 0, cost: 0 }, tax: 0.25, sciOverride: null,
   });
   saveProfiles(); renderFacilities();
 });
@@ -1183,14 +1298,13 @@ $('btnAddStruct').addEventListener('click', async () => {
   const s = await EveStructures.pick({ title: 'Industry facility', list: true });
   if (!s) return;
   const p = activeProfile();
-  // the hull's role bonuses and what it CAN run come from the central record; which of
-  // those this profile actually routes here is a profile preference from here on
+  // the facility is a REFERENCE: the hull, rigs, tax and role bonuses stay on the record.
+  // What it CAN run seeds what this profile routes here — a profile preference from here on
   const acts = (EveStructures.facts(s.id) || {}).industryActivities || EveStructures.defaultActivities(s.typeId);
   p.facilities.push({
-    uid: uid(), npc: false, id: s.id, label: s.name, typeId: s.typeId, typeName: s.typeName,
-    system: s.systemId, systemName: s.systemName, security: s.security,
+    uid: uid(), npc: false, ref: s.id,
     activities: (acts.length ? acts : ['man', 'inv', 'cop', 'me', 'te']).slice(), scope: [],
-    bonuses: EveStructures.roleBonuses(s.typeId), sciOverride: null,
+    sciOverride: null,
   });
   saveProfiles(); renderFacilities();
 });
@@ -1447,19 +1561,24 @@ const engineCache = new Map();
 let ovrIdx = {};                    // 'ovr:<uid>' -> cost-index fraction
 function clearEngines(){ engineCache.clear(); }
 
+/* the engine's facility = the structure's central facts (hull role bonuses, installed
+   rigs at this system's security band, the owner-set job tax) + this profile's routing
+   (which activities run here, and its own cost-index estimate) */
 function facilityToEngine(f){
+  const v = facView(f);
   const rigs = [];
-  for (const tid of facRigTids(f)) rigs.push(...rigEngineEntries(f, tid));
-  let system = f.system;
+  for (const tid of v.rigs) rigs.push(...rigEngineEntries(v, tid));
+  let system = v.system;
   if (f.sciOverride != null){
+    // a per-profile estimate: a synthetic system id keeps it out of the ESI index map
     system = 'ovr:' + f.uid;
     ovrIdx[system] = f.sciOverride / 100;
   }
   return {
-    id: f.uid, label: f.label, system,
-    tax: facTax(f),
+    id: f.uid, label: v.label, system,
+    tax: v.tax,
     activities: (f.activities || []).slice(),
-    bonuses: { me: f.bonuses.me || 0, te: f.bonuses.te || 0, cost: f.bonuses.cost || 0 },
+    bonuses: { me: v.bonuses.me || 0, te: v.bonuses.te || 0, cost: v.bonuses.cost || 0 },
     rigs,
   };
 }
@@ -1498,7 +1617,8 @@ function engineProfile(fs){
 function engineFor(tid){
   const p = activeProfile();
   const top = topMg(tid);
-  const fs = p.facilities.filter(f => !f.scope || !f.scope.length || f.scope.includes(top));
+  // a facility whose structure record is gone carries no facts — it cannot be computed
+  const fs = p.facilities.filter(f => facUsable(f) && (!f.scope || !f.scope.length || f.scope.includes(top)));
   const key = fs.map(f => f.uid).join(',');
   let e = engineCache.get(key);
   if (!e){
@@ -1667,8 +1787,18 @@ function rowFrom(tid, res, err, planDemand){
 let computeToken = 0;
 let lastSig = null;
 function curSig(){
+  const p = activeProfile();
   return JSON.stringify({
-    p: activeProfile(), v: D && D.v,
+    p,
+    // the profile only REFERENCES its structures, so the facts it computes with — hull
+    // bonuses, rigs, owner-set tax, system and security — have to be in the signature
+    // too: editing them in the Structure Manager makes a computed table stale
+    s: p.facilities.filter(f => !f.npc).map(f => {
+      const v = facView(f);
+      return [v.ref, v.ok, v.label, v.typeId, v.system, v.security, v.tax, v.taxKnown,
+              v.bonuses.me, v.bonuses.te, v.bonuses.cost, v.rigs];
+    }),
+    v: D && D.v,
     b: book && book.fetched, a: adjusted && adjusted.fetched,
     i: indices && indices.fetched, o: ownedBp && ownedBp.fetched,
     c: window.EveAuth && EveAuth.active ? EveAuth.active() : null,
@@ -1683,8 +1813,11 @@ async function computeAll(){
   const status = $('compStatus');
   if (!D){ status.textContent = 'static data missing'; status.className = 'err'; return; }
   if (!book){ status.textContent = 'no order book — Update ESI data first'; status.className = 'err'; return; }
-  if (!activeProfile().facilities.length){
-    status.textContent = 'add at least one facility to the profile first'; status.className = 'err'; return;
+  if (!activeProfile().facilities.filter(facUsable).length){
+    status.textContent = activeProfile().facilities.length
+      ? 'every facility in this profile points at a structure that is no longer in the Structure Manager'
+      : 'add at least one facility to the profile first';
+    status.className = 'err'; return;
   }
   const my = ++computeToken;
   $('btnCompute').disabled = true; $('btnCancel').hidden = false;
@@ -2316,6 +2449,7 @@ function treeTsv(res){
   // load this 2 MB file read it from the copy it caches
   if (window.EveStructures && D && D.structures) EveStructures.useTypeMap(D.structures);
   migrateRigs();               // legacy rig rows → catalog rigs → the central records
+  migrateFacilityRefs();       // facilities keep the reference, the facts stay central
   renderProfileEditor();
   await loadCaches();
   render();
@@ -2326,7 +2460,10 @@ function treeTsv(res){
   }
   // rigs/tax edited in the Structure Manager (this tab or another) change every number
   // on this page — re-render the facilities and flag the table as stale
-  if (window.EveStructures) EveStructures.subscribe(() => { renderFacilities(); markStale(); });
+  if (window.EveStructures) EveStructures.subscribe(() => {
+    clearEngines();            // the cached engines were built from the old facts
+    renderFacilities(); markStale();
+  });
   // test/debug handle — lets the smoke tests read computed state without scraping every cell
   window.IndustryPage = { state, evalOne, activeProfile, computeAll, curSig,
     get lastSig(){ return lastSig; }, get book(){ return book; },

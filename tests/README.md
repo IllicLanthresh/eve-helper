@@ -25,10 +25,10 @@ anywhere but here.
 | `sell.test.js` | the Sell tool: paste parsing, price ticks, plan selection, the 100 ISK order floor, import list, filters | yes |
 | `auth.test.js` | `auth.js`: PKCE callback, multi-character login, v1→v2 migration, logout, scope dropping, degraded standings | yes |
 | `permissions.test.js` | the shared permissions layer: `EveAuth.permissions()`, the topbar indicator, the panel, and the inline notes on all three pages | yes |
-| `structures.test.js` | the central structure store and the Structure Manager: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors, the moved rig-inference solver, and the Industry page reading rigs/tax from the record | yes |
+| `structures.test.js` | the central structure store and the Structure Manager: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors (rates, rigs, activities, hull role bonuses), the moved rig-inference solver and its deep link, and the Industry page reading every structure fact off the record — read-only, with the removed-record and renamed-facility cases | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
 | `mine-fleet.test.js` | the Mine page: the two modes (plan production / fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
-| `equivalence.test.js` | value equivalence across the structure centralisation: the **pre-migration build is checked out of git** and served next to the current one, both are handed the same legacy storage, and every Sell fee/plan and Mine yield/profit-mode column is compared exactly | yes |
+| `equivalence.test.js` | value equivalence across the structure centralisation: the **pre-migration builds are checked out of git** and served next to the current one, all are handed the same legacy storage, and every Sell fee/plan, Mine yield/profit-mode column and Industry engine feed / table row / cost-and-time tree is compared exactly | yes |
 
 ## Environment
 
@@ -51,10 +51,12 @@ and never write into `data/`. The engine suite builds its data inline — it nee
 fixture at all.
 
 `equivalence.test.js` needs one thing the others don't: **git history**. It materializes
-the pre-migration build (`git show <commit>:index.html`, …) into a temp directory and
-serves it on a second port, so the old and new builds can be driven side by side from the
-same legacy storage. In a checkout too shallow to contain that commit it reports a single
-failed check rather than pretending to have proved anything.
+each pre-migration build (`git show <commit>:index.html`, …) into a temp directory and
+serves it on its own port, so the old and new builds can be driven side by side from the
+same legacy storage. Two commits are used: the one before the central store landed (Sell
+and Mine) and the one before Industry profiles became references (Industry). In a checkout
+too shallow to contain them it reports a failed check rather than pretending to have
+proved anything.
 
 ## Adding checks
 

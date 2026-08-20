@@ -112,10 +112,10 @@
 <header>
   <h1>Structure Manager</h1>
   <p>One record per structure, shared by every tool. What is intrinsic to the structure lives here — the
-     owner-set market broker rate, the facility tax, the installed rigs, the reprocessing rig, what it can
-     build — and the Sell, Mine and Industry pages only ever <em>select</em> a structure. What is yours
-     rather than the structure's (which profile builds where, product scopes, your implant, cost-index
-     overrides) stays in the tool that uses it.</p>
+     owner-set market broker rate, the facility tax, the installed rigs, the reprocessing rig, the hull's
+     role bonuses, what it can build — and the Sell, Mine and Industry pages only ever <em>select</em> a
+     structure. What is yours rather than the structure's (which profile builds where, product scopes,
+     your implant, cost-index overrides) stays in the tool that uses it.</p>
 </header>
 <main>
 
@@ -136,6 +136,8 @@
         shows anyone who can use the structure.</li>
       <li>Owner-set rates — market broker % and facility job tax % — have no ESI endpoint at all. Read them
         off the in-game market/industry window and type them in once, here.</li>
+      <li>Hull role bonuses are presets this app ships, not ESI data: correct one here and every Industry
+        profile that routes work to this structure follows.</li>
       <li>Every field is saved the moment you change it, and every open tab picks the change up.</li>
     </ul>
   </details>
@@ -229,7 +231,8 @@ function usedBy(id){
   if (mine && mine.fac && mine.fac.struct === 's:' + id) out.push('the Mine tool’s refining facility');
   const ind = readLs('eveHelper.industryProfiles.v1');
   for (const p of (ind && Array.isArray(ind.profiles) ? ind.profiles : []))
-    if ((p.facilities || []).some(f => f && !f.npc && Number(f.id) === Number(id)))
+    // a profile facility references the record by id (older ones stored it as `id`)
+    if ((p.facilities || []).some(f => f && !f.npc && Number(f.ref != null ? f.ref : f.id) === Number(id)))
       out.push(`Industry profile “${p.name}”`);
   return out;
 }
@@ -252,6 +255,8 @@ function summaryTags(rec){
     out.push(tag(f.reproRig === 'none' ? 'no repro rig' : f.reproRig.toUpperCase() + ' repro rig', f.reproRig !== 'none'));
   out.push(tag(f.industryActivities.length ? f.industryActivities.join('/') : 'no industry',
     !!f.industryActivities.length && !f.activitiesAreDefault));
+  if (!f.bonusesAreDefault)
+    out.push(tag(`role bonuses ${f.bonuses.me}/${f.bonuses.te}/${f.bonuses.cost}`, true));
   if (f.conflicts.length) out.push(tag('⚠ ' + f.conflicts.length + ' conflict', true));
   return out;
 }
@@ -572,6 +577,49 @@ function fillBody(body, rec){
     + 'routes here, and for which products, stays in that profile.';
   actBox.appendChild(actHint);
   body.appendChild(actBox);
+
+  /* role bonuses — a property of the HULL, so every profile pointing here gets the same
+     numbers. The app ships presets it cannot verify; a correction is recorded once. */
+  const bonBox = document.createElement('div');
+  bonBox.className = 'grp';
+  const bh = document.createElement('div');
+  bh.className = 'gh';
+  bh.textContent = 'structure role bonuses';
+  const bLine = document.createElement('div');
+  bLine.className = 'rowline';
+  const setBonus = (k, v) => {
+    const next = { ...f.bonuses };
+    next[k] = v == null ? 0 : v;
+    // back to the preset in every field = back to "no override recorded"
+    const preset = S.roleBonuses(rec.typeId);
+    const isPreset = ['me', 'te', 'cost'].every(x => (next[x] || 0) === preset[x]);
+    S.update(rec.id, { roleBonus: isPreset ? null : next });
+    redraw();
+  };
+  bLine.append(
+    numField('bonusMe', 'ME bonus %', f.bonuses.me, null, v => setBonus('me', v)),
+    numField('bonusTe', 'TE bonus %', f.bonuses.te, null, v => setBonus('te', v)),
+    numField('bonusCost', 'job cost bonus %', f.bonuses.cost, null, v => setBonus('cost', v)),
+  );
+  if (f.bonusesAreDefault){
+    const d = document.createElement('span');
+    d.className = 'hint';
+    d.id = 'bonusDefault' + rec.id;
+    d.textContent = rec.typeName ? `preset for a ${rec.typeName} — verify in game` : 'preset — verify in game';
+    bLine.appendChild(d);
+  } else {
+    const reset = document.createElement('button');
+    reset.className = 'mini bonus-reset'; reset.type = 'button'; reset.textContent = 'reset to hull preset';
+    reset.addEventListener('click', () => { S.update(rec.id, { roleBonus: null }); redraw(); });
+    bLine.appendChild(reset);
+  }
+  const bHint = document.createElement('div');
+  bHint.className = 'hint';
+  bHint.style.marginTop = '6px';
+  bHint.textContent = 'the hull’s own ME/TE/job-cost bonuses, before rigs. Every Industry profile that '
+    + 'routes work here uses these — correct them once if your in-game numbers differ.';
+  bonBox.append(bh, bLine, bHint);
+  body.appendChild(bonBox);
 
   /* notes */
   const noteBox = document.createElement('div');
@@ -1097,16 +1145,24 @@ $('btnAdd').addEventListener('click', async () => {
   }
 });
 
-// deep link: structures.html#s<id> expands that structure on load
+// deep link: structures.html#s<id> expands that structure on load, #s<id>/rigs opens the
+// rig-inference wizard on it (that is how the Industry page hands a structure over)
+let wizOpened = null;
 function applyHash(){
-  const m = /^#s(\d+)$/.exec(location.hash || '');
+  const m = /^#s(\d+)(\/rigs)?$/.exec(location.hash || '');
   if (!m) return;
   const id = Number(m[1]);
-  if (!S.get(id)) return;
+  const rec = S.get(id);
+  if (!rec) return;
   open.add(id);
   render();
   const el = document.getElementById('s' + id);
   if (el) el.scrollIntoView({ block: 'center' });
+  // the wizard needs the catalog — applyHash runs again once loadStatic() resolves
+  if (m[2] && D && wizOpened !== location.hash){
+    wizOpened = location.hash;
+    openRigWizard(rec);
+  }
 }
 window.addEventListener('hashchange', applyHash);
 
