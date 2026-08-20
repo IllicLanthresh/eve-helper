@@ -23,7 +23,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const H = require('./helper');
-const { check, eq, section } = H;
+const { check, eq, section, near } = H;
 
 /* The last commit before the central store landed. Everything this suite compares was
    computed by THAT build first; the current build has to reproduce it bit for bit. */
@@ -543,9 +543,57 @@ H.run('equivalence', async () => {
     check('...and a row where the 100 ISK broker floor binds',
       sellBefore.rows.some(r => r.brokerEffPct != null && r.brokerEffPct > 4.5),
       JSON.stringify(sellBefore.rows.map(r => r.brokerEffPct)));
-    same('every Sell fee and per-row plan is identical before and after',
-      { ...sellBefore, summaryStats: undefined, summaryAgrees: undefined },
-      { ...sellAfter, summaryStats: undefined, summaryAgrees: undefined });
+    /* One input deliberately differs now. The fee boxes round to two decimals because
+       they are the display AND the override surface, and the page used to do its
+       arithmetic on whatever the box showed. Accounting 5 is 3.375%; the old build spent
+       it as 3.37%. So the tax fraction and the ISK figures downstream of it are expected
+       to move, and everything else — rates, prices, depths, plan shapes, flags, the
+       import list the page hands back to the game — must still be identical. */
+    const NET_KEYS = ['totalNet', 'netInstant', 'netOrder'];
+    eq('the old build spent the rate its box had rounded to', sellBefore.taxFrac, 0.0337);
+    near('...while the new one spends the rate itself',
+      sellAfter.taxFrac, 7.5 * (1 - 0.11 * 5) / 100, 1e-12);
+    const stripNets = snap => ({ ...snap, summaryStats: undefined, summaryAgrees: undefined,
+      taxFrac: undefined,
+      rows: snap.rows.map(r => {
+        const o = { ...r };
+        for (const k of NET_KEYS) delete o[k];
+        return o;
+      }) });
+    same('every Sell fee, price, depth, plan and flag is identical before and after',
+      stripNets(sellBefore), stripNets(sellAfter));
+
+    /* ...and the nets moved the exact amount the correction predicts, rather than merely
+       "moved". An instant sale is proceeds x (1 - tax), so it scales by the ratio of the
+       two after-tax factors to the last bit. A listing subtracts a broker fee on top, and
+       tax does not touch that fee, so the same ISK comes off a smaller number: it falls
+       by a slightly LARGER fraction than the ratio, never a smaller one. */
+    const taxRatio = (1 - 7.5 * (1 - 0.11 * 5) / 100) / (1 - 0.0337);
+    const netCheck = { instantExact: [], fellAtLeastRatio: [], relMoves: [], nullMismatch: [] };
+    sellBefore.rows.forEach((rb, i) => {
+      const ra = sellAfter.rows[i];
+      for (const k of NET_KEYS) {
+        const b = rb[k], aa = ra[k];
+        if (b == null || aa == null) { if (b !== aa) netCheck.nullMismatch.push(rb.name + '.' + k); continue; }
+        if (k === 'netInstant') netCheck.instantExact.push(Math.abs(aa - b * taxRatio) <= Math.abs(b) * 1e-12);
+        else netCheck.fellAtLeastRatio.push(aa <= b * taxRatio + Math.abs(b) * 1e-12);
+        if (b > 0) netCheck.relMoves.push((b - aa) / b);
+      }
+    });
+    eq('no net figure appeared or vanished', netCheck.nullMismatch.length, 0);
+    check('every instant net scaled by exactly the two after-tax factors',
+      netCheck.instantExact.length > 0 && netCheck.instantExact.every(Boolean),
+      JSON.stringify(netCheck.instantExact));
+    check('...and every listing net fell by at least that much, because its broker fee did not shrink',
+      netCheck.fellAtLeastRatio.length > 0 && netCheck.fellAtLeastRatio.every(Boolean),
+      JSON.stringify(netCheck.fellAtLeastRatio));
+    check('...every net fell, none rose', netCheck.relMoves.every(m => m > 0),
+      JSON.stringify(netCheck.relMoves));
+    check('...by under a tenth of a percent, which is why no plan changed shape',
+      netCheck.relMoves.every(m => m < 1e-3), JSON.stringify(netCheck.relMoves));
+    check('...the instant case being the floor of that move, at about 0.005%',
+      Math.abs(1 - taxRatio) < 1e-4 && netCheck.relMoves.every(m => m >= (1 - taxRatio) * (1 - 1e-9)),
+      String(1 - taxRatio) + ' | ' + JSON.stringify(netCheck.relMoves));
     /* The summary line is deliberately terser than the old build's; what must not change
        is the set of totals it reports, and that each still equals the rows behind it. */
     check('the summary still reports one total per plan shape, plus the import list',

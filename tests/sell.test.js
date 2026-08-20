@@ -669,6 +669,16 @@ H.run('sell', async () => {
        So after any of them, nothing ticked is off screen. Only the checkbox is additive. */
     for (const [label, btn] of [['Tick top N', '#btnTop'], ['All', '#btnAll'], ['None', '#btnNone']]) {
       await s3.page.click('#btnAll');                       // start from a full list
+      /* hand-tick an INSTANT row first. btnAll already zeroes latent INSTANT ticks, so
+         without this the assertion below would be checking a value its own setup had
+         just guaranteed — it passed even with the clearing removed from setSelection. */
+      await s3.page.evaluate(() => {
+        const r = state.rows.find(x => x.strategy === 'imm');
+        if (r){ r.checked = true; render(); persist(); }
+      });
+      const latentBefore = await s3.page.evaluate(() =>
+        state.rows.filter(r => r.checked && r.strategy === 'imm').length);
+      eq(label + ' starts from a latent INSTANT tick that is really there', latentBefore, 1);
       await s3.page.fill('#fltText', 'widget');
       await s3.page.dispatchEvent('#fltText', 'input');
       await s3.page.waitForFunction(() => state.filterText === 'widget');
@@ -692,6 +702,100 @@ H.run('sell', async () => {
         .every(t => /import list|filters/.test(t) && t.split('\n').length >= 2),
       JSON.stringify(await s3.page.evaluate(() => ['btnTop', 'btnAll', 'btnNone']
         .map(i => document.getElementById(i).title))));
+
+    /* ---------- a filling button with nothing to fill from ----------------------------
+       Setting the list from an empty candidate set is a delete, and it happens entirely
+       off screen: the table is showing one INSTANT row or none at all, so nothing visible
+       changes, and the "N ticked hidden" warning disappears as if it had been resolved.
+       "show = INSTANT only" is two controls away from the buttons. */
+    section('a bulk fill with nothing tickable leaves the list alone');
+    for (const [label, btn, how] of [
+      ['Tick top N', '#btnTop', 'fltType'], ['All', '#btnAll', 'fltType'],
+      ['Tick top N', '#btnTop', 'fltText'], ['All', '#btnAll', 'fltText'],
+    ]) {
+      await s3.page.selectOption('#fltType', 'all');
+      await s3.page.fill('#fltText', '');
+      await s3.page.dispatchEvent('#fltText', 'input');
+      await s3.page.waitForFunction(() => state.filterText === '' && state.filterType === 'all');
+      await s3.page.click('#btnAll');
+      const before = await s3.page.evaluate(() => state.rows.filter(r => r.inImport).map(r => r.key));
+      check(`${label} via ${how}: the list starts non-empty`, before.length > 0, String(before.length));
+      if (how === 'fltType') {
+        await s3.page.selectOption('#fltType', 'imm');       // every visible row is INSTANT
+        await s3.page.waitForFunction(() => state.filterType === 'imm');
+      } else {
+        await s3.page.fill('#fltText', 'zzzznothing');       // the table says "no rows match"
+        await s3.page.dispatchEvent('#fltText', 'input');
+        await s3.page.waitForFunction(() => state.filterText === 'zzzznothing');
+      }
+      const nothingTickable = await s3.page.evaluate(() => state.rows.filter(selectable).length);
+      eq(`...and the filter really leaves nothing tickable`, nothingTickable, 0);
+      await s3.page.click(btn);
+      const after = await s3.page.evaluate(() => ({
+        keys: state.rows.filter(r => r.inImport).map(r => r.key),
+        note: document.getElementById('bulkNote').textContent,
+        stored: (JSON.parse(localStorage.getItem('eveSellHelper.v2') || '{}').ticked || []).length,
+      }));
+      eq(`...${label} does not delete the import list`, after.keys.join(','), before.join(','));
+      eq(`...nor the copy of it in storage`, after.stored, before.length);
+      check(`...and says why, where the button is`, /nothing tickable/.test(after.note), after.note);
+      check(`...which the tooltip warned about`,
+        /none tickable/.test(await s3.page.getAttribute(btn, 'title')),
+        await s3.page.getAttribute(btn, 'title'));
+    }
+    // None is the way to empty the list on purpose, and it still is
+    await s3.page.fill('#fltText', '');
+    await s3.page.dispatchEvent('#fltText', 'input');
+    await s3.page.waitForFunction(() => state.filterText === '');
+    await s3.page.selectOption('#fltType', 'imm');
+    await s3.page.click('#btnNone');
+    eq('None still empties it, filters or no filters',
+      await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length), 0);
+    check('...and clears the stand-down note it may be sitting under',
+      (await s3.page.textContent('#bulkNote')) === '', await s3.page.textContent('#bulkNote'));
+    await s3.page.selectOption('#fltType', 'all');
+    await s3.page.waitForFunction(() => state.filterType === 'all' && state.filterText === '');
+
+    /* ---------- ticks do not come back from the dead --------------------------------
+       restore() seeds state.savedTicked and rebuild() falls back to it for any row that
+       was not in state.rows when the rebuild started. Nothing but a page load used to
+       narrow that set, so a tick removed with None reappeared the next time its row went
+       absent and came back — and select-all, delete, paste is the ordinary way to replace
+       an inventory. */
+    section('a removed tick stays removed across a re-paste');
+    await s3.page.click('#btnAll');
+    const paste = await s3.page.inputValue('#inv');
+    /* the reload is the point: restore() seeds state.savedTicked from storage, and until
+       this fix nothing else ever narrowed it again for the life of the page */
+    await s3.page.reload();
+    await s3.page.waitForFunction("typeof rebuild === 'function'");
+    await s3.page.waitForFunction(() => state.savedTicked.size > 0);
+    eq('a reload seeds the saved set from storage',
+      await s3.page.evaluate(() => state.savedTicked.size), 5);
+    await fetchInventory(s3.page, paste);
+    eq('...and the list comes back with it',
+      await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length), 5);
+    await s3.page.click('#btnNone');
+    eq('None empties the list', await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length), 0);
+    eq('...and the saved set with it',
+      await s3.page.evaluate(() => state.savedTicked.size), 0);
+    await s3.page.fill('#inv', '');
+    await s3.page.dispatchEvent('#inv', 'input');
+    await s3.page.waitForFunction(() => state.rows.length === 0);
+    eq('...emptying the box does not repopulate the saved set',
+      await s3.page.evaluate(() => state.savedTicked.size), 0);
+    await fetchInventory(s3.page, paste);
+    eq('pasting the same inventory back does not resurrect them',
+      await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length), 0);
+    // ...while a clear-and-paste that was never asked to give up its picks still keeps them
+    await s3.page.click('#btnAll');
+    const kept = await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length);
+    await s3.page.fill('#inv', '');
+    await s3.page.dispatchEvent('#inv', 'input');
+    await s3.page.waitForFunction(() => state.rows.length === 0);
+    await fetchInventory(s3.page, paste);
+    eq('...but a plain clear-and-paste still restores the picks it never gave up',
+      await s3.page.evaluate(() => state.rows.filter(r => r.inImport).length), kept);
 
     section('the exports come out in the order on screen');
     await s3.page.click('#btnAll');
@@ -846,9 +950,25 @@ H.run('sell', async () => {
     // on both sides of the hand arithmetic below
     const fees = await p4.evaluate(() => ({ tax: feePct('salesTax'), broker: feePct('brokerFee') }));
     const TAX = fees.tax, BROKER = fees.broker;
-    near('the page fees are Accounting 5 / Broker Relations 5, to the box\'s two decimals',
-      TAX, Number((7.5 * (1 - 0.11 * 5)).toFixed(2)) / 100, 1e-12);
+    near('the page fees are Accounting 5 / Broker Relations 5, at full precision',
+      TAX, 7.5 * (1 - 0.11 * 5) / 100, 1e-12);
     near('...and the broker fee likewise', BROKER, 0.015, 1e-12);
+    /* the box is the display AND the override surface, so it holds two decimals; the
+       arithmetic must not be run through that rounding. 3.375 shows as 3.37 and is still
+       used as 3.375 — worth 0.15% of every net figure on the page. */
+    eq('...while the box still shows the rounded rate',
+      await p4.inputValue('#salesTax'), '3.37');
+    check('...so the displayed rate is NOT the one the math used',
+      Number(await p4.inputValue('#salesTax')) / 100 !== TAX,
+      await p4.inputValue('#salesTax') + ' vs ' + TAX);
+    // ...and typing a genuinely different number still wins over the computed rate
+    const typedFee = await p4.evaluate(async () => {
+      const box = document.getElementById('salesTax'), was = box.value;
+      box.value = '5.00'; const got = feePct('salesTax');
+      box.value = was; feePct('salesTax');
+      return got;
+    });
+    near('...but an override the user typed is used as typed', typedFee, 0.05, 1e-12);
 
     const steady = await decisionRow(p4, 'Steady Trinket');
     const sliding = await decisionRow(p4, 'Sliding Trinket');

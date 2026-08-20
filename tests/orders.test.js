@@ -39,15 +39,27 @@ const TYPE_IDS = {
 };
 
 /* ---------- fee model, exactly as the page computes it from the mocked character ------
-   Accounting 5      -> tax    = 7.5 x (1 - 0.11 x 5) = 3.3749…, and the page writes
-                        toFixed(2) into the box, which lands on 3.37 (the .375 is really
-                        3.3749999999999996 in binary), so the fraction actually used is
+   Accounting 5      -> tax    = 7.5 x (1 - 0.11 x 5) = 3.375%. The box still displays
+                        toFixed(2), but the page now keeps the unrounded rate beside it
+                        and does its arithmetic on that, so the fraction used is the exact
+                        one rather than the 3.37 the display rounds to.
    Broker Relations 5, zero standings -> broker = 3 - 0.3 x 5 = 1.50%
-   Advanced Broker Relations 4 -> relist = 1.50 x (1 - 0.05 x 4) = 1.20%          */
-const TAX = 0.0337;
+   Advanced Broker Relations 4 -> discount = 0.50 + 0.06 x 4 = 0.74
+                                  relist   = 1.50 x (1 - 0.74) = 0.39%            */
+const TAX = 0.03375;
 const BROKER_PCT = 1.5;
 const ADV_BROKER_LEVEL = 4;
-const RELIST_PCT = BROKER_PCT * (1 - 0.05 * ADV_BROKER_LEVEL);    // 1.2
+const RELIST_DISCOUNT = 0.50 + 0.06 * ADV_BROKER_LEVEL;           // 0.74
+const RELIST_PCT = BROKER_PCT * (1 - RELIST_DISCOUNT);            // 0.39
+/* The whole modify-order charge, restated from the formula rather than copied off the
+   page: the discounted rate on the entire new order value, PLUS the undiscounted broker
+   rate on however much the order grew, and never less than the 100 ISK per-order floor.
+   At these fixture sizes (10 x 1,000 = 10,000 ISK) 0.39% is 39 ISK, so the floor governs
+   every reprice in this suite — which is exactly why the section further down drives the
+   rate itself against the four readings taken off a real client. */
+const relistFee = (qty, newPrice, oldPrice) => Math.max(100,
+  RELIST_PCT / 100 * qty * newPrice
+  + BROKER_PCT / 100 * Math.max(0, qty * newPrice - qty * oldPrice));
 const net = isk => isk * (1 - TAX);
 
 const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
@@ -394,9 +406,10 @@ H.run('orders', async () => {
     near('...worth chance x units x price, net of tax', dHold.valueHold, net(10 * 1000), 1e-6);
     // dumping it instead walks the buy book: 10 x 500 net of tax
     near('...against a dump worth the buy book, net of tax', dHold.valueDump, net(10 * 500), 1e-6);
-    // repricing to the 900 someone else is asking, minus 1.2% of 9,000 = 108
+    // repricing to the 900 someone else is asking: 0.39% of 9,000 is 35, so the 100 ISK
+    // per-order floor is what actually comes off
     near('...and a reprice worth the lower price minus the relist fee',
-      dHold.valueReprice, net(10 * 900) - RELIST_PCT / 100 * 10 * 900, 1e-6);
+      dHold.valueReprice, net(10 * 900) - relistFee(10, 900, 1000), 1e-6);
 
     // DUMP: 0% chance, so holding is only worth the give-up branch, and the trend shrinks
     // that by (1 + TREND/100)^(14/7) before you ever get to sell it
@@ -409,12 +422,14 @@ H.run('orders', async () => {
     check('...which is less than dumping now', dDump.valueDump > dDump.valueHold,
       dDump.valueDump + ' vs ' + dDump.valueHold);
 
-    // REPRICE: 0% at 2,000, 100% at 1,000, fee = max(100, 1.2% x 10 x 1,000) = 120
+    // REPRICE: 0% at 2,000, 100% at 1,000. Dropping the price means no growth term, so
+    // the charge is 0.39% x 10,000 = 39 -> floored to 100
     eq('an overpriced order with a live market under it is repriced', dRep.verdict, 'reprice');
     eq('...to the competitive price', dRep.repricePrice, 1000);
-    near('...paying the relist fee', dRep.relistFee, RELIST_PCT / 100 * 10 * 1000, 1e-9);
+    near('...paying the relist fee', dRep.relistFee, relistFee(10, 1000, 2000), 1e-9);
+    eq('...which at this size is the 100 ISK floor, not the rate', dRep.relistFee, 100);
     near('...for a value net of that fee', dRep.valueReprice,
-      net(10 * 1000) - RELIST_PCT / 100 * 10 * 1000, 1e-6);
+      net(10 * 1000) - relistFee(10, 1000, 2000), 1e-6);
     check('...which beats both holding and dumping',
       dRep.valueReprice > dRep.valueHold && dRep.valueReprice > dRep.valueDump);
 
@@ -469,7 +484,7 @@ H.run('orders', async () => {
     eq('the reprice row carries its verdict', otsv.cells['Verdict'], 'REPRICE');
     eq('...the price it would move to', otsv.cells['Reprice price'], '1000.00');
     near('...the relist fee that costs', Number(otsv.cells['Relist fee ISK']),
-      RELIST_PCT / 100 * 10 * 1000, 1e-9);
+      relistFee(10, 1000, 2000), 1e-9);
     near('...and the three option values behind the choice', Number(otsv.cells['Dump ISK']),
       net(10 * 100), 1e-6);
     check('...with hold and reprice beside it',
@@ -557,18 +572,28 @@ H.run('orders', async () => {
       (await arrowFor('verdict')).text, 'verdict holds strings');
     await page.evaluate(() => { state.ordSortKey = 'stalledIsk'; state.ordSortDir = -1; renderOrders(); });
 
-    /* ---------- (k) the relist fee, unverified and overridable ---------- */
+    /* ---------- (k) the relist fee, derived from the skill and overridable ---------- */
     section('the relist fee');
     eq('it is computed from the broker rate and Advanced Broker Relations',
-      await page.inputValue('#relistPct'), RELIST_PCT.toFixed(2));
+      await page.inputValue('#relistPct'), RELIST_PCT.toFixed(3));
     eq('...with the skill resolved by name, not by a hardcoded id',
       await page.evaluate(() => advBrokerLevel), ADV_BROKER_LEVEL);
+    // the discount is the character's, not a constant: level 4 earns 0.50 + 0.06 x 4
+    near('...and the discount comes off the level rather than a fixed number',
+      await page.evaluate(() => relistDiscount()), RELIST_DISCOUNT, 1e-12);
+    eq('...so a different level would give a different discount',
+      await page.evaluate(() => {
+        const was = advBrokerLevel; advBrokerLevel = 5;
+        const d = relistDiscount(); advBrokerLevel = was; return d;
+      }), 0.8);
     const src = await page.textContent('#relistSrc');
     const srcTip = await page.getAttribute('#relistSrc', 'title');
-    check('...and the page says it is unverified', /UNVERIFIED/.test(src), src);
+    check('...and the line states the discount it applied', /74% Advanced Broker Relations/.test(src), src);
     check('...names the skill and the level it read', /Advanced Broker Relations \(level 4\)/.test(src), src);
-    check('...and asks the user to check it against the client, on hover',
-      /verified: no/.test(srcTip) && /compare with your client/.test(srcTip), srcTip);
+    check('...publishes the per-level rule behind it, on hover',
+      /50% \+ 6% per level/.test(srcTip), srcTip);
+    check('...and warns that raising a price costs more than the rate, on hover',
+      /full broker fee on the growth/.test(srcTip), srcTip);
     await page.fill('#relistPct', '0.75');
     await page.dispatchEvent('#relistPct', 'change');
     const dRep2 = await diagOf(page, 13);
@@ -578,18 +603,81 @@ H.run('orders', async () => {
       dRep2.relistFee, 100, 1e-9);
     near('...and the reprice value follows it', dRep2.valueReprice, net(10 * 1000) - 100, 1e-6);
     check('...and the note stops claiming the computed derivation',
-      !/UNVERIFIED/.test(await page.textContent('#relistSrc')),
+      /yours/.test(await page.textContent('#relistSrc'))
+      && !/Advanced Broker Relations/.test(await page.textContent('#relistSrc')),
       await page.textContent('#relistSrc'));
-    check('...while still saying neither number is checked against the client',
-      /verified: no/.test(await page.getAttribute('#relistSrc', 'title')),
+    check('...while still warning that a raise pays the growth on top',
+      /growth/.test(await page.getAttribute('#relistSrc', 'title')),
       await page.getAttribute('#relistSrc', 'title'));
     await page.reload();
     await page.waitForFunction("typeof runOrders === 'function'");
-    eq('the override survives a reload', await page.inputValue('#relistPct'), '0.75');
+    eq('the override survives a reload', await page.inputValue('#relistPct'), '0.750');
     await page.waitForFunction(() => advBrokerLevel != null);   // the skill is read on load too
     await page.click('#relistReset');
     eq('...and reset goes back to the computed value',
-      await page.inputValue('#relistPct'), RELIST_PCT.toFixed(2));
+      await page.inputValue('#relistPct'), RELIST_PCT.toFixed(3));
+
+    /* ---------- (k2) the fee model against a real client -----------------------------
+       Everything above runs on the mocked character. This block runs the page's own fee
+       functions against readings taken off a live client, so the formulas are pinned to
+       the game rather than to each other. Character: Broker Relations 5, Accounting 5,
+       Advanced Broker Relations 4, Caldari State 0.15 unmodified, station corp 0.00.
+       If CCP changes a coefficient, this is the block that goes red.                 */
+    section('the fee model against a real client');
+    const CLIENT = await page.evaluate(() => {
+      const br = brokerPctFor({ brokerRelations: 5 }, 0.15, 0) / 100;
+      const tax = salesTaxPctFor({ accounting: 5 }) / 100;
+      const disc = RELIST_DISCOUNT_BASE + RELIST_DISCOUNT_PER_LEVEL * 4;
+      const rl = br * (1 - disc);
+      const vOld = 10 * 2166000;
+      return {
+        brokerPct: br * 100, taxPct: tax * 100, discount: disc, relistPct: rl * 100,
+        // the sell window, on a 6,108,000 ISK order
+        taxOn6108k: 6108000 * tax,
+        brokerOn6108k: 6108000 * br,
+        // four fresh listings spanning -55% to +304% of the regional average
+        fresh: [100000, 222500, 450000, 900000].map(pp => 10 * pp * br),
+        // four modify-order dialogs, same stack, old price 2,166,000
+        modify: [500000, 1000000, 2166000, 4000000].map(pp => modifyFeeOn(10 * pp, vOld, rl, br)),
+        // the growth term on its own, for the one reading that raises the price
+        growthOnly: br * (10 * 4000000 - vOld),
+        floorAtMaxStanding: brokerPctFor({ brokerRelations: 5 }, 10, 10),
+      };
+    });
+    near('sales tax is 7.5% less 11% per Accounting level', CLIENT.taxPct, 3.375, 1e-9);
+    near('...which the client charged as 206,145 on a 6,108,000 ISK order',
+      CLIENT.taxOn6108k, 206145, 5e-3);
+    near('broker is 3% less 0.3pp per level less 0.03pp per faction standing point',
+      CLIENT.brokerPct, 1.4955, 1e-9);
+    near('...which the client charged as 91,345.14 on the same order',
+      CLIENT.brokerOn6108k, 91345.14, 5e-3);
+    // the same rate at every price: how far the listing sits from the regional average
+    // does not enter a fresh listing's broker fee
+    for (const [i, want] of [14955, 33274.875, 67297.5, 134595].entries())
+      near(`...and holds flat on a fresh listing, reading ${i + 1} of 4`,
+        CLIENT.fresh[i], want, 5e-3);
+
+    near('Advanced Broker Relations 4 discounts a relist by 74%', CLIENT.discount, 0.74, 1e-12);
+    near('...leaving 0.38883% of the new order value', CLIENT.relistPct, 0.38883, 1e-9);
+    // three drops and one raise, all measured off the modify-order dialog
+    near('the client charged 19,441.50 to move 10 units to 500,000', CLIENT.modify[0], 19441.50, 5e-3);
+    near('...38,883.00 to move them to 1,000,000', CLIENT.modify[1], 38883.00, 5e-3);
+    near('...84,220.58 to re-list them at the price they were already at',
+      CLIENT.modify[2], 84220.58, 5e-3);
+    near('...and 429,806.70 to RAISE them to 4,000,000', CLIENT.modify[3], 429806.70, 5e-3);
+    /* the raise is the reading that proves the second term exists at all: the discounted
+       rate alone would have been 155,532, a third of what the client actually charged */
+    near('...of which the growth term is 274,274.70, at the UNDISCOUNTED broker rate',
+      CLIENT.growthOnly, 274274.70, 5e-3);
+    near('...so the discounted rate alone would have under-charged by that much',
+      CLIENT.modify[3] - CLIENT.growthOnly, 155532, 5e-3);
+    check('a drop pays no growth term at all',
+      CLIENT.modify[0] < CLIENT.modify[1] && CLIENT.modify[1] < CLIENT.modify[2],
+      CLIENT.modify.join('|'));
+
+    // standings cap at 10.00, so the rate cannot go below this by any legitimate route
+    near('the broker rate bottoms out at 1% rather than at zero',
+      CLIENT.floorAtMaxStanding, 1, 1e-12);
 
     /* ---------- (l) patience drives the same window ---------- */
     section('patience');

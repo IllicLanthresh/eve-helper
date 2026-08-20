@@ -69,14 +69,31 @@ warning.
 `3% − 0.3%×Broker Relations − 0.03%×faction − 0.02%×corp` standing toward the hub
 station's owner corporation and its faction (station owners come from public ESI and are
 cached). Those are the **unmodified** standings straight from ESI — market fees ignore
-**Connections** and **Diplomacy**, which only lift the agent/mission side. The formula is
-verified against the live client at Jita 4-4: Broker Relations 5 with ~zero standings
-gives 1.5%. On top of the percentage every order pays a flat **minimum broker fee of
-100 ISK per order**, so a cheap stack pays an effective rate well above the nominal one
-(100 ISK on a 4,500 ISK order is 2.2%); rows where that floor binds are flagged, and the
-plan chooser prices it in, since it can flip a small stack from ORDER to INSTANT. Sales
-tax is `7.5% × (1 − 11%×Accounting)` — that 7.5 base is **not yet verified** against the
-live client.
+**Connections** and **Diplomacy**, which only lift the agent/mission side. Sales tax is
+`7.5% × (1 − 11%×Accounting)`.
+
+Both formulas are **measured against the live client**, not assumed. On one 6,108,000 ISK
+sell order placed by a character with Broker Relations 5, Accounting 5 and Caldari State
+0.15 unmodified, the client charged:
+
+| | client charged | formula gives |
+|---|---|---|
+| sales tax | 206,145.00 | `7.5 × (1 − 0.11×5)` = **3.3750%** |
+| broker | 91,345.14 | `3 − 0.3×5 − 0.03×0.15` = **1.4955%** |
+
+Four further listings from 100k to 900k — spanning −55% to +304% of the item's regional
+average — all paid the same 1.4955%, so **how far a listing sits from the market does not
+enter its broker fee**. Standings cap at 10.00, so the rate bottoms out at
+`3 − 0.3×5 − 0.03×10 − 0.02×10` = **1%**, and the page clamps there rather than at zero.
+
+The fee boxes round to two decimals because they are the display *and* the override
+surface, but the page does its arithmetic on the unrounded rate — 3.375% shows as 3.37 and
+is spent as 3.375. Anything you type still wins.
+
+On top of the percentage every order pays a flat **minimum broker fee of 100 ISK per
+order**, so a cheap stack pays an effective rate well above the nominal one (100 ISK on a
+4,500 ISK order is 2.2%); rows where that floor binds are flagged, and the plan chooser
+prices it in, since it can flip a small stack from ORDER to INSTANT.
 
 The note under the fee inputs shows which character, skills and standings produced the
 numbers. Both fee inputs stay hand-editable — anything you type wins until the next
@@ -200,9 +217,24 @@ remembered.
    by eye. It also means a bulk press discards a deliberate hand-tick on an unsellable row
    — the buttons say so, and `Tick top N` / `All` never tick one themselves.
 
+   One exception, and it exists to stop the rule turning into a delete: if the current
+   filter leaves **nothing tickable** — `show = INSTANT only`, or a name filter matching
+   only INSTANT and unsellable rows, or one matching nothing at all — then `Tick top N`
+   and `All` **leave the import list alone** and say so next to the button. Setting the
+   list from an empty candidate set would wipe it entirely off screen, on a table showing
+   one ⚡ row or none, with the `⚠N hidden` warning vanishing as though it had been
+   resolved. `None` still empties the list on purpose; its tooltip already says it ignores
+   the filters.
+
    Filters remain a viewing aid: a row you tick *by hand* and then filter away stays in
    the import list, and the toolbar says so (`⚠N hidden`). After a bulk button there is
    nothing for that warning to report.
+
+   Ticks are remembered between visits, and **removing one sticks**: the saved list is
+   narrowed whenever the list is saved, so a tick you cleared does not come back the next
+   time its row goes away and returns (clear the box and paste the same export, change
+   hub, refetch). Clearing the inventory box alone is not read as unticking anything — a
+   plain clear-and-paste still brings your picks back.
 7. **Export — two artifacts**:
    - **Import list (orders & splits)**: every ticked row as `Item name ⇥ Price` for the
      game's multi-sell import. The tick column is labelled *Import* and only ORDER/SPLIT
@@ -471,24 +503,46 @@ cancelling. Charging it there is the classic error that keeps dead orders alive 
 paid for this listing"); a sunk cost cannot be recovered by waiting. The only fee anywhere
 in the comparison is the **relist fee**, because that one is a payment you have not made yet.
 
-### The relist fee is UNVERIFIED
+### The relist fee, and the half of it that is easy to miss
 
-EVE charges a broker fee to **modify** an open order's price, and **Advanced Broker
-Relations** reduces it. There is no client-verified formula for it here, so none is asserted.
-It is modelled as
+Changing an open order's price is charged in **two** parts:
 
 ```
-relist %   = broker % × (1 − 5% × Advanced Broker Relations)
-relist fee = max(100 ISK, relist % × units × the new price)
+discount   = 50% + 6% × Advanced Broker Relations        (80% at level V)
+relist fee = broker % × (1 − discount) × units × the NEW price
+           + broker % ×                  units × (the new price − the old one, if it rose)
 ```
 
-with the skill resolved **by name** through the same `/universe/ids` lookup the rest of the
-site uses (no hardcoded type id), and the same flat 100 ISK per-order floor the broker fee
-has. Following the precedent set by the broker-fee work, the resulting % is shown in a box
-above the table (*UNVERIFIED · 1.50% broker − 5%/lvl Advanced Broker Relations (level 4)*),
-is **hand-editable**, and its tooltip asks you to check it against your client's own
-modify-order dialog. Your correction is **saved** and used everywhere. Neither number is
-verified — yours at least came from a client.
+The first term is the ordinary broker fee on the whole re-listed order, discounted by the
+skill. The second charges the **undiscounted** broker fee on however much the order grew —
+raising a price brokers value that was never brokered, so the discount does not reach it.
+**Lowering** a price makes that term zero, which is every reprice this page recommends.
+
+Measured on the live client at Advanced Broker Relations 4 (discount 74%, so 26% of a
+1.4955% broker = **0.38883%**), moving a stack of 10 whose old price was 2,166,000:
+
+| new price | client charged | = first term | + growth term |
+|---|---|---|---|
+| 500,000 | 19,441.50 | 19,441.50 | — |
+| 1,000,000 | 38,883.00 | 38,883.00 | — |
+| 2,166,000 *(unchanged)* | 84,220.58 | 84,220.58 | — |
+| **4,000,000** *(a raise)* | **429,806.70** | 155,532.00 | **274,274.70** |
+
+All four to the ISK. The raise is the reading that proves the second term exists at all:
+the discounted rate alone would have said 155,532, a **third** of what the client charged.
+
+The skill is resolved **by name** through the same `/universe/ids` lookup the rest of the
+site uses (no hardcoded type id), and the discount comes off *your* level — nothing about
+it is a fixed number. The resulting % is shown in a box above the table
+(*0.39% — 1.50% broker − 74% Advanced Broker Relations (level 4)*), is **hand-editable**,
+and your correction is **saved** and used everywhere.
+
+The same flat 100 ISK per-order floor applies. That one piece is inference rather than
+measurement: none of the four dialogs above ran small enough to reach it.
+
+> An earlier version of this page charged a flat 1.20% per reprice against a real 0.38883%
+> — **3.1× too much** — which pushed verdicts away from REPRICE and toward HOLD and
+> CANCEL & DUMP.
 
 ### Honest caveats
 

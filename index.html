@@ -330,9 +330,10 @@
     <span class="hint">import list:</span>
     <label for="topN" style="margin:0">top</label>
     <input id="topN" type="number" min="1" step="1" value="20" style="width:70px">
-    <button id="btnTop" type="button" title="tick the first N tickable rows, top down&#10;replaces the whole import list&#10;passes over: ⚡ INSTANT · unsellable · filtered out">Tick top N</button>
-    <button id="btnAll" type="button" title="tick every row the filters show&#10;replaces the whole import list&#10;skips: INSTANT · unsellable">All</button>
+    <button id="btnTop" type="button" title="tick the first N tickable rows, top down&#10;replaces the whole import list&#10;passes over: ⚡ INSTANT · unsellable · filtered out&#10;none tickable: leaves the list alone">Tick top N</button>
+    <button id="btnAll" type="button" title="tick every row the filters show&#10;replaces the whole import list&#10;skips: INSTANT · unsellable&#10;none tickable: leaves the list alone">All</button>
     <button id="btnNone" type="button" title="empty the import list&#10;filters ignored">None</button>
+    <span class="hint" id="bulkNote"></span>
     <span class="sep"></span>
     <label for="fltType" style="margin:0">show</label>
     <select id="fltType" style="width:180px">
@@ -445,8 +446,8 @@
   </div>
   <div class="rowline">
     <label for="relistPct" style="margin:0">relist fee %</label>
-    <input id="relistPct" type="number" step="0.01" min="0" max="20" style="width:80px"
-      title="broker fee EVE charges to MODIFY an order's price&#10;type your client's number here if it disagrees">
+    <input id="relistPct" type="number" step="0.001" min="0" max="20" style="width:80px"
+      title="charged on the new order value when you move a price&#10;raising a price also pays the full broker fee on the growth&#10;type your client's number here if it disagrees">
     <button id="relistReset" type="button" title="back to the computed value">reset</button>
     <span class="hint" id="relistSrc" style="flex:1 1 300px"></span>
   </div>
@@ -801,18 +802,28 @@ const LS_KEY = 'eveSellHelper.v2';
    100 ISK floor on a 4,500 ISK order is 2.2%.
    Sales tax:
      tax% = SALES_TAX_BASE_PCT × (1 − ACCOUNTING_REL_PER_LEVEL×Accounting)
-   The 7.5 base is UNVERIFIED against the live client and pending a measurement off the
-   sell window (which may indicate a lower base) — a one-line change when that lands.
+
+   MEASURED against the live client, sell window, Accounting 5 / Broker Relations 5 /
+   Caldari State 0.15 unmodified / station corp 0.00, on a 6,108,000 ISK order:
+     sales tax  206,145.00 ÷ 6,108,000 = 3.3750%  = 7.5 × (1 − 0.11×5)   exact
+     broker      91,345.14 ÷ 6,108,000 = 1.4955%  = 3 − 0.3×5 − 0.03×0.15 exact
+   The broker rate held flat across 100k / 222.5k / 450k / 900k listings spanning −55%
+   to +304% of the regional average, so distance from the market does not enter it.
    Either fee can be overridden per market by a rate read off the player's own client. */
 const BROKER_BASE_PCT = 3;
 const BROKER_SKILL_PP_PER_LEVEL = 0.3;
 const BROKER_FACTION_PP = 0.03;
 const BROKER_CORP_PP = 0.02;
 const MIN_BROKER_FEE_ISK = 100;        // flat floor, charged per order
-const SALES_TAX_BASE_PCT = 7.5;        // UNVERIFIED — see above
+const SALES_TAX_BASE_PCT = 7.5;        // measured — see above
 const ACCOUNTING_REL_PER_LEVEL = 0.11;
+// standings are capped at 10.00 by the game, so the rate bottoms out at
+// 3 − 0.3×5 − 0.03×10 − 0.02×10 = 1.00%. Clamping there rather than at 0 means an
+// out-of-range standing can never produce a rate the client would not charge.
+const BROKER_FLOOR_PCT = BROKER_BASE_PCT - BROKER_SKILL_PP_PER_LEVEL * 5
+  - BROKER_FACTION_PP * 10 - BROKER_CORP_PP * 10;
 
-const brokerPctFor = (sk, faction, corp) => Math.max(0,
+const brokerPctFor = (sk, faction, corp) => Math.max(BROKER_FLOOR_PCT,
   BROKER_BASE_PCT
   - BROKER_SKILL_PP_PER_LEVEL * (sk.brokerRelations || 0)
   - BROKER_FACTION_PP * (faction || 0)
@@ -1193,9 +1204,21 @@ function daysToFillAt(sellLevels, price, volPerDay){
 
 /* ---------- core rebuild ---------- */
 const lastValidFee = { brokerFee: 2.1, salesTax: 7.5 };
+/* The fee boxes are the override surface AND the display, so they hold 2 decimals — but
+   1.4955% is not 1.50%, and the difference compounds through every net figure on the
+   page. The unrounded rate the skills produced is kept here; feePct hands it back while
+   the box still shows what that rate rounds to, and steps aside the moment the number in
+   the box is something else. Typing the rounded value back in on purpose is the one
+   ambiguous case, and it resolves to the exact rate — the better of the two answers. */
+const exactFee = { salesTax: null, brokerFee: null };
+const roundsTo = (exact, shown) => exact != null && Math.abs(shown - Math.round(exact * 100) / 100) < 1e-9;
+
 function feePct(id){
   const v = parseFloat($(id).value);
-  if (Number.isFinite(v) && v >= 0 && v <= 100){ lastValidFee[id] = v; return v / 100; }
+  if (Number.isFinite(v) && v >= 0 && v <= 100){
+    lastValidFee[id] = v;
+    return (roundsTo(exactFee[id], v) ? exactFee[id] : v) / 100;
+  }
   $(id).value = lastValidFee[id];   // blank/garbage input: restore what is actually used
   return lastValidFee[id] / 100;
 }
@@ -2939,21 +2962,34 @@ function restoreOrders(){
   state.orders.fetched = saved.fetched || null;
 }
 
-/* ---------- the relist (order-modification) fee — UNVERIFIED ------------------------
-   EVE charges a broker fee to MODIFY an open order's price, and the Advanced Broker
-   Relations skill reduces it. I have NO client-verified formula for that charge, so it
-   is not asserted as one. It is modelled here as the same broker % this page already
-   computes, reduced by RELIST_ADV_BROKER_REL_PER_LEVEL per level of Advanced Broker
-   Relations (resolved by NAME through the skills machinery, never by a hardcoded id):
+/* ---------- the relist (order-modification) fee ------------------------------------
+   Changing an open order's price is charged in TWO parts, and missing the second one is
+   why an earlier version of this page overstated a reprice by 3x:
 
-       relist %   = broker % × (1 − 0.05 × Advanced Broker Relations)
-       relist fee = max(100 ISK, relist % × units × the new price)
+       discount  = 0.50 + 0.06 × Advanced Broker Relations      (0.80 at level V)
+       fee       = broker × (1 − discount) × Vnew
+                 + broker × max(0, Vnew − Vold)
+       Vnew/Vold = units remaining × the new / the old price
 
-   Following the precedent set by the broker-fee work: the number is a named constant
-   with this comment on it, the resulting % is shown in the UI, it is hand-editable, the
-   note next to it asks you to check it against your own client's modify-order dialog,
-   and your correction is persisted and used everywhere instead. */
-const RELIST_ADV_BROKER_REL_PER_LEVEL = 0.05;   // UNVERIFIED — see above
+   The first term is the ordinary broker fee on the whole re-listed order, discounted by
+   the skill. The second charges the UNDISCOUNTED broker fee on however much the order
+   grew — raising a price brokers value that was never brokered, so the discount does not
+   reach it. Lowering a price makes that term zero, which is every reprice this page
+   recommends.
+
+   MEASURED on the live client, Advanced Broker Relations 4 (discount 0.74, so 0.26 of a
+   1.4955% broker = 0.38883%), 10 units with an old price of 2,166,000:
+       →   500,000   19,441.50   first term only
+       → 1,000,000   38,883.00   first term only
+       → 2,166,000   84,220.58   unchanged price, still the full first term
+       → 4,000,000  429,806.70   = 155,532.00 + 274,274.70, the growth term engaging
+   All four reproduce to the ISK. CCP publishes the same per-level rule in the skill's
+   own description, so the coefficients are the game's, not a fit to these four points.
+
+   Advanced Broker Relations is resolved by NAME through the skills machinery, never by a
+   hardcoded id, and the resulting % stays hand-editable and persisted. */
+const RELIST_DISCOUNT_BASE = 0.50;              // at Advanced Broker Relations 0
+const RELIST_DISCOUNT_PER_LEVEL = 0.06;         // +6pp per level -> 0.80 at V
 const ADV_BROKER_SKILL = 'Advanced Broker Relations';
 const ADV_BROKER_KEY = 'eveHelper.advBrokerSkill.v1';
 let relistOverride = null;    // the hand-typed %, or null = use the computed one
@@ -2977,26 +3013,38 @@ async function resolveAdvBroker(){
   ordRecompute();
 }
 
-const relistComputedPct = () =>
-  feePct('brokerFee') * 100 * (1 - RELIST_ADV_BROKER_REL_PER_LEVEL * (advBrokerLevel || 0));
+// the discount the character's skill earns on a re-listing
+const relistDiscount = () => Math.min(1,
+  RELIST_DISCOUNT_BASE + RELIST_DISCOUNT_PER_LEVEL * (advBrokerLevel || 0));
+// ...expressed as the % actually charged on the new order value
+const relistComputedPct = () => feePct('brokerFee') * 100 * (1 - relistDiscount());
+
+/* The whole charge for moving an order to a new price. The growth term is the broker fee
+   at its full rate, so it is taken from the broker rate rather than the relist one.
+   The 100 ISK per-order minimum is carried over from a fresh listing; none of the four
+   measurements ran small enough to exercise it, so that part alone is inference. */
+const modifyFeeOn = (vNew, vOld, relistFrac, brokerFrac) =>
+  vNew > 0 ? Math.max(MIN_BROKER_FEE_ISK,
+    relistFrac * vNew + brokerFrac * Math.max(0, vNew - (vOld || 0))) : 0;
 function relistPctEffective(){
   const v = relistOverride != null ? Number(relistOverride) : NaN;
   return Number.isFinite(v) && v >= 0 && v <= 100 ? v : relistComputedPct();
 }
 function syncRelist(){
   const box = $('relistPct');
-  if (document.activeElement !== box) box.value = relistPctEffective().toFixed(2);
+  if (document.activeElement !== box) box.value = relistPctEffective().toFixed(3);
   $('relistReset').disabled = relistOverride == null;
   const lvl = advBrokerLevel == null ? 'level not read — assumed 0' : 'level ' + advBrokerLevel;
+  const disc = relistDiscount();
   $('relistSrc').textContent = relistOverride != null
     ? 'yours · saved · used for every reprice below'
-    : `UNVERIFIED · ${(feePct('brokerFee') * 100).toFixed(2)}% broker − 5%/lvl ${ADV_BROKER_SKILL} (${lvl})`;
+    : `${(feePct('brokerFee') * 100).toFixed(2)}% broker − ${Math.round(disc * 100)}% ${ADV_BROKER_SKILL} (${lvl})`;
   $('relistSrc').title = relistOverride != null
-    ? 'source: typed by you, saved'
-      + '\nverified: no — neither this nor the computed value is checked against the client'
-    : `model: ${(feePct('brokerFee') * 100).toFixed(2)}% broker fee from the fees box, less 5% per level`
-      + `\nskill: ${ADV_BROKER_SKILL} (${lvl})`
-      + '\nverified: no — CCP publishes no modify-order formula; compare with your client and type the real number here';
+    ? 'source: typed by you, saved\nraising a price still adds the broker fee on the growth'
+    : `model: ${(feePct('brokerFee') * 100).toFixed(2)}% broker fee from the fees box, less ${Math.round(disc * 100)}%`
+      + `\nskill: ${ADV_BROKER_SKILL} (${lvl}) — 50% + 6% per level`
+      + '\nraising a price also pays the full broker fee on the growth'
+      + '\nmeasured against the client to the ISK on four modify-order dialogs';
 }
 function syncOrdPatience(){
   const pat = PATIENCE[state.patience] || PATIENCE.balanced;
@@ -3145,6 +3193,7 @@ function computeDiag(){
   const cfg = {
     tax: feePct('salesTax'),
     relistFrac: relistPctEffective() / 100,
+    brokerFrac: feePct('brokerFee'),          // the growth term pays the undiscounted rate
     pat: PATIENCE[state.patience] || PATIENCE.balanced,
     histDays: currentHistDays(),
     useUndercut: $('undercut').checked,
@@ -3223,7 +3272,7 @@ function diagnoseOne(o, cfg){
     const qfX = (hitX && d.daysToFillReprice != null)
       ? Math.min(1, d.window / Math.max(d.daysToFillReprice, 0.5)) : 1;
     d.chanceReprice = hitX ? hitX.p * qfX : null;
-    d.relistFee = brokerOn(q * d.repricePrice, cfg.relistFrac);
+    d.relistFee = modifyFeeOn(q * d.repricePrice, q * o.price, cfg.relistFrac, cfg.brokerFrac);
     d.valueReprice = d.chanceReprice == null ? null
       : d.chanceReprice * q * d.repricePrice * (1 - tax) + (1 - d.chanceReprice) * d.giveUp - d.relistFee;
   }
@@ -3274,7 +3323,7 @@ function verdictWhy(o, d, cfg){
     out.push(`reprice ${fmtIsk(d.repricePrice)}: ${fmtIsk(d.valueReprice)} ISK · ${pc(d.chanceReprice)} × `
       + `${fmt.format(q)} × ${fmtIsk(d.repricePrice)} −tax = ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} · + `
       + `${pc(1 - d.chanceReprice)} × ${fmtIsk(d.giveUp)} · − ${fmtIsk(d.relistFee)} ISK relist fee `
-      + `(${relistPctEffective().toFixed(2)}%, unverified)`);
+      + `(${relistPctEffective().toFixed(3)}%)`);
   else if (d.bestOther == null)
     out.push('reprice: nothing else is listed here — no competitive price to move to');
   else
@@ -3556,6 +3605,7 @@ if (window.EveAuth) EveAuth.onChange(() => {
 function persist(){
   try{
     if (!hub().structure) hubBrokerFee = $('brokerFee').value;
+    const ticked = state.rows.filter(r => r.checked).map(r => r.key);
     localStorage.setItem(LS_KEY, JSON.stringify({
       inv: $('inv').value,
       // brokerFee always holds the NPC-hub value; a structure's owner-set rate lives on
@@ -3568,8 +3618,15 @@ function persist(){
       patience: state.patience,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
-      ticked: state.rows.filter(r => r.checked).map(r => r.key),
+      ticked,
     }));
+    /* Keep the restore fallback in step with what was just saved. Until now only a page
+       load ever narrowed it, so a tick that None removed came back the next time its row
+       was absent and rebuilt — clear the box and paste the same export, change hub, or
+       refetch. Guarded on there being rows to speak for: emptying the inventory box
+       empties state.rows, and that must not read as "everything was unticked", or a
+       re-paste would lose picks the box was never asked to give up. */
+    if (state.rows.length) state.savedTicked = new Set(ticked);
   }catch(_e){ /* storage full or blocked — non-fatal */ }
 }
 function restore(){
@@ -3706,18 +3763,35 @@ function setSelection(keys){
   for (const r of state.rows) r.checked = keys.has(r.key);
   render(); persist();
 }
+/* Filling from an empty candidate set is a delete, and it lands entirely off screen: the
+   table is showing one INSTANT row, or none at all, so nothing visible changes and the
+   "N ticked hidden" warning disappears as though it had been resolved. "show = INSTANT
+   only" sits one control from these buttons, so it is a click away, not a corner. The two
+   filling buttons stand down and say so. None still empties the list — that is its job,
+   and its tooltip already says it ignores the filters. */
+function fillSelection(keys, why){
+  const note = $('bulkNote');
+  if (!keys.size){ note.textContent = why; note.className = 'hint err'; return; }
+  note.textContent = ''; note.className = 'hint';
+  setSelection(keys);
+}
 // "top" is the top of the table as it is sorted right now — the order the # column
 // prints. Rows that cannot be ticked are passed over, and both reasons are visible on the
 // row itself: an INSTANT shows ⚡ instead of a checkbox, an unsellable one carries a flag.
 $('btnTop').addEventListener('click', () => {
   const n = Math.max(1, Math.round(parseFloat($('topN').value) || 0));
   markImport();                       // the Import column can be the sort key
-  setSelection(new Set(sortedRows().filter(selectable).slice(0, n).map(r => r.key)));
+  fillSelection(new Set(sortedRows().filter(selectable).slice(0, n).map(r => r.key)),
+    'nothing tickable on screen — import list left alone');
 });
 $('btnAll').addEventListener('click', () => {
-  setSelection(new Set(state.rows.filter(selectable).map(r => r.key)));
+  fillSelection(new Set(state.rows.filter(selectable).map(r => r.key)),
+    'nothing tickable on screen — import list left alone');
 });
-$('btnNone').addEventListener('click', () => setSelection(new Set()));
+$('btnNone').addEventListener('click', () => {
+  $('bulkNote').textContent = ''; $('bulkNote').className = 'hint';
+  setSelection(new Set());
+});
 
 $('fltType').addEventListener('change', () => { state.filterType = $('fltType').value; render(); });
 $('fltText').addEventListener('input', () => { state.filterText = $('fltText').value.trim().toLowerCase(); render(); });
@@ -3880,13 +3954,15 @@ if (window.EveAuth) EveAuth.ready.then(() => resolveAdvBroker()).catch(() => {})
       resolveAdvBroker();
       const hNow = hub();
       const tax = salesTaxPctFor(sk);
-      const taxBit = `tax ${tax.toFixed(2)}% (Accounting ${sk.accounting}, base unverified against the client)`;
+      exactFee.salesTax = tax;
+      const taxBit = `tax ${tax.toFixed(2)}% (Accounting ${sk.accounting})`;
       $('salesTax').value = tax.toFixed(2);
       if (hNow.structure){
         // player structure: the broker fee is owner-set (no ESI endpoint, skills and
         // standings don't apply) — only the sales tax comes from the character. Where the
         // rate itself comes from is the #feeSrc line's job, so it is not repeated here.
         if (my !== seq) return;
+        exactFee.brokerFee = null;        // owner-set rate: whatever is in the box IS the rate
         note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · the broker % is the owner-set rate from the structure manager — ESI doesn't publish structure fees, so skills and standings never touch it. Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
         rebuild();
         return;
@@ -3905,6 +3981,7 @@ if (window.EveAuth) EveAuth.ready.then(() => resolveAdvBroker()).catch(() => {})
       const corpSt = (own && usable && usable[own.corp]) || 0;
       const factionSt = (own && own.faction && usable && usable[own.faction]) || 0;
       const broker = brokerPctFor(sk, factionSt, corpSt);
+      exactFee.brokerFee = broker;
       $('brokerFee').value = broker.toFixed(2);
       const r2 = x => Math.round(x * 100) / 100;
       const degraded = st && (st.unavailable || st.needsRelogin);
