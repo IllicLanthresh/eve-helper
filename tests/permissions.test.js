@@ -17,6 +17,15 @@ const SKILLS_SCOPE = 'esi-skills.read_skills.v1';
 
 const without = (...drop) => H.ALL_SCOPES.filter(s => !drop.includes(s));
 
+/* The fixture above stands for "this character granted everything the app asks for".
+   If auth.js starts asking for one more scope and this list is not updated, every
+   "fully granted" fixture silently becomes a partly-granted one and the counts in this
+   file drift for a reason that has nothing to do with permissions. Compare them. */
+const APP_SCOPES = (() => {
+  const src = require('fs').readFileSync(require('path').join(H.REPO, 'auth.js'), 'utf8');
+  return [...src.matchAll(/'(esi-[a-z0-9_.]+\.v\d+)'/g)].map(m => m[1]);
+})();
+
 async function open(browser, server, opts) {
   opts = opts || {};
   const context = await browser.newContext();
@@ -52,6 +61,14 @@ const FIXTURE = {
 };
 
 H.run('permissions', async () => {
+  section('the fixture asks for exactly what the app asks for');
+  const appSet = [...new Set(APP_SCOPES)].sort();
+  const fixSet = [...new Set(H.ALL_SCOPES)].sort();
+  eq('every scope auth.js requests is in the ALL_SCOPES fixture',
+    JSON.stringify(appSet.filter(x => !fixSet.includes(x))), '[]');
+  eq('...and the fixture invents none the app does not request',
+    JSON.stringify(fixSet.filter(x => !appSet.includes(x))), '[]');
+
   const server = await H.startServer();
   const browser = await H.launch();
   try {
@@ -69,7 +86,7 @@ H.run('permissions', async () => {
     check('...and a plain-language consequence, not just the scope name',
       /assumed ME\/TE/.test(rep.chars[0].missing[0].features.join(' ')),
       JSON.stringify(rep.chars[0].missing[0].features));
-    eq('...while the other six are granted', rep.chars[0].granted.length, H.ALL_SCOPES.length - 1);
+    eq('...while the rest are granted', rep.chars[0].granted.length, H.ALL_SCOPES.length - 1);
     check('the report is not all-good', rep.allGood === false, JSON.stringify(rep.allGood));
     eq('...and the application itself is fine', rep.appIssues.length, 0);
 

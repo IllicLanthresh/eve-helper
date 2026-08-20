@@ -73,6 +73,8 @@
   .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
   .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
   .flag{display:inline-block;font-size:11px;color:var(--red);margin-right:6px;cursor:help}
+  button.rowact{padding:1px 7px;font-size:13px;line-height:18px;min-width:0;cursor:pointer}
+  button.rowact[disabled]{opacity:.45;cursor:progress}
   .flag.warn{color:var(--amber)}
   .flag.info{color:var(--dim)}
   tr.excluded td{opacity:.45}
@@ -419,6 +421,13 @@
   <h2>2 · Triage</h2>
   <div class="rowline" style="margin-top:0">
     <input id="ordFilter" type="text" placeholder="item, location or character…" style="width:280px">
+    <select id="ordFltVerdict" style="width:180px" title="narrow the table to one verdict, or to everything the triage flagged">
+      <option value="all">all orders</option>
+      <option value="stalled">stalled only</option>
+      <option value="reprice">REPRICE only</option>
+      <option value="dump">CANCEL &amp; DUMP only</option>
+      <option value="hold">HOLD only</option>
+    </select>
     <span class="hint" id="ordCount"></span>
     <span class="sep"></span>
     <button id="btnOrdTsv" type="button" title="every column + the diagnostics behind them, tab-separated">Copy TSV</button>
@@ -459,6 +468,7 @@
         <th data-key="chance" class="num" title="chance of filling at your price before expiry&#10;= share of past windows whose daily high reached it&#10;carried to today by the trend, tempered by the queue">Chance %</th>
         <th data-key="stalledIsk" title="stalled: odds under the floor, or the queue outlasts the order, or above best sell on a sliding market&#10;sorts by ISK frozen in stalled orders">Stalled?</th>
         <th data-key="verdict" title="hold / reprice / cancel &amp; dump · hover a badge for the arithmetic">Verdict</th>
+        <th title="open the item's market window in the client that owns the order&#10;reprice rows also put the new price on the clipboard&#10;needs: esi-ui.open_window.v1">↗</th>
       </tr></thead>
       <tbody id="ordBody"></tbody>
     </table>
@@ -828,7 +838,7 @@ const state = {
   mode: 'sell',            // sell | orders — a pure view swap over this same state
   orders: { list: [], chars: [], names: {}, locs: {}, diag: {}, fetched: null, running: false },
   ordSortKey: 'stalledIsk', ordSortDir: -1,   // ISK frozen in stalled orders, worst first
-  ordShowBuy: false, ordFilter: '',
+  ordShowBuy: false, ordFilter: '', ordFilterVerdict: 'all',
 };
 
 function rowFilter(r){
@@ -2696,10 +2706,14 @@ function ordRows(){
 }
 
 function ordFilterMatch(r){
+  const v = state.ordFilterVerdict;
+  // a buy order is never triaged, so a verdict filter has nothing to say about one and
+  // hides it rather than pretending it passed
+  if (v !== 'all' && (r.isBuy || (v === 'stalled' ? !r.stalled : r.verdict !== v))) return false;
   const q = state.ordFilter;
   if (!q) return true;
   return [r.name, r.locName, r.charName, String(r.locationId), String(r.typeId)]
-    .some(v => v && String(v).toLowerCase().includes(q));
+    .some(x => x && String(x).toLowerCase().includes(q));
 }
 
 function ordSorted(list){
@@ -2876,6 +2890,7 @@ function ordRowEl(r){
     r.duration != null ? `duration: ${r.duration}d` : '');
   cell('num', fmtIsk(r.iskTied), r.iskTied.toFixed(2));
   ordDiagCells(tr, r, cell);
+  tr.appendChild(ordActionCell(r));
   return tr;
 }
 
@@ -3317,12 +3332,69 @@ function ordDiagCells(tr, r, cell){
       s.style.marginLeft = '6px';
       s.textContent = `→ ${fmtIsk(r.repricePrice)} · fee ${fmtCompact(r.relistFee)}`;
       s.title = `new price: ${fmtIsk(r.repricePrice)} ISK\nrelist fee: ${fmtIsk(r.relistFee)} ISK`;
+      s.dataset.copy = fmtExport(r.repricePrice);   // click the price, get the price
       vd.appendChild(s);
     }
   } else {
     vd.textContent = '—';
     vd.className = 'hint';
   }
+}
+
+/* ---------- the one thing ESI can do to your client ----------
+   POST /ui/openwindow/marketdetails/ opens that item's market window in a RUNNING client.
+   It is the only endpoint in all of ESI that helps here: nothing can move an item, place
+   an order, or change a price, so the most a tool can do is put you one right-click from
+   the Modify Order dialog instead of making you retype the name into the market search.
+
+   The token has to be the one for the character that OWNS the order — the window opens in
+   that character's client, and opening it on the wrong alt is worse than not opening it. */
+async function openMarketWindow(typeId, charId){
+  return esiFetch(`${ESI}/ui/openwindow/marketdetails/?datasource=tranquility&type_id=${typeId}`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + await EveAuth.token(charId) },
+  });
+}
+
+/* The ↗ cell. On a REPRICE row it does both halves of the job in one click: the new price
+   goes on the clipboard and the market window opens, so the in-game work is right-click →
+   Modify Order → Ctrl-V. The clipboard half never depends on ESI — if the scope is missing
+   or no client is running, you still get the price and a note saying what did not happen. */
+function ordActionCell(r){
+  const td = document.createElement('td');
+  if (r.typeId == null) return td;
+  const price = r.verdict === 'reprice' && r.repricePrice != null ? r.repricePrice : null;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'rowact';
+  b.textContent = '↗';
+  b.title = (price != null
+      ? `copy: ${fmtIsk(price)} ISK\nopen: market window`
+      : 'open: market window')
+    + `\nclient: ${r.charName}\nneeds: esi-ui.open_window.v1`;
+  b.addEventListener('click', async e => {
+    e.stopPropagation();                       // not a cell copy
+    const status = $('copyStatusOrd');
+    if (price != null) await cellCopy(fmtExport(price), td);
+    b.disabled = true;
+    try{
+      await openMarketWindow(r.typeId, r.charId);
+      status.textContent = (price != null ? `${fmtIsk(price)} copied · ` : '')
+        + `market window opened for ${r.charName}`;
+      status.className = 'hint ok';
+    }catch(err){
+      const missing = !EveAuth.tokenScopes(r.charId).includes('esi-ui.open_window.v1');
+      status.textContent = (price != null ? `${fmtIsk(price)} copied · ` : '')
+        + (missing ? 'market window needs esi-ui.open_window.v1'
+                   : 'market window did not open: ' + err.message);
+      status.className = 'hint err';
+    }finally{
+      b.disabled = false;
+      setTimeout(() => { status.textContent = ''; }, 6000);
+    }
+  });
+  td.appendChild(b);
+  return td;
 }
 
 /* the sparkline, reused from the Sell table, with a marker at YOUR price */
@@ -3425,6 +3497,9 @@ $('modeOrders').addEventListener('click', () => setMode('orders'));
 $('btnOrders').addEventListener('click', runOrders);
 $('ordShowBuy').addEventListener('change', () => { state.ordShowBuy = $('ordShowBuy').checked; renderOrders(); persist(); });
 $('ordFilter').addEventListener('input', () => { state.ordFilter = $('ordFilter').value.trim().toLowerCase(); renderOrders(); });
+$('ordFltVerdict').addEventListener('change', () => {
+  state.ordFilterVerdict = $('ordFltVerdict').value; renderOrders(); persist();
+});
 document.querySelectorAll('#ordTbl thead th').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.key;
@@ -3436,13 +3511,14 @@ document.querySelectorAll('#ordTbl thead th').forEach(th => {
 });
 // same click-to-copy idiom as the Sell table
 $('ordBody').addEventListener('click', e => {
+  const own = e.target.closest('[data-copy]');
   const td = e.target.closest('td');
   if (!td || td.colSpan > 1) return;
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed) return;
-  const text = (td.dataset.copy ?? td.textContent).trim();
+  const text = ((own && own !== td ? own.dataset.copy : td.dataset.copy) ?? td.textContent).trim();
   if (!text || text === '—') return;
-  cellCopy(text, td);
+  cellCopy(text, own && own !== td ? own : td);
 });
 if (window.EveAuth) EveAuth.onChange(() => {
   resolveAdvBroker();
@@ -3464,6 +3540,7 @@ function persist(){
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
       patience: state.patience,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
+      ordFilterVerdict: state.ordFilterVerdict,
       ticked: state.rows.filter(r => r.checked).map(r => r.key),
     }));
   }catch(_e){ /* storage full or blocked — non-fatal */ }
@@ -3501,6 +3578,10 @@ function restore(){
   relistOverride = saved.relistPct != null ? String(saved.relistPct) : null;
   state.ordShowBuy = !!saved.ordShowBuy;
   $('ordShowBuy').checked = state.ordShowBuy;
+  if (saved.ordFilterVerdict && [...$('ordFltVerdict').options].some(o => o.value === saved.ordFilterVerdict)){
+    state.ordFilterVerdict = saved.ordFilterVerdict;
+    $('ordFltVerdict').value = state.ordFilterVerdict;
+  }
   if (PATIENCE[saved.patience]) state.patience = saved.patience;
   $('pat' + state.patience[0].toUpperCase() + state.patience.slice(1)).checked = true;
   state.savedTicked = new Set(saved.ticked || []);
@@ -3653,6 +3734,7 @@ async function cellCopy(text, td){
   setTimeout(() => td.classList.remove('copied'), 600);
 }
 $('tblBody').addEventListener('click', e => {
+  const own = e.target.closest('[data-copy]');
   const td = e.target.closest('td');
   if (!td || td.cellIndex === 0 || td.colSpan > 1) return;      // checkbox column / empty-state row
   if (e.target.closest('input')) return;

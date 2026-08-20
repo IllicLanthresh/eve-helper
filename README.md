@@ -95,7 +95,8 @@ just works there. Running a fork on another domain needs a one-time app registra
    `esi-search.search_structures.v1` (player structure markets),
    `esi-characters.read_blueprints.v1` (owned blueprints for the Industry tool) and
    `esi-markets.read_character_orders.v1` (your open market orders and the stalled-order
-   triage in the Sell tool's *My orders* mode);
+   triage in the Sell tool's *My orders* mode) and `esi-ui.open_window.v1` (the ↗ button
+   that opens an item's market window in your running client);
    callback URL —
    exactly your deployed index page, e.g.
    `https://your-name.github.io/eve-helper/index.html`. An app registered before these
@@ -471,6 +472,29 @@ verified — yours at least came from a client.
 - The diagnosis needs a fetch each session. The orders themselves are remembered between
   visits (that is what the duplicate-order flag reads), but books and odds are not — stale
   odds are worse than none.
+
+### Acting on a verdict
+
+The triage table has a **↗** column. On a **REPRICE** row one click does both halves of
+the job: the new price goes on your clipboard *and* the item's market window opens in the
+client that owns the order — so the in-game work is right-click → *Modify Order* → Ctrl-V.
+On any other row it just opens the window. The clipboard half never depends on ESI: if the
+scope is missing or no client is running you still get the price, and the status line says
+what did not happen.
+
+This is the *only* thing ESI can do to your client. There is no endpoint that moves an
+item, places an order or changes a price — the entire ESI write surface is contacts, mail,
+fittings, fleets, calendar RSVPs, an autopilot waypoint and four "open window" calls. So
+the most any third-party tool can do is save you retyping the name into the market search.
+
+Needs `esi-ui.open_window.v1` on the app *and* on the character's login. The token used is
+always the one for the character that **owns** the order — opening the window on the wrong
+alt is worse than not opening it.
+
+The **verdict filter** next to the search box narrows the table to *stalled only*, or to a
+single verdict. A buy order is never triaged, so any verdict filter hides buy orders rather
+than pretending they passed. The reprice price is click-to-copy on its own, separately from
+the cell around it, which copies the verdict.
 
 ### Prevention, back in Sell loot mode
 

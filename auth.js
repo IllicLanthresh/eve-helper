@@ -7,6 +7,7 @@
    - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1
      esi-markets.structure_markets.v1 esi-universe.read_structures.v1
      esi-search.search_structures.v1 esi-markets.read_character_orders.v1
+     esi-ui.open_window.v1
      (scopes the SSO no longer publishes are dropped from the login request
      automatically)
 */
@@ -23,8 +24,9 @@
   const BLUEPRINTS_SCOPE = 'esi-characters.read_blueprints.v1';  // owned BPs with real ME/TE (Industry tool)
   const ORDERS_SCOPE = 'esi-markets.read_character_orders.v1';   // your own open market orders (Sell tool)
   const SKILLS_SCOPE = 'esi-skills.read_skills.v1';
+  const OPEN_WINDOW_SCOPE = 'esi-ui.open_window.v1';   // open the market window in YOUR client
   const SCOPES = [SKILLS_SCOPE, STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE,
-                  ORDERS_SCOPE].join(' ');
+                  ORDERS_SCOPE, OPEN_WINDOW_SCOPE].join(' ');
 
   /* What the user actually loses when a scope is missing, in plain language. These
      strings are shown verbatim in the permissions modal and in the inline notes next to
@@ -46,6 +48,9 @@
     ],
     [ORDERS_SCOPE]: [
       'your open market orders and the stalled-order triage — without it the Sell tool\'s "My orders" mode cannot see this character\'s orders at all',
+    ],
+    [OPEN_WINDOW_SCOPE]: [
+      'the \u2197 button that opens an item\u2019s market window in your running client \u2014 without it, repricing means finding the item in-game by hand',
     ],
   };
   const featuresOf = scope => SCOPE_FEATURES[scope] || [];

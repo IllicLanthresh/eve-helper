@@ -610,6 +610,106 @@ H.run('orders', async () => {
     eq('one order at that structure in the fixture', structFetches, 1);
 
     /* ---------- (p) prevention, back in Sell loot mode ---------- */
+    section('filtering by verdict');
+    const shownIds = () => page.evaluate(() =>
+      [...document.querySelectorAll('#ordBody tr[data-order-id]')].map(tr => Number(tr.dataset.orderId)));
+    const verdictOf = id => page.evaluate(i => (state.orders.diag[i] || {}).verdict, String(id));
+    const setFlt = async v => {
+      await page.selectOption('#ordFltVerdict', v);
+      await page.waitForFunction(x => state.ordFilterVerdict === x, v);
+    };
+    const allIds = await shownIds();
+    await setFlt('reprice');
+    let ids = await shownIds();
+    check('REPRICE only shows repriced orders', ids.length > 0, JSON.stringify(ids));
+    const vs = await Promise.all(ids.map(verdictOf));
+    check('...and nothing else', vs.every(v => v === 'reprice'), JSON.stringify(vs));
+
+    await setFlt('stalled');
+    ids = await shownIds();
+    const stalls = await page.evaluate(list => list.map(i => !!(state.orders.diag[i] || {}).stalled), ids);
+    check('stalled only shows what the triage flagged',
+      ids.length > 0 && stalls.every(Boolean), JSON.stringify(stalls));
+
+    await page.check('#ordShowBuy');
+    await setFlt('hold');
+    ids = await shownIds();
+    const anyBuy = await page.evaluate(list =>
+      list.some(i => (state.orders.list.find(o => o.orderId === i) || {}).isBuy), ids);
+    check('a buy order is never triaged, so a verdict filter hides it rather than passing it',
+      anyBuy === false, JSON.stringify(ids));
+    await page.uncheck('#ordShowBuy');
+
+    await setFlt('all');
+    eq('"all orders" puts every row back', (await shownIds()).length, allIds.length);
+
+    section('the ↗ button — copy the price, open the market window');
+    const opened = [];
+    await s.context.route('**/ui/openwindow/marketdetails/**', route => {
+      const u = new URL(route.request().url());
+      opened.push({ typeId: Number(u.searchParams.get('type_id')),
+                    auth: route.request().headers()['authorization'] || null });
+      route.fulfill({ status: 204, body: '' });
+    });
+    const repId = await page.evaluate(() => {
+      const hit = Object.entries(state.orders.diag).find(([, d]) => d && d.verdict === 'reprice');
+      return hit ? Number(hit[0]) : null;
+    });
+    check('there is a REPRICE row to act on', repId != null, String(repId));
+
+    const act = await page.evaluate(id => {
+      const tr = document.querySelector(`#ordBody tr[data-order-id="${id}"]`);
+      const b = tr.querySelector('button.rowact');
+      const o = state.orders.list.find(x => x.orderId === id);
+      const d = state.orders.diag[id];
+      return b ? { title: b.title, price: d.repricePrice, typeId: o.typeId, charId: o.charId,
+                   charName: o.charName } : null;
+    }, repId);
+    check('the row carries a ↗ button', !!act, JSON.stringify(act));
+    check('...whose tooltip states both halves and the client it will open in',
+      /^copy: /.test(act.title) && /\nopen: market window/.test(act.title)
+      && act.title.includes(act.charName) && act.title.includes('esi-ui.open_window.v1'),
+      JSON.stringify(act.title));
+
+    await page.click(`#ordBody tr[data-order-id="${repId}"] button.rowact`);
+    await page.waitForFunction(() => /copied/.test(document.getElementById('copyStatusOrd').textContent),
+      null, { timeout: 10000 });
+    eq('clicking it opens exactly one market window', opened.length, 1);
+    eq('...for that order\u2019s item', opened[0].typeId, act.typeId);
+    const ownerTok = await page.evaluate(id => EveAuth.token(id), act.charId);
+    eq('...on the client that OWNS the order, not the active character',
+      opened[0].auth, 'Bearer ' + ownerTok);
+    const said = await page.$eval('#copyStatusOrd', el => el.textContent);
+    check('...and says the price went to the clipboard', /copied/.test(said), said);
+
+    const holdTip = await page.evaluate(() => {
+      const hit = Object.entries(state.orders.diag).find(([, d]) => d && d.verdict === 'hold');
+      if (!hit) return null;
+      const tr = document.querySelector(`#ordBody tr[data-order-id="${hit[0]}"]`);
+      const b = tr && tr.querySelector('button.rowact');
+      return b ? b.title : null;
+    });
+    check('a row with no new price offers the window alone, and promises no copy',
+      holdTip && /^open: market window/.test(holdTip) && !/copy:/.test(holdTip), JSON.stringify(holdTip));
+
+    section('the reprice price is copyable on its own');
+    const priceSel = `#ordBody tr[data-order-id="${repId}"] td span[data-copy]`;
+    const declared = await page.evaluate(sel => {
+      const span = document.querySelector(sel);
+      return span ? { spanCopy: span.dataset.copy, tdCopy: span.closest('td').dataset.copy } : null;
+    }, priceSel);
+    check('the price span declares its own value', declared && declared.spanCopy, JSON.stringify(declared));
+    eq('...while the cell still declares the verdict', declared.tdCopy, 'REPRICE');
+    // the copy is async (clipboard), so the flash lands a tick after the click
+    await page.click(priceSel);
+    const flashed = await page.waitForFunction(
+      sel => document.querySelector(sel).classList.contains('copied'), priceSel, { timeout: 5000 })
+      .then(() => true).catch(() => false);
+    const tdFlashed = await page.evaluate(sel =>
+      document.querySelector(sel).closest('td').classList.contains('copied'), priceSel);
+    check('clicking the price copies the PRICE, not the word REPRICE',
+      flashed && !tdFlashed, JSON.stringify({ flashed, tdFlashed }));
+
     section('the duplicate-order flag in Sell loot mode');
     await page.click('#modeSell');
     await page.evaluate(() => { document.getElementById('histOn').checked = false; });
