@@ -85,7 +85,8 @@
   .chart-nums{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 0}
   .chart-nums span{color:var(--dim);font-size:11px;display:block;text-transform:uppercase;letter-spacing:.6px}
   .chart-nums b{font-family:var(--mono);font-size:15px;color:#fff}
-  .chart-why{color:var(--dim);font-size:12px;margin-top:8px;max-width:1000px}
+  .chart-why{color:var(--dim);font-size:12px;margin-top:8px;max-width:1000px;white-space:pre-line;
+    font-family:var(--mono);line-height:1.5}
   .chart-legend{margin-top:6px}
   .chart-legend i{display:inline-block;width:16px;border-top:2px dashed currentColor;
     vertical-align:middle;margin-right:5px}
@@ -115,7 +116,7 @@
   .badge.buy{background:#12303c;color:var(--cyan);border:1px solid #23566b}
   tbody tr.stalled td:first-child{box-shadow:inset 3px 0 0 var(--red)}
   #ordTbl td.stalledcell{max-width:300px;white-space:normal}
-  #ordTbl td.stalledcell .hint{line-height:1.3;margin-top:2px}
+  #ordTbl td.stalledcell .flag{line-height:1.5;margin-top:2px}
   tbody tr.buyrow td{background:#0f1620}
   /* patience: a segmented control, because it gets flipped constantly */
   .seg{display:inline-flex;border:1px solid #2e3b52;border-radius:8px;overflow:hidden;background:var(--panel2)}
@@ -1212,11 +1213,12 @@ function rebuild(keepChecks = true){
     const e = state.esi.get(key);
     const flags = [];
     const unsellable = UNSELLABLE.some(rx => rx.test(i.name));
-    if (unsellable) flags.push({t:'unsellable?', cls:'bad'});
+    if (unsellable) flags.push({t:'unsellable', cls:'bad',
+      ttl:'market: refuses this item (Ice Storm / Expired filament)\nexport: auto-excluded — re-tick to include'});
 
     if (!e || e.status === 'unresolved' || e.status === 'failed'){
-      const reason = !e ? 'no prices yet — fetch from ESI'
-        : e.status === 'unresolved' ? 'name not recognized by ESI' : 'ESI lookup failed — try fetching again';
+      const reason = !e ? 'no prices — fetch'
+        : e.status === 'unresolved' ? 'unknown to ESI' : 'lookup failed';
       unpriced.push({ name: i.name, qty: i.qty, reason, unsellable });
       continue;
     }
@@ -1234,7 +1236,7 @@ function rebuild(keepChecks = true){
       ? (bestSell - hist) / hist * 100 : null;
 
     if (bestBuy == null && bestSell == null && hist == null){
-      unpriced.push({ name: i.name, qty: i.qty, reason: 'no market orders or history at this hub', unsellable });
+      unpriced.push({ name: i.name, qty: i.qty, reason: 'no book, no history', unsellable });
       continue;
     }
 
@@ -1242,12 +1244,14 @@ function rebuild(keepChecks = true){
     let L = null, lFlag = null;
     if (priceSrc === 'sell'){
       if (bestSell != null) L = useUndercut ? undercut(bestSell) : bestSell;
-      else if (hist != null){ L = round4sig(hist); lFlag = 'no sell orders — using history price'; }
+      else if (hist != null){ L = round4sig(hist);
+        lFlag = {t:'L=hist', cls:'info', ttl:'list price: history reference\nreason: no sell orders here'}; }
     } else {
       if (hist != null) L = round4sig(hist);
-      else if (bestSell != null){ L = useUndercut ? undercut(bestSell) : bestSell; lFlag = 'no history — using current sell'; }
+      else if (bestSell != null){ L = useUndercut ? undercut(bestSell) : bestSell;
+        lFlag = {t:'L=sell', cls:'info', ttl:'list price: current best sell\nreason: no history'}; }
     }
-    if (lFlag) flags.push({t: lFlag, cls:'info'});
+    if (lFlag) flags.push(lFlag);
 
     // ---- disposal 1: INSTANT — dump the whole stack into the buy book right now.
     // Certain, pays no broker fee, and uses NO market slot.
@@ -1328,7 +1332,7 @@ function rebuild(keepChecks = true){
 
     const cands = [comp, patOpt].filter(o => o && o.listQty > 0);
     if (!cands.length && inst.filled === 0){
-      unpriced.push({ name: i.name, qty: i.qty, reason: 'no usable buy orders and no list price', unsellable });
+      unpriced.push({ name: i.name, qty: i.qty, reason: 'no buy book, no list price', unsellable });
       continue;
     }
     // THE FEE GUARD: a listing whose fill chance is under the patience mode's floor spends
@@ -1362,7 +1366,8 @@ function rebuild(keepChecks = true){
     const fillDays = chosen ? chosen.fillDays : null;
     const fillChance = chosen ? chosen.p : null;
     const perSlot = chosen ? chosen.perSlot : null;
-    if (dir === 'falling') flags.push({t:`↓ ${Math.abs(trendPctWk).toFixed(1)}%/wk`, cls:'warn'});
+    if (dir === 'falling') flags.push({t:`▼${Math.abs(trendPctWk).toFixed(1)}%/wk`, cls:'warn',
+      ttl:`trend: ${pctSigned(trendPctWk)}/wk (falling)`});
     // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
     const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
     const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
@@ -1376,19 +1381,26 @@ function rebuild(keepChecks = true){
         const charge = chosen.brokerCharge;
         brokerEffPct = charge / listedValue * 100;
         if (charge > broker * listedValue)
-          flags.push({t:`min fee ${MIN_BROKER_FEE_ISK} ISK → ${brokerEffPct.toFixed(1)}%`, cls:'warn'});
+          flags.push({t:'minfee', cls:'warn',
+            ttl:`broker floor: ${MIN_BROKER_FEE_ISK} ISK per order\neffective: ${brokerEffPct.toFixed(1)}%`
+              + `\nnominal: ${(broker * 100).toFixed(2)}%`});
       }
     }
 
-    if (bestBuy != null && bestSell != null && bestBuy > bestSell) flags.push({t:'suspect price', cls:'warn'});
+    if (bestBuy != null && bestSell != null && bestBuy > bestSell) flags.push({t:'suspect', cls:'warn',
+      ttl:`top buy: ${fmtIsk(bestBuy)}\nbest sell: ${fmtIsk(bestSell)}\nbuy above sell — thin or odd market`});
     if (hist != null && bestSell != null){
-      if (bestSell > hist * 1.5) flags.push({t:'sell ≫ history', cls:'warn'});
-      else if (bestSell < hist / 1.5) flags.push({t:'sell ≪ history', cls:'warn'});
+      const ratioTtl = `best sell: ${fmtIsk(bestSell)}\nhistory: ${fmtIsk(hist)}\nratio: ${(bestSell / hist).toFixed(2)}×`;
+      if (bestSell > hist * 1.5) flags.push({t:'≫hist', cls:'warn', ttl:ratioTtl});
+      else if (bestSell < hist / 1.5) flags.push({t:'≪hist', cls:'warn', ttl:ratioTtl});
     }
-    if (strategy === 'imm' && inst.filled < i.qty) flags.push({t:`depth ${fmt.format(inst.filled)}/${fmt.format(i.qty)}`, cls:'warn'});
-    if (L != null && bestSell != null && L > bestSell) flags.push({t:'above best sell', cls:'info'});
-    if (bestBuy == null) flags.push({t:'no buy orders', cls:'info'});
-    if (bestSell == null) flags.push({t:'no sell orders', cls:'info'});
+    if (strategy === 'imm' && inst.filled < i.qty)
+      flags.push({t:`depth ${fmtCompact(inst.filled)}/${fmtCompact(i.qty)}`, cls:'warn',
+        ttl:`buy book absorbs: ${fmt.format(inst.filled)} of ${fmt.format(i.qty)} units`});
+    if (L != null && bestSell != null && L > bestSell) flags.push({t:'>best', cls:'info',
+      ttl:`list price: ${fmtIsk(L)}\nbest sell: ${fmtIsk(bestSell)}`});
+    if (bestBuy == null) flags.push({t:'no buy', cls:'info', ttl:'buy book: empty at this hub'});
+    if (bestSell == null) flags.push({t:'no sell', cls:'info', ttl:'sell book: empty at this hub'});
     /* PREVENTION — the other half of the stalled-order problem. Listing a second order
        for something you already have up at this very market means competing with
        yourself: the two orders sit in one queue, the older one is usually the one in
@@ -1396,7 +1408,9 @@ function rebuild(keepChecks = true){
        last pull is what this reads, so it survives a reload. */
     const dupOrders = openOrdersHere(e.typeId);
     if (dupOrders.length && strategy !== 'imm')
-      flags.push({ t: `already listed here ×${dupOrders.length} @ ${fmtIsk(dupOrders[0].price)}`, cls: 'warn' });
+      flags.push({ t: `dup×${dupOrders.length}`, cls: 'warn',
+        ttl: `open sell orders here: ${dupOrders.length}\nfirst at: ${fmtIsk(dupOrders[0].price)} ISK`
+          + '\nsame queue, second broker fee' });
 
     const row = {
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit, typeId: e.typeId ?? null,
@@ -1425,9 +1439,9 @@ function rebuild(keepChecks = true){
   state.unpriced = unpriced.sort((a, b) => a.name.localeCompare(b.name));
   // pasting new names after a fetch leaves them priceless until the next fetch — say so
   if (!state.esiRunning && state.esi.size){
-    const missing = unpriced.filter(u => u.reason.startsWith('no prices yet')).length;
+    const missing = unpriced.filter(u => u.reason.startsWith('no prices')).length;
     if (missing){
-      $('esiStatus').textContent = `${missing} item${missing > 1 ? 's' : ''} without prices — Fetch prices (ESI) again`;
+      $('esiStatus').textContent = `${missing} unpriced · refetch`;
       $('esiStatus').className = '';
     }
   }
@@ -1442,15 +1456,24 @@ function syncControls(){
   const histUsable = $('histOn').checked || anyHist;   // stat/days feed the Hist column, flags and fallbacks once data exists
   $('histMode').disabled = $('histDays').disabled = !histUsable;
   const pat = PATIENCE[state.patience] || PATIENCE.balanced;
-  $('patNote').textContent = `${pat.days}-day window · a listing needs a ${Math.round(pat.minFill * 100)}% `
-    + `chance of filling in it, or the plan says sell now`;
+  $('patNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
+  $('patNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
+    + '\nbelow the floor: the plan is INSTANT';
   $('srcHistEcho').textContent =
     `(${$('histMode').options[$('histMode').selectedIndex].text} · ${$('histDays').value || 30} d)`;
-  let note = '';
-  if ($('srcHist').checked && !anyHist) note = ' — no history data yet: orders use current best sell until fetched';
-  else if ($('histOn').checked && state.esi.size && !state.fetchedHist) note = ' — fetch prices again to pull history';
-  else if (!histUsable) note = ' — off';
+  let note = '', noteTtl = '';
+  if ($('srcHist').checked && !anyHist){
+    note = ' · no history yet';
+    noteTtl = 'history: none fetched\nlist price: falls back to the current best sell';
+  } else if ($('histOn').checked && state.esi.size && !state.fetchedHist){
+    note = ' · refetch for history';
+    noteTtl = 'history: not in the last fetch\nfix: Fetch prices again';
+  } else if (!histUsable){
+    note = ' · off';
+    noteTtl = 'history: fetching is off and none is cached';
+  }
   $('histNote').textContent = note;
+  $('histNote').title = noteTtl;
   syncOrdPatience();
   syncRelist();
 }
@@ -1472,58 +1495,51 @@ const ordinal = n => n + (ORDINALS[(n % 100 - n % 10 !== 10) * (n % 10)] || 'th'
 const fmtDays = d => d == null ? '?' : d < 1 ? '<1' : d < 10 ? d.toFixed(1) : String(Math.round(d));
 const pctSigned = n => (n > 0 ? '+' : '') + n.toFixed(1) + '%';
 
-/* The plain-language "why" behind a recommendation, naming the numbers that produced it.
-   Shown as the Plan badge's tooltip and restated under the expanded chart, so the
-   reasoning is one hover away and never in the way. */
+/* The numbers behind a recommendation, as compact key: value lines — never a paragraph.
+   Shown as the Plan badge's tooltip and restated under the expanded chart, so every
+   figure the decision used is one hover away and none of it is in the way. */
+const pc = x => Math.round(x * 100) + '%';
 function whyText(r){
   const m = r.metrics || {};
   const out = [];
   const c = m.chosen;
   if (r.strategy === 'imm'){
-    out.push(`SELL NOW — the buy book pays ${fmtIsk(r.netInstant)} ISK net for `
-      + `${fmt.format(r.instFill)}${r.instFill < r.qty ? ' of ' + fmt.format(r.qty) : ''} units, certain, `
-      + `with no broker fee at risk and no market slot used.`);
+    out.push(`INSTANT ${fmtIsk(r.netInstant)} ISK net · `
+      + `${fmt.format(r.instFill)}${r.instFill < r.qty ? '/' + fmt.format(r.qty) : ''} u · certain · no fee, no slot`);
   } else {
-    const kindTxt = c.kind === 'patient' ? 'the patient price' : 'the competitive price';
-    out.push(`LIST at ${fmtIsk(c.price)} (${kindTxt})`
-      + (r.splitFill > 0 ? `, after ${fmt.format(r.splitFill)} units fill instantly against the buy orders above it` : '')
-      + ` — expected ${fmtIsk(r.totalNet)} ISK`
-      + (c.days != null ? ` over ~${fmtDays(c.days)} days` : '')
-      + (r.fillChance != null ? `, ${Math.round(r.fillChance * 100)}% chance of filling inside the ${m.window}-day window` : '')
-      + (r.perSlot != null ? ` = ${fmtIsk(r.perSlot)} ISK per slot-day` : '')
-      + ` · selling now would net ${fmtIsk(r.netInstant)} ISK.`);
+    out.push(`LIST ${fmtIsk(c.price)} (${c.kind === 'patient' ? 'patient' : 'comp'}) · `
+      + `${fmtIsk(r.totalNet)} ISK net`
+      + (c.days != null ? ` · ${fmtDays(c.days)}d` : '')
+      + (r.fillChance != null ? ` · ${pc(r.fillChance)} in ${m.window}d` : '')
+      + (r.perSlot != null ? ` · ${fmtIsk(r.perSlot)} ISK/slot-day` : ''));
+    if (r.splitFill > 0) out.push(`leg: ${fmt.format(r.splitFill)} u fill instantly on buy orders above it`);
+    out.push(`now: ${fmtIsk(r.netInstant)} ISK`);
   }
   const ev = [];
-  if (r.pctRank != null && r.bestSell != null)
-    ev.push(`best sell sits at the ${ordinal(Math.round(r.pctRank))} percentile of the last ${RANK_DAYS} days`);
-  if (r.trendPctWk != null) ev.push(`trend ${pctSigned(r.trendPctWk)}/week (${r.dir})`);
+  if (r.pctRank != null && r.bestSell != null) ev.push(`rank: p${Math.round(r.pctRank)} of ${RANK_DAYS}d`);
+  if (r.trendPctWk != null) ev.push(`trend: ${pctSigned(r.trendPctWk)}/wk (${r.dir})`);
+  if (ev.length) out.push(ev.join(' · '));
   const patientIsLive = m.patientPrice != null && (m.patOpt || (c && c.kind === 'patient'));
   if (m.patHit && patientIsLive)
-    ev.push(`the patient price ${fmtIsk(m.patientPrice)} was reached in ${Math.round(m.patHit.p * 100)}% `
-      + `of past ${m.window}-day windows once those days are carried to today's price level`
-      + (Math.abs(m.patHit.raw - m.patHit.p) > 0.05 ? ` (${Math.round(m.patHit.raw * 100)}% at the prices of the day — that gap is the decay)` : '')
-      + ` (${m.patHit.basis})`);
+    out.push(`patient ${fmtIsk(m.patientPrice)}: ${pc(m.patHit.p)} of ${m.window}d windows carried to today`
+      + (Math.abs(m.patHit.raw - m.patHit.p) > 0.05 ? ` · raw ${pc(m.patHit.raw)} (the gap is the decay)` : '')
+      + ` · ${m.patHit.basis}`);
   else if (m.patientPrice != null && c && c.price > m.patientPrice)
-    ev.push(`the ${m.window}-day patient price ${fmtIsk(m.patientPrice)} is below what you can ask right now, `
-      + `so there is nothing to be patient for`);
-  if (ev.length) out.push(ev.join(', ') + '.');
+    out.push(`patient ${fmtIsk(m.patientPrice)}: below your ask — nothing to wait for`);
   for (const g of (m.guarded || []))
-    out.push(`Not listing at ${fmtIsk(g.price)}: at today's price level the market reached that price in `
-      + `${Math.round((g.hit ? g.hit.p : 0) * 100)}% of past ${m.window}-day windows`
-      + (g.hit && Math.abs(g.hit.raw - g.hit.p) > 0.05 ? ` (${Math.round(g.hit.raw * 100)}% at the prices of the day)` : '')
-      + (g.queueFactor < 0.99 ? `, and ${fmt.format(Math.round(g.fillDays))} days of sell orders are already queued below it` : '')
-      + `, so the chance of filling is ${Math.round(g.p * 100)}% — under the `
-      + `${Math.round(m.minFill * 100)}% floor for "${m.label}", and the ${fmtIsk(g.brokerCharge)} ISK `
-      + `broker fee is spent whether it fills or not.`);
+    out.push(`skip ${fmtIsk(g.price)}: ${pc(g.p)} < ${pc(m.minFill)} floor (${m.label})`
+      + ` · hit ${pc(g.hit ? g.hit.p : 0)} of ${m.window}d windows`
+      + (g.hit && Math.abs(g.hit.raw - g.hit.p) > 0.05 ? ` (raw ${pc(g.hit.raw)})` : '')
+      + (g.queueFactor < 0.99 ? ` · queue ${fmtDays(g.fillDays)}d` : '')
+      + ` · fee ${fmtIsk(g.brokerCharge)} ISK spent either way`);
   if (m.velPctDay > 0.2)
-    out.push(`Best sell has been sliding ${m.velPctDay.toFixed(2)}%/day, so a listing means repricing`
-      + (c && c.relists ? ` — ~${c.relists} relist${c.relists > 1 ? 's' : ''} at ${fmtIsk(c.brokerCharge)} ISK each, already priced in` : '')
-      + '.');
+    out.push(`sliding ${m.velPctDay.toFixed(2)}%/day → repricing`
+      + (c && c.relists ? ` · ${c.relists} relist${c.relists > 1 ? 's' : ''} @ ${fmtIsk(c.brokerCharge)} ISK priced in` : ''));
   if (r.dir === 'falling' && r.strategy === 'imm')
-    out.push('Decay, not a dip: the price the patient plan would wait for is the one the trend says is leaving.');
+    out.push('decay, not a dip: the patient price is the one the trend is leaving');
   if (r.trendPctWk == null && r.strategy !== 'imm')
-    out.push('No price history here, so there are no odds behind this — it is the plain fee arithmetic.');
-  return out.join(' ');
+    out.push('no history: plain fee arithmetic, no odds');
+  return out.join('\n');
 }
 
 /* ---------- price history graphics ----------
@@ -1625,8 +1641,7 @@ function buildDetailChart(r){
   if (rows.length < 2){
     const p = document.createElement('p');
     p.className = 'hint';
-    p.textContent = 'No price history for this item at this market — the plan above is the plain '
-      + 'fee arithmetic, with no odds behind it.';
+    p.textContent = 'no history at this market · plan = plain fee arithmetic, no odds';
     box.appendChild(p);
     return box;
   }
@@ -1715,7 +1730,7 @@ function buildDetailChart(r){
   if (hasBand){
     const e = document.createElement('em');
     e.style.color = 'var(--dim)';
-    e.textContent = 'shaded band = daily high–low';
+    e.textContent = 'band: daily high–low';
     legend.appendChild(e);
   }
   box.appendChild(legend);
@@ -1730,10 +1745,10 @@ function buildDetailChart(r){
     d2.append(b, s2); nums.appendChild(d2);
   };
   mk('plan', PLAN_LABEL[r.strategy]);
-  mk('expected net ISK', fmtIsk(r.totalNet));
-  mk('fill est. (days)', r.fillDays == null ? '—' : fmtDays(r.fillDays));
-  mk('chance of filling', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%');
-  mk('ISK / slot-day', r.perSlot == null ? '— (no slot)' : fmtIsk(r.perSlot));
+  mk('net ISK', fmtIsk(r.totalNet));
+  mk('fill est. d', r.fillDays == null ? '—' : fmtDays(r.fillDays));
+  mk('chance', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%');
+  mk('ISK/slot-day', r.perSlot == null ? '— no slot' : fmtIsk(r.perSlot));
   box.appendChild(nums);
   const why = document.createElement('p');
   why.className = 'chart-why';
@@ -1760,7 +1775,7 @@ function drawSpark(td){
   if (svg){ td.textContent = ''; td.appendChild(svg); td.dataset.spark = 'ready'; }
   else {
     td.textContent = '—';
-    td.title = 'no price history for this item at this market';
+    td.title = 'no history at this market';
     td.dataset.spark = 'none';
   }
   state.sparkDrawn = (state.sparkDrawn || 0) + 1;
@@ -1824,7 +1839,7 @@ function render(){
       const s = document.createElement('span');
       s.textContent = '⚡';
       s.style.color = 'var(--amber)'; s.style.cursor = 'help';
-      s.title = 'INSTANT — nothing to import; this item is on the instant checklist';
+      s.title = 'INSTANT: nothing to import\nsold from the instant checklist';
       tdCheck.appendChild(s);
     } else {
       const cb = document.createElement('input');
@@ -1863,8 +1878,8 @@ function render(){
     tdSpark.tabIndex = 0;
     tdSpark.setAttribute('role', 'button');
     tdSpark.setAttribute('aria-expanded', String(state.openDetail === r.key));
-    tdSpark.title = (r.trendPctWk != null ? `trend ${pctSigned(r.trendPctWk)}/week · ` : '')
-      + 'click for the full price chart';
+    tdSpark.title = (r.trendPctWk != null ? `trend: ${pctSigned(r.trendPctWk)}/wk\n` : '')
+      + 'click: full price chart';
     const obs = sparkObserver();
     if (obs) obs.observe(tdSpark); else drawSpark(tdSpark);
     tr.insertBefore(tdSpark, tr.children[3]);   // after Import, #, Item
@@ -1880,8 +1895,11 @@ function render(){
       const s = document.createElement('span');
       s.className = 'hint';
       s.style.marginLeft = '6px';
+      const patLeg = r.metrics && r.metrics.chosen && r.metrics.chosen.kind === 'patient';
       s.textContent = `${fmt.format(r.splitFill)} now · ${fmt.format(r.qty - r.splitFill)} listed`
-        + (r.metrics && r.metrics.chosen && r.metrics.chosen.kind === 'patient' ? ' (patient price)' : '');
+        + (patLeg ? ' · patient' : '');
+      s.title = `instant leg: ${fmt.format(r.splitFill)} u\nlisted: ${fmt.format(r.qty - r.splitFill)} u`
+        + (patLeg ? '\nprice: the patient (history) price' : '');
       tdStrat.appendChild(s);
     }
     tr.appendChild(tdStrat);
@@ -1889,14 +1907,15 @@ function render(){
     for (const [cls, text, copy, title] of [
       ['num', fmtIsk(r.exportPrice), priceCopy(r.exportPrice)],
       ['num', r.fillDays == null ? '—' : fmtDays(r.fillDays), r.fillDays == null ? '' : r.fillDays.toFixed(2),
-        r.strategy === 'imm' ? 'nothing is listed on an INSTANT plan'
-          : r.fillDays == null ? 'no sell book or no traded volume to divide by'
-          : `${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} units are already listed at or below ${fmtIsk(r.exportPrice)}, against ${fmt.format(r.volDay)} units traded per day (regional, both sides — optimistic)`],
+        r.strategy === 'imm' ? 'INSTANT: nothing is listed'
+          : r.fillDays == null ? 'no sell book, or no traded volume to divide by'
+          : `queue: ${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} u at or below ${fmtIsk(r.exportPrice)}`
+            + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)`],
       ['num', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%',
         r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
-        r.strategy === 'imm' ? 'nothing is listed on an INSTANT plan' : r.why],
+        r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why],
       ['num', r.perSlot == null ? '—' : fmtIsk(r.perSlot), r.perSlot == null ? '' : priceCopy(r.perSlot),
-        r.strategy === 'imm' ? 'INSTANT uses no market slot — it is not ranked here' : r.why],
+        r.strategy === 'imm' ? 'INSTANT: no slot used — not ranked here' : r.why],
       ['num', fmtIsk(r.totalNet), priceCopy(r.totalNet)],
       ['num' + (r.advTotal > 0 ? ' pos' : r.advTotal < 0 ? ' neg' : ''), r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal), priceCopy(r.advTotal)],
     ]){
@@ -1910,6 +1929,7 @@ function render(){
       const s = document.createElement('span');
       s.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info' : f.cls === 'wait' ? ' wait' : '');
       s.textContent = f.t;
+      if (f.ttl) s.title = f.ttl;
       tdFlags.appendChild(s);
     }
     tr.appendChild(tdFlags);
@@ -1921,9 +1941,9 @@ function render(){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = document.querySelectorAll('#tbl thead th').length; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
-    td.textContent = !state.invCount ? 'Paste your inventory above to get started.'
-      : !state.rows.length ? 'Fetch prices (ESI) to value and rank your items.'
-      : 'No rows match the current filters.';
+    td.textContent = !state.invCount ? 'paste an inventory above'
+      : !state.rows.length ? 'fetch prices to value and rank'
+      : 'no rows match the filters';
     tr.appendChild(td); tbody.appendChild(tr);
   }
   document.querySelectorAll('thead th').forEach(th => {
@@ -1937,8 +1957,10 @@ function render(){
   const shown = state.rows.filter(rowFilter).length;
   const hiddenTicked = state.rows.filter(r => r.inImport && !rowFilter(r)).length;
   $('fltCount').textContent = (shown === state.rows.length
-    ? `${shown} items` : `showing ${shown} of ${state.rows.length} items`)
-    + (hiddenTicked ? ` · ${hiddenTicked} ticked hidden — still in the import list` : '');
+    ? `${shown} items` : `${shown}/${state.rows.length} items`)
+    + (hiddenTicked ? ` · ${hiddenTicked} ticked hidden` : '');
+  $('fltCount').title = hiddenTicked
+    ? `shown: ${shown} of ${state.rows.length}\nticked but hidden: ${hiddenTicked} — still in the import list` : '';
   renderSummary();
   renderPreview();
   renderUnpriced();
@@ -1948,7 +1970,7 @@ function renderSummary(){
   const box = $('summary');
   box.textContent = '';
   if (!state.rows.length && !state.unpriced.length){
-    box.innerHTML = '<span class="hint">Paste your inventory and fetch prices to see results.</span>';
+    box.innerHTML = '<span class="hint">no rows — paste an inventory, fetch prices</span>';
     return;
   }
   const all = state.rows;
@@ -1958,18 +1980,23 @@ function renderSummary(){
   const sel = all.filter(r => r.inImport);   // = the import list, independent of view filters
   const selNet = sel.reduce((s, r) => s + r.totalNet, 0);
   const selVol = sel.reduce((s, r) => s + (r.volPerUnit != null ? r.volPerUnit * r.qty : 0), 0);
-  const mk = (label, value) => {
+  const mk = (label, value, title) => {
     const d = document.createElement('span'); d.className = 'stat';
+    if (title) d.title = title;
     const b = document.createElement('b'); b.textContent = value;
     const s = document.createElement('span'); s.textContent = label;
     d.appendChild(b); d.appendChild(s); box.appendChild(d);
   };
-  mk('expected net, everything sold', fmtIsk(all.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`instant (${imm.length} items)`, fmtIsk(imm.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`orders (${ord.length} items)`, fmtIsk(ord.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`splits (${spl.length} items)`, fmtIsk(spl.reduce((s, r) => s + r.totalNet, 0)) + ' ISK');
-  mk(`in import list (${sel.length} items, ${fmt.format(Math.round(selVol))} m³)`, fmtIsk(selNet) + ' ISK');
-  if (state.unpriced.length) mk('unpriced / unsellable', String(state.unpriced.length) + ' items');
+  // ISK totals read as compact magnitudes; the exact figure is one hover away
+  const isk = (n, label) => mk(label, fmtCompact(n) + ' ISK', `${label}: ${fmtIsk(n)} ISK`);
+  isk(all.reduce((s, r) => s + r.totalNet, 0), 'expected net');
+  isk(imm.reduce((s, r) => s + r.totalNet, 0), `instant · ${imm.length}`);
+  isk(ord.reduce((s, r) => s + r.totalNet, 0), `list · ${ord.length}`);
+  isk(spl.reduce((s, r) => s + r.totalNet, 0), `split · ${spl.length}`);
+  mk(`import · ${sel.length} · ${fmtCompact(Math.round(selVol))} m³`, fmtCompact(selNet) + ' ISK',
+    `import list: ${sel.length} items\nnet: ${fmtIsk(selNet)} ISK\nvolume: ${fmt.format(Math.round(selVol))} m³`);
+  if (state.unpriced.length) mk('unpriced', String(state.unpriced.length),
+    'items with no price or no market — listed in section 2');
 }
 
 function renderPreview(){
@@ -1982,8 +2009,12 @@ function renderPreview(){
   const impNet = imp.reduce((s, r) => s + (r.strategy === 'split' ? r.orderLegNet : r.totalNet), 0);
   const hiddenImp = imp.filter(r => !rowFilter(r)).length;
   $('impEcho').textContent = imp.length
-    ? `${imp.length} items · ${fmtIsk(impNet)} ISK expected net${hiddenImp ? ` · ⚠ ${hiddenImp} of them hidden by the current filters` : ''}`
-    : 'nothing ticked — build the list with Tick top N / All or the row ticks';
+    ? `${imp.length} items · ${fmtCompact(impNet)} ISK net${hiddenImp ? ` · ⚠${hiddenImp} hidden` : ''}`
+    : 'nothing ticked';
+  $('impEcho').title = imp.length
+    ? `items: ${imp.length}\nexpected net: ${fmtIsk(impNet)} ISK`
+      + (hiddenImp ? `\nhidden by the filters: ${hiddenImp} — still in the list` : '')
+    : 'tick rows, or use Tick top N / All';
 
 }
 
@@ -2001,13 +2032,14 @@ function renderUnpriced(){
   const box = $('unpricedBox');
   box.textContent = '';
   if (!state.unpriced.length){
-    box.innerHTML = '<span class="hint">Nothing — every item has a price.</span>';
+    box.innerHTML = '<span class="hint">0 unpriced</span>';
     return;
   }
   const ul = document.createElement('ul'); ul.className = 'plain';
   for (const u of state.unpriced){
     const li = document.createElement('li');
-    li.textContent = `${u.name} × ${fmt.format(u.qty)} — ${u.reason}` + (u.unsellable ? ' (reported unsellable in-game)' : '');
+    li.textContent = `${u.name} ×${fmt.format(u.qty)} · ${u.reason}` + (u.unsellable ? ' · unsellable' : '');
+    li.title = `reason: ${u.reason}` + (u.unsellable ? '\nin-game: reported unsellable' : '');
     ul.appendChild(li);
   }
   box.appendChild(ul);
@@ -2025,7 +2057,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
       if (!document.execCommand('copy')) throw new Error('execCommand refused');
       status.textContent = statusMsg; status.className = 'hint ok';
     }
-    catch(_e2){ status.textContent = 'copy failed — select the text and copy manually'; status.className = 'hint err'; }
+    catch(_e2){ status.textContent = 'copy failed — select and copy manually'; status.className = 'hint err'; }
     fallbackTa.value = old;
   }
   setTimeout(() => { status.textContent = ''; }, 4000);
@@ -2187,23 +2219,27 @@ function renderFeeSrc(){
   if (!h.structure) return;
   const pct = structBrokerOf(h.structure);
   const txt = document.createElement('span');
-  txt.textContent = pct == null
+  if (pct == null){
     // never let the number in the box pass for a fact about this structure: name it as
     // the stand-in it is, so a plan priced with it is not read as the owner's rate
-    ? `broker % at ${h.label}: owner-set rate from the structure manager — none recorded yet, so the `
-      + `plan below is priced with the ${$('brokerFee').value}% in the box (the NPC-hub rate from your `
-      + 'skills and standings) as a stand-in; read the real one off the in-game sell window and type it '
-      + 'here (it is saved on the structure). '
-    : `broker % at ${h.label}: owner-set rate from the structure manager — typing here updates that record. `;
+    txt.textContent = `⚑ broker % — ${h.label}: none recorded yet · pricing with ${$('brokerFee').value}% (stand-in) · `;
+    txt.title = 'owner rate: none recorded in the structure manager'
+      + `\nusing: ${$('brokerFee').value}% — the NPC-hub rate from your skills and standings`
+      + '\nfix: read the real rate off the in-game sell window and type it here (saved on the record)';
+  } else {
+    txt.textContent = `⚑ broker ${pct}% — ${h.label}: owner-set rate · `;
+    txt.title = 'source: this structure\'s record in the structure manager'
+      + '\nedit: typing in the box updates that record';
+  }
   const a = document.createElement('a');
   a.href = 'structures.html#s' + h.structure;
-  a.textContent = 'open the record';
+  a.textContent = 'record';
   box.append(txt, a);
 }
 
 const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
 const scopeHelp = missing =>
-  `your login lacks ${missing.join(' + ')} — add the scope${missing.length > 1 ? 's' : ''} to the app in the EVE developer portal, then log in again`;
+  `missing scope: ${missing.join(' + ')} — add it to the app in the EVE developer portal, then log in again`;
 
 // the shared modal is a selector: search for a new structure or pick a saved one, and it
 // becomes the market (managing them is the Structure Manager's job, which it links to)
@@ -2320,7 +2356,7 @@ async function runEsi(){
 
   if (h.structure){   // structure books need a logged-in character with the market scope
     if (!window.EveAuth || !EveAuth.isLoggedIn()){
-      $('esiStatus').textContent = "log in with EVE to fetch this structure's market";
+      $('esiStatus').textContent = "log in with EVE — structure market";
       $('esiStatus').className = 'err';
       return;
     }
@@ -2341,12 +2377,12 @@ async function runEsi(){
     state.structBook = null;
     let structCapped = false;
     if (h.structure){
-      status.textContent = `fetching ${h.label} order book…`;
+      status.textContent = `${h.label} · book…`;
       let book;
       try{ book = await fetchStructureBook(h, fill, status); }
       catch(e){
         throw /HTTP 403/.test(e.message)
-          ? new Error('your character has no market access at this structure')
+          ? new Error('no market access at this structure')
           : e;
       }
       if (token !== state.esiToken) return;
@@ -2354,7 +2390,7 @@ async function runEsi(){
       structCapped = book.capped;
       fill.style.width = '0%'; fill.classList.add('ind');
     }
-    status.textContent = `resolving ${inv.size} item names…`;
+    status.textContent = `${inv.size} names…`;
     const ids = await resolveTypeIds([...inv.values()].map(v => v.name));
     if (token !== state.esiToken) return;
     const jobs = [...inv.entries()].map(([key, it]) => ({ key, name: it.name, typeId: ids.get(key) ?? null }));
@@ -2386,16 +2422,20 @@ async function runEsi(){
         }
         done++;
         fill.style.width = Math.round(done / total * 100) + '%';
-        status.textContent = `fetching ${h.label} ${withHist ? 'orders + history' : 'orders'}… ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
+        status.textContent = `${h.label} · ${done}/${total}${withHist ? ' + history' : ''}${failed ? ` · ${failed} failed` : ''}`;
       }
     });
     await Promise.all(workers);
     if (token !== state.esiToken) return;
     state.fetchedHist = withHist;
-    status.textContent = `${h.label} prices loaded ${new Date().toLocaleTimeString()}` +
-      (failed ? ` — ${failed} lookups failed` : '') +
-      (structCapped ? ' — structure book truncated at 100 pages' : '') +
-      (h.structure && withHist ? ' — history is region-wide (ESI has none per structure)' : '');
+    status.textContent = `${h.label} · ${total} items · ${new Date().toLocaleTimeString()}` +
+      (failed ? ` · ${failed} failed` : '') +
+      (structCapped ? ' · book cut at 100 pages' : '') +
+      (h.structure && withHist ? ' · history region-wide' : '');
+    status.title = (failed ? `failed lookups: ${failed}\n` : '')
+      + (structCapped ? 'structure book: truncated at 100 pages\n' : '')
+      + (h.structure && withHist ? 'history: region-wide — ESI publishes none per structure\n' : '')
+      + `market: ${h.label}\nitems: ${total}`;
     status.className = failed ? 'err' : 'ok';
   }catch(e){
     if (token === state.esiToken){ status.textContent = 'ESI error: ' + e.message; status.className = 'err'; }
@@ -2532,7 +2572,7 @@ async function runOrders(){
   if (state.orders.running) return;
   const status = $('ordStatus');
   if (!window.EveAuth || !EveAuth.isLoggedIn()){
-    status.textContent = 'log in with EVE to read your orders';
+    status.textContent = 'log in with EVE';
     status.className = 'err';
     return;
   }
@@ -2549,7 +2589,7 @@ async function runOrders(){
         report.push({ id: c.id, name: c.name, missingScope: true, count: 0, sell: 0, buy: 0 });
         continue;
       }
-      status.textContent = `reading ${c.name}'s orders…`;
+      status.textContent = `${c.name}…`;
       try{
         const raw = await fetchCharOrders(c.id);
         const mine = raw.map(o => normalizeOrder(o, c));
@@ -2565,13 +2605,13 @@ async function runOrders(){
     state.orders.chars = report;
     state.orders.diag = {};
 
-    status.textContent = `resolving ${new Set(rows.map(o => o.typeId)).size} item names…`;
+    status.textContent = `${new Set(rows.map(o => o.typeId)).size} names…`;
     const names = await resolveNames(rows.map(o => o.typeId));
     for (const [id, n] of names) state.orders.names[id] = n;
 
     const locs = new Map();
     for (const o of rows) if (!locs.has(o.locationId)) locs.set(o.locationId, o.regionId);
-    status.textContent = `resolving ${locs.size} location${locs.size === 1 ? '' : 's'}…`;
+    status.textContent = `${locs.size} location${locs.size === 1 ? '' : 's'}…`;
     for (const [id, reg] of locs) await resolveLocation(id, reg);
 
     state.orders.fetched = new Date().toISOString();
@@ -2580,10 +2620,12 @@ async function runOrders(){
     await diagnoseOrders();
     const failed = report.filter(r => r.error).length;
     const stalled = Object.values(state.orders.diag).filter(x => x && x.stalled).length;
-    status.textContent = `${rows.length} open order${rows.length === 1 ? '' : 's'}, ${stalled} stalled — `
-      + new Date().toLocaleTimeString()
-      + (failed ? ` — ${failed} character${failed > 1 ? 's' : ''} failed` : '')
-      + (state.ordFailedBooks ? ` — ${state.ordFailedBooks} order book${state.ordFailedBooks > 1 ? 's' : ''} unavailable` : '');
+    status.textContent = `${rows.length} orders · ${stalled} stalled · ${new Date().toLocaleTimeString()}`
+      + (failed ? ` · ${failed} char${failed > 1 ? 's' : ''} failed` : '')
+      + (state.ordFailedBooks ? ` · ${state.ordFailedBooks} book${state.ordFailedBooks > 1 ? 's' : ''} missing` : '');
+    status.title = `open orders: ${rows.length}\nstalled: ${stalled}`
+      + (failed ? `\ncharacters that failed: ${failed}` : '')
+      + (state.ordFailedBooks ? `\norder books unavailable: ${state.ordFailedBooks}` : '');
     status.className = failed ? 'err' : 'ok';
   }catch(e){
     status.textContent = 'ESI error: ' + e.message;
@@ -2650,8 +2692,9 @@ function renderOrders(){
     const sep = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = cols; td.className = 'hint'; td.style.padding = '10px 8px';
-    td.textContent = `buy orders (${buys.length}) — the other way round: you are waiting for `
-      + 'someone to sell TO you, the ISK is in escrow, and none of the sell-side triage applies';
+    td.textContent = `${buys.length} buy orders · ISK in escrow · no sell-side triage`;
+    td.title = 'buy orders run the other way: you wait for someone to sell TO you'
+      + '\nthe ISK is in escrow, so none of the sell-side arithmetic applies';
     sep.appendChild(td);
     frag.appendChild(sep);
     for (const r of buys) frag.appendChild(ordRowEl(r));
@@ -2661,10 +2704,10 @@ function renderOrders(){
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = cols; td.className = 'hint'; td.style.padding = '18px'; td.style.textAlign = 'center';
-    td.textContent = !state.orders.fetched ? 'Fetch my orders (ESI) to see what is on the market.'
-      : state.ordFilter ? 'No orders match the filter.'
-      : state.orders.list.length ? 'No sell orders — tick "include buy orders" to see the buy side.'
-      : 'No open orders on any logged-in character.';
+    td.textContent = !state.orders.fetched ? 'fetch my orders'
+      : state.ordFilter ? 'no orders match the filter'
+      : state.orders.list.length ? 'no sell orders · tick "include buy orders"'
+      : 'no open orders on any logged-in character';
     tr.appendChild(td); tbody.appendChild(tr);
   }
   document.querySelectorAll('#ordTbl thead th').forEach(th => {
@@ -2678,7 +2721,7 @@ function renderOrders(){
   const shown = sells.length + buys.length;
   const total = state.orders.list.filter(o => state.ordShowBuy || !o.isBuy).length;
   $('ordCount').textContent = state.orders.list.length
-    ? (shown === total ? `${shown} orders` : `showing ${shown} of ${total} orders`) : '';
+    ? (shown === total ? `${shown} orders` : `${shown}/${total} orders`) : '';
 }
 
 function renderOrdChars(){
@@ -2688,7 +2731,7 @@ function renderOrdChars(){
   if (!logged.length){
     const p = document.createElement('div');
     p.className = 'hint';
-    p.textContent = 'Nobody is logged in — "My orders" reads your own orders from ESI, which needs a login.';
+    p.textContent = 'not logged in — My orders reads your own orders from ESI';
     box.appendChild(p);
     return;
   }
@@ -2702,7 +2745,8 @@ function renderOrdChars(){
     const sub = document.createElement('span');
     sub.className = 'sub';
     if (!EveAuth.tokenScopes(c.id).includes(ORDERS_SCOPE)){
-      sub.textContent = 'orders not readable — this login does not carry the scope · ';
+      sub.textContent = 'orders unreadable · ';
+      sub.title = `missing scope: ${ORDERS_SCOPE}\neffect: this character's orders are not in the totals`;
       line.appendChild(sub);
       // the shared inline note: names what is missing and opens the permissions panel
       if (EveAuth.permissionNote) EveAuth.permissionNote(ORDERS_SCOPE, line, { label: 'open market orders' });
@@ -2711,11 +2755,11 @@ function renderOrdChars(){
       sub.style.color = 'var(--red)';
       line.appendChild(sub);
     } else if (rep){
-      sub.textContent = `${rep.count} slot${rep.count === 1 ? '' : 's'} in use `
-        + `(${rep.sell} sell · ${rep.buy} buy)`;
+      sub.textContent = `${rep.count} slots · ${rep.sell} sell · ${rep.buy} buy`;
+      sub.title = `open orders: ${rep.count}\nsell: ${rep.sell} · buy: ${rep.buy}`;
       line.appendChild(sub);
     } else {
-      sub.textContent = 'not fetched yet';
+      sub.textContent = 'not fetched';
       line.appendChild(sub);
     }
     box.appendChild(line);
@@ -2739,23 +2783,25 @@ function renderOrdSummary(){
     const s = document.createElement('span'); s.textContent = label;
     d.append(b, s); box.appendChild(d);
   };
+  const sellIsk = sells.reduce((t, r) => t + r.iskTied, 0);
+  const buyIsk = buys.reduce((t, r) => t + r.iskTied, 0);
   mk('open orders', String(rows.length), 'every open order on every logged-in character');
-  mk(`sell orders (${sells.length})`, fmtIsk(sells.reduce((t, r) => t + r.iskTied, 0)) + ' ISK tied up',
-    'price × units remaining, summed — ISK sitting on the market instead of in your wallet');
+  mk(`sell · ${sells.length}`, fmtCompact(sellIsk) + ' ISK tied up',
+    `tied up: ${fmtIsk(sellIsk)} ISK\n= price × units remaining, summed\non the market instead of in your wallet`);
   if (buys.length)
-    mk(`buy orders (${buys.length})`, fmtIsk(buys.reduce((t, r) => t + r.iskTied, 0)) + ' ISK committed',
-      'price × units remaining on the buy side — the escrow can be lower on a partly-filled order');
+    mk(`buy · ${buys.length}`, fmtCompact(buyIsk) + ' ISK committed',
+      `committed: ${fmtIsk(buyIsk)} ISK\n= price × units remaining\nreal escrow can be lower once partly filled`);
   const perChar = state.orders.chars.filter(c => !c.missingScope && !c.error)
     .map(c => `${c.name} ${c.count}`).join(' · ');
   renderOrdTriageStats(box, sells, mk);
   if (perChar)
     mk('slots in use', perChar,
-      "EVE's slot cap is a character fact ESI does not publish, so this counts what is open and "
-      + 'does not invent a total');
+      "cap: EVE's slot cap is a character fact ESI does not publish"
+      + '\nshown: open orders per character, no invented total');
   const age = document.createElement('div');
   age.className = 'hint';
   age.style.marginTop = '6px';
-  age.textContent = 'as of ' + new Date(state.orders.fetched).toLocaleString();
+  age.textContent = 'fetched ' + new Date(state.orders.fetched).toLocaleString();
   box.appendChild(age);
 }
 
@@ -2774,7 +2820,7 @@ function ordRowEl(r){
   };
   cell('', r.charName, r.charName);
   const nameTd = cell('name', r.name || ('type ' + r.typeId), r.name || '',
-    r.name ? '' : 'ESI did not resolve this type id — the raw id is what it gave us');
+    r.name ? '' : 'ESI did not resolve this type id');
   if (r.isBuy){
     const b = document.createElement('span');
     b.className = 'badge buy'; b.style.marginLeft = '6px'; b.textContent = 'BUY';
@@ -2785,12 +2831,12 @@ function ordRowEl(r){
   cell('num', `${fmt.format(r.volumeRemain)} / ${fmt.format(r.volumeTotal)}`, String(r.volumeRemain));
   cell('name', r.locName || String(r.locationId), r.locName || String(r.locationId),
     r.locName ? '' : (r.locKind === 'structure'
-      ? 'a player structure this login cannot resolve (no docking access, or the structure scope is missing) — the raw id is the honest answer'
+      ? 'player structure this login cannot resolve\nno docking access, or the structure scope is missing'
       : 'ESI did not resolve this location id'));
   cell('num', r.ageDays == null ? '—' : fmtDays(r.ageDays), r.ageDays == null ? '' : r.ageDays.toFixed(2),
-    r.issued ? 'issued ' + r.issued : '');
+    r.issued ? 'issued: ' + r.issued : '');
   cell('num', r.daysLeft == null ? '—' : fmtDays(r.daysLeft), r.daysLeft == null ? '' : r.daysLeft.toFixed(2),
-    r.duration != null ? `${r.duration}-day order` : '');
+    r.duration != null ? `duration: ${r.duration}d` : '');
   cell('num', fmtIsk(r.iskTied), r.iskTied.toFixed(2));
   ordDiagCells(tr, r, cell);
   return tr;
@@ -2864,21 +2910,24 @@ function syncRelist(){
   const box = $('relistPct');
   if (document.activeElement !== box) box.value = relistPctEffective().toFixed(2);
   $('relistReset').disabled = relistOverride == null;
+  const lvl = advBrokerLevel == null ? 'level not read — assumed 0' : 'level ' + advBrokerLevel;
   $('relistSrc').textContent = relistOverride != null
-    ? 'your number, saved and used for every reprice below. Neither this nor the computed value is '
-      + 'verified against the client — yours at least came from one.'
-    : `UNVERIFIED — modelled as the ${(feePct('brokerFee') * 100).toFixed(2)}% broker fee from the fees box, `
-      + `reduced by 5%/level of ${ADV_BROKER_SKILL} (`
-      + (advBrokerLevel == null ? 'level not read yet — assumed 0' : 'level ' + advBrokerLevel)
-      + "). CCP does not publish the modify-order formula: open the modify dialog in your client, "
-      + 'compare, and type the real number here.';
+    ? 'yours · saved · used for every reprice below'
+    : `UNVERIFIED · ${(feePct('brokerFee') * 100).toFixed(2)}% broker − 5%/lvl ${ADV_BROKER_SKILL} (${lvl})`;
+  $('relistSrc').title = relistOverride != null
+    ? 'source: typed by you, saved'
+      + '\nverified: no — neither this nor the computed value is checked against the client'
+    : `model: ${(feePct('brokerFee') * 100).toFixed(2)}% broker fee from the fees box, less 5% per level`
+      + `\nskill: ${ADV_BROKER_SKILL} (${lvl})`
+      + '\nverified: no — CCP publishes no modify-order formula; compare with your client and type the real number here';
 }
 function syncOrdPatience(){
   const pat = PATIENCE[state.patience] || PATIENCE.balanced;
   for (const b of document.querySelectorAll('#ordPatRush,#ordPatBalanced,#ordPatPatient'))
     b.setAttribute('aria-pressed', String(b.dataset.pat === state.patience));
-  $('ordPatNote').textContent = `${pat.days}-day window · under a `
-    + `${Math.round(pat.minFill * 100)}% chance of filling in it, an order counts as stalled`;
+  $('ordPatNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
+  $('ordPatNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
+    + '\nunder the floor: the order counts as stalled';
 }
 
 /* ---------- the diagnosis: fetch phase ---------------------------------------------
@@ -2917,22 +2966,22 @@ async function diagnoseOrders(){
                 system: loc.systemId ?? null };
     if (isStructureId(g.id)) h.structure = g.id; else h.station = g.id;
     if (h.region == null){
-      state.ordNotes.set(g.id, 'no region is known for this location, so its order book cannot be fetched');
+      state.ordNotes.set(g.id, 'no region known — the book cannot be fetched');
       continue;
     }
     let sb = null;
     if (h.structure){
       // the structure-market path: a structure's sell side is only in its own book
       if (!window.EveAuth || !EveAuth.isLoggedIn() || !EveAuth.tokenScopes().includes(STRUCTURE_MARKET_SCOPE)){
-        state.ordNotes.set(g.id, 'player structure — ' + scopeHelp([STRUCTURE_MARKET_SCOPE]));
+        state.ordNotes.set(g.id, 'structure — ' + scopeHelp([STRUCTURE_MARKET_SCOPE]));
         continue;
       }
-      status.textContent = `fetching ${h.label} order book…`;
+      status.textContent = `${h.label} · book…`;
       try{ sb = (await fetchStructureBook(h, fill, status)).byType; }
       catch(e){
         state.ordNotes.set(g.id, /HTTP 403/.test(e.message)
-          ? 'the active character has no market access at this structure'
-          : 'the structure order book is unavailable: ' + e.message);
+          ? 'no market access at this structure'
+          : 'structure book unavailable: ' + e.message);
         continue;
       }
       fill.classList.add('ind');
@@ -2956,7 +3005,7 @@ async function diagnoseOrders(){
       }
       done++;
       fill.style.width = Math.round(done / Math.max(total, 1) * 100) + '%';
-      status.textContent = `diagnosing… ${done}/${total} books${failed ? ` (${failed} failed)` : ''}`;
+      status.textContent = `books ${done}/${total}${failed ? ` · ${failed} failed` : ''}`;
     }
   });
   await Promise.all(workers);
@@ -3039,11 +3088,10 @@ function diagnoseOne(o, cfg){
   const book = state.ordBooks ? state.ordBooks.get(o.locationId + ':' + o.typeId) : null;
   if (!book){
     d.why = d.note
-      ? 'No order book here: ' + d.note + '. Nothing below can be computed for this order.'
+      ? 'no book: ' + d.note
       : (state.orders.fetched && state.ordBooks
-        ? 'The order book for this item at this location could not be fetched, so there is nothing to '
-          + 'compare your price against.'
-        : 'Fetch your orders to pull the book and history behind this row.');
+        ? 'no book: could not be fetched — nothing to compare your price against'
+        : 'no book: fetch your orders to pull the book and history');
     return d;
   }
   const comp = competitorSells(book.sellLevels, ownSellsAt(o.typeId, o.locationId));
@@ -3075,8 +3123,7 @@ function diagnoseOne(o, cfg){
   d.giveUp = d.dumpNow * d.decay;     // dumping it at the END of the window instead of now
 
   if (d.chance == null){
-    d.why = 'No price history for this item in this region, so there are no odds behind anything here — '
-      + 'the queue ahead of you and the live book are all this row can honestly tell you.';
+    d.why = 'no history in this region: no odds — only the queue ahead and the live book';
     return d;
   }
 
@@ -3105,14 +3152,17 @@ function diagnoseOne(o, cfg){
   }
 
   if (d.chance < cfg.pat.minFill)
-    d.reasons.push(`only a ${Math.round(d.chance * 100)}% chance of filling at ${fmtIsk(o.price)} in the `
-      + `${d.window} days that count (your "${cfg.pat.label}" floor is ${Math.round(cfg.pat.minFill * 100)}%)`);
+    d.reasons.push({ t: `${pc(d.chance)}<${pc(cfg.pat.minFill)}`,
+      ttl: `chance: ${pc(d.chance)} of filling at ${fmtIsk(o.price)} in ${d.window}d`
+        + `\nfloor: ${pc(cfg.pat.minFill)} ("${cfg.pat.label}")` });
   if (d.daysToFill != null && daysLeft != null && d.daysToFill > daysLeft)
-    d.reasons.push(`${fmt.format(Math.round(d.queueAhead))} units are queued at or below your price — about `
-      + `${fmtDays(d.daysToFill)} days to clear, and this order expires in ${fmtDays(daysLeft)}`);
+    d.reasons.push({ t: `q${fmtDays(d.daysToFill)}d>${fmtDays(daysLeft)}d`,
+      ttl: `queue: ${fmt.format(Math.round(d.queueAhead))} u at or below your price`
+        + `\nclears in: ${fmtDays(d.daysToFill)}d\nexpires in: ${fmtDays(daysLeft)}d` });
   if (d.dir === 'falling' && d.aboveBestPct != null && d.aboveBestPct > 0 && d.chance < ORD_COMFORT_CHANCE)
-    d.reasons.push(`you are ${d.aboveBestPct.toFixed(1)}% above the best sell here on a market sliding `
-      + `${Math.abs(d.trendPctWk).toFixed(1)}%/week, so the gap only widens`);
+    d.reasons.push({ t: `+${d.aboveBestPct.toFixed(1)}%▼`,
+      ttl: `above best sell: +${d.aboveBestPct.toFixed(1)}%`
+        + `\ntrend: ${pctSigned(d.trendPctWk)}/wk\nthe gap only widens` });
   d.stalled = d.reasons.length > 0;
 
   /* A tie goes to the option that FREES THE MARKET SLOT. Slots, not ISK, are what runs
@@ -3134,33 +3184,30 @@ function diagnoseOne(o, cfg){
 
 function verdictWhy(o, d, cfg){
   const q = o.volumeRemain, tax = cfg.tax;
-  const pc = x => Math.round(x * 100) + '%';
   const out = [];
-  out.push(d.verdict === 'hold' ? `HOLD — leave it up.`
-    : d.verdict === 'reprice' ? `REPRICE to ${fmtIsk(d.repricePrice)}.`
-    : `CANCEL & DUMP — take what the buy book pays today.`);
-  out.push(`Hold = ${fmtIsk(d.valueHold)} ISK: ${pc(d.chance)} × ${fmt.format(q)} × ${fmtIsk(o.price)} `
-    + `less ${(tax * 100).toFixed(2)}% tax = ${fmtIsk(d.chance * q * o.price * (1 - tax))}, plus `
-    + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} for dumping it at the end of the ${d.window} days`
+  out.push(d.verdict === 'hold' ? 'HOLD'
+    : d.verdict === 'reprice' ? `REPRICE → ${fmtIsk(d.repricePrice)}`
+    : 'CANCEL & DUMP');
+  out.push(`hold: ${fmtIsk(d.valueHold)} ISK · ${pc(d.chance)} × ${fmt.format(q)} × ${fmtIsk(o.price)} `
+    + `−${(tax * 100).toFixed(2)}% tax = ${fmtIsk(d.chance * q * o.price * (1 - tax))} · + `
+    + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} give-up at day ${d.window}`
     + (Math.abs(d.decay - 1) > 0.005
-      ? ` (today's ${fmtIsk(d.dumpNow)} carried ${pctSigned((d.decay - 1) * 100)} by the trend)` : '')
-    + `.`);
+      ? ` (${fmtIsk(d.dumpNow)} today, carried ${pctSigned((d.decay - 1) * 100)} by the trend)` : ''));
   if (d.valueReprice != null)
-    out.push(`Reprice = ${fmtIsk(d.valueReprice)} ISK: at ${fmtIsk(d.repricePrice)} the chance is `
-      + `${pc(d.chanceReprice)}, worth ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} plus `
-      + `${pc(1 - d.chanceReprice)} × ${fmtIsk(d.giveUp)}, minus the ${fmtIsk(d.relistFee)} ISK relist fee `
-      + `(${relistPctEffective().toFixed(2)}%, unverified — see the note above the table).`);
+    out.push(`reprice ${fmtIsk(d.repricePrice)}: ${fmtIsk(d.valueReprice)} ISK · ${pc(d.chanceReprice)} × `
+      + `${fmt.format(q)} × ${fmtIsk(d.repricePrice)} −tax = ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} · + `
+      + `${pc(1 - d.chanceReprice)} × ${fmtIsk(d.giveUp)} · − ${fmtIsk(d.relistFee)} ISK relist fee `
+      + `(${relistPctEffective().toFixed(2)}%, unverified)`);
   else if (d.bestOther == null)
-    out.push('Nothing else is listed here, so there is no competitive price to move to.');
+    out.push('reprice: nothing else is listed here — no competitive price to move to');
   else
-    out.push(`You are already at or under the best competing sell (${fmtIsk(d.bestOther)}), so there is `
-      + 'nothing to reprice to.');
-  out.push(`Cancel & dump = ${fmtIsk(d.valueDump)} ISK: what the buy book pays for `
-    + `${fmt.format(d.dumpFilled)}${d.dumpFilled < q ? ' of the ' + fmt.format(q) : ''} units right now, `
-    + `after tax. The broker fee you paid to put this order up is SUNK — it is not charged against any `
-    + `of the three, and least of all against cancelling.`);
-  if (d.stalled) out.push('Stalled: ' + d.reasons.join('; ') + '.');
-  return out.join(' ');
+    out.push(`reprice: none — you are at or under the best competing sell ${fmtIsk(d.bestOther)}`);
+  out.push(`dump: ${fmtIsk(d.valueDump)} ISK · the buy book pays for `
+    + `${fmt.format(d.dumpFilled)}${d.dumpFilled < q ? '/' + fmt.format(q) : ''} u now, after tax`);
+  out.push('sunk: the broker fee that put this order up — charged against none of the three, '
+    + 'least of all against cancelling');
+  if (d.stalled) out.push('stalled: ' + d.reasons.map(r => r.t).join(' · '));
+  return out.join('\n');
 }
 
 function ordRecompute(){
@@ -3175,7 +3222,7 @@ const VERDICT_CLASS = { hold: 'hold', reprice: 'reprice', dump: 'dump' };
 
 function ordDiagCells(tr, r, cell){
   if (r.isBuy){
-    const t = 'buy orders are not triaged here — the sell-side arithmetic does not apply to them';
+    const t = 'buy order: not triaged — the sell-side arithmetic does not apply';
     for (let i = 0; i < 5; i++) cell('num', '—', '', t);
     cell('', '—', '', t);
     cell('', '—', '', t);
@@ -3183,20 +3230,21 @@ function ordDiagCells(tr, r, cell){
   }
   cell('num', r.queueAhead == null ? '—' : fmt.format(Math.round(r.queueAhead)),
     r.queueAhead == null ? '' : String(Math.round(r.queueAhead)),
-    r.queueAhead == null ? (r.why || '') : 'units listed at or below your price here, your own excluded');
+    r.queueAhead == null ? (r.why || '') : 'units at or below your price here\nyour own units excluded');
   cell('num' + (r.aboveBestPct > 0 ? ' neg' : r.aboveBestPct < 0 ? ' pos' : ''),
     r.aboveBestPct == null ? '—' : pctSigned(r.aboveBestPct),
     r.aboveBestPct == null ? '' : r.aboveBestPct.toFixed(2),
-    r.bestOther == null ? 'nothing else is listed here' : 'best competing sell ' + fmtIsk(r.bestOther));
+    r.bestOther == null ? 'nothing else is listed here' : 'best competing sell: ' + fmtIsk(r.bestOther));
   cell('num', r.daysToFill == null ? '—' : fmtDays(r.daysToFill),
     r.daysToFill == null ? '' : r.daysToFill.toFixed(2),
-    r.daysToFill == null ? 'no queue or no traded volume to divide by'
-      : `${fmt.format(Math.round(r.queueAhead))} units ahead of you ÷ ${fmt.format(r.volDay)} units traded per day `
-        + '(regional, both sides — optimistic)');
+    r.daysToFill == null ? 'no queue, or no traded volume to divide by'
+      : `queue: ${fmt.format(Math.round(r.queueAhead))} u ahead`
+        + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)`);
   cell('num' + (r.trendPctWk > 0 ? ' pos' : r.trendPctWk < 0 ? ' neg' : ''),
     r.trendPctWk == null ? '—' : pctSigned(r.trendPctWk),
     r.trendPctWk == null ? '' : r.trendPctWk.toFixed(2),
-    r.trendPctWk == null ? 'no price history for this item' : 'Theil–Sen slope over the last 30 days (' + r.dir + ')');
+    r.trendPctWk == null ? 'no price history for this item'
+      : `Theil–Sen slope over 30d\ndirection: ${r.dir}`);
   cell('num', r.chance == null ? '—' : Math.round(r.chance * 100) + '%',
     r.chance == null ? '' : (r.chance * 100).toFixed(1), r.why || '');
   const st = cell('stalledcell', r.chance == null && !r.stalled ? '—' : (r.stalled ? 'yes' : 'no'),
@@ -3207,9 +3255,15 @@ function ordDiagCells(tr, r, cell){
     b.style.color = 'var(--red)';
     b.textContent = 'yes';
     const s = document.createElement('span');
-    s.className = 'hint';
     s.style.display = 'block';
-    s.textContent = r.reasons.join(' · ');
+    // one chip per reason: the code on screen, its numbers on hover
+    for (const rs of r.reasons){
+      const chip = document.createElement('span');
+      chip.className = 'flag warn';
+      chip.textContent = rs.t;
+      chip.title = rs.ttl;
+      s.appendChild(chip);
+    }
     st.append(b, s);
   }
   const vd = cell('', '', '', r.why || '');
@@ -3224,7 +3278,8 @@ function ordDiagCells(tr, r, cell){
       const s = document.createElement('span');
       s.className = 'hint';
       s.style.marginLeft = '6px';
-      s.textContent = `→ ${fmtIsk(r.repricePrice)} · fee ${fmtIsk(r.relistFee)}`;
+      s.textContent = `→ ${fmtIsk(r.repricePrice)} · fee ${fmtCompact(r.relistFee)}`;
+      s.title = `new price: ${fmtIsk(r.repricePrice)} ISK\nrelist fee: ${fmtIsk(r.relistFee)} ISK`;
       vd.appendChild(s);
     }
   } else {
@@ -3245,7 +3300,7 @@ function ordSparkCell(r){
   if (svg){ td.appendChild(svg); td.dataset.spark = 'ready'; }
   else {
     td.textContent = '—';
-    td.title = 'no price history for this item in this region';
+    td.title = 'no history for this item in this region';
     td.dataset.spark = 'none';
   }
   return td;
@@ -3256,12 +3311,45 @@ function renderOrdTriageStats(box, sells, mk){
   if (!stalled.length && !sells.some(r => r.verdict)) return;
   const frozen = stalled.reduce((t, r) => t + r.iskTied, 0);
   const recover = stalled.reduce((t, r) => t + (r.dumpNow || 0), 0);
-  mk('stalled', `${stalled.length} order${stalled.length === 1 ? '' : 's'} · ${fmtIsk(frozen)} ISK frozen`,
-    'orders whose odds are under your patience floor, whose queue cannot clear before they expire, or '
-    + 'that sit above the best sell on a falling market');
-  mk('recoverable now by dumping', fmtIsk(recover) + ' ISK',
-    'what the buy book would actually pay for those units today, walked depth-first and after sales tax — '
-    + 'the broker fee already spent on those orders is sunk and is not counted against this');
+  mk('stalled', `${stalled.length} order${stalled.length === 1 ? '' : 's'} · ${fmtCompact(frozen)} ISK frozen`,
+    `frozen: ${fmtIsk(frozen)} ISK\nstalled: odds under the floor · queue outlasts the order · above best sell on a sliding market`);
+  mk('recoverable', fmtCompact(recover) + ' ISK by dumping',
+    `recoverable: ${fmtIsk(recover)} ISK\n= what the buy book pays today, walked depth-first, after tax`
+    + '\nbroker fee already spent: sunk, not counted against this');
+}
+
+/* The whole triage table as TSV — the screen is terse on purpose, so this is the way to
+   hand the raw numbers to a spreadsheet (or to someone else). Every visible column plus
+   the diagnostics behind them: queue, days to fill, chance, trend, the three option
+   values the verdict compares, and the relist fee it charges the reprice branch. */
+function ordTsv(){
+  const head = ['Character','Item','Type id','Your price','Qty left','Qty total','Location','Location id',
+    'Age d','Days left','ISK tied up','Queue ahead','vs best %','Best competing sell','Fill est. d',
+    'Vol/day','Trend %/wk','Chance %','Window d','Stalled','Stalled reasons','Verdict',
+    'Hold ISK','Reprice ISK','Dump ISK','Reprice price','Relist fee ISK','Side'];
+  const num = (v, dp) => v == null ? '' : Number(v).toFixed(dp);
+  const lines = [head.join('\t')];
+  const rows = ordSorted(ordRows().filter(r => state.ordShowBuy || !r.isBuy));
+  for (const r of rows){
+    lines.push([
+      r.charName, r.name || ('type ' + r.typeId), r.typeId,
+      num(r.price, 2), r.volumeRemain, r.volumeTotal,
+      r.locName || '', r.locationId,
+      num(r.ageDays, 2), num(r.daysLeft, 2), num(r.iskTied, 2),
+      r.queueAhead == null ? '' : Math.round(r.queueAhead),
+      num(r.aboveBestPct, 2), num(r.bestOther, 2), num(r.daysToFill, 2),
+      r.volDay == null ? '' : r.volDay, num(r.trendPctWk, 2),
+      r.chance == null ? '' : (r.chance * 100).toFixed(1),
+      r.window == null ? '' : r.window,
+      r.isBuy ? '' : (r.stalled ? 'yes' : 'no'),
+      (r.reasons || []).map(x => x.t).join('; '),
+      r.verdict ? VERDICT_LABEL[r.verdict] : '',
+      num(r.valueHold, 2), num(r.valueReprice, 2), num(r.valueDump, 2),
+      num(r.repricePrice, 2), num(r.relistFee, 2),
+      r.isBuy ? 'buy' : 'sell',
+    ].join('\t'));
+  }
+  return lines.join('\n');
 }
 
 /* ---------- the mode switcher ----------
@@ -3407,8 +3495,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
     // book instead of showing it under a hub's name, and rebuilds. Only the status line
     // is ours — "market changed" would not explain why it changed on its own.
     $('market').dispatchEvent(new Event('change'));
-    $('esiStatus').textContent = `the selected structure was removed in the Structure Manager — `
-      + `market reset to ${hub().label}, fetch prices again`;
+    $('esiStatus').textContent = `structure removed in the Structure Manager · market → ${hub().label} · refetch`;
     $('esiStatus').className = '';
     return;
   }
@@ -3493,7 +3580,11 @@ $('btnCopyInst').addEventListener('click', () => {
   if (!text){ $('copyStatusInst').textContent = 'nothing to copy'; $('copyStatusInst').className = 'hint err'; return; }
   copyText(text, $('copyStatusInst'), $('preview'), `copied ${text.split('\n').length} lines`);
 });
-$('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), $('copyStatusTsv'), $('preview'), 'copied full table as TSV'));
+$('btnCopyTsv').addEventListener('click', () => copyText(fullTsv(), $('copyStatusTsv'), $('preview'), 'copied TSV'));
+$('btnOrdTsv').addEventListener('click', () => {
+  const text = ordTsv();
+  copyText(text, $('copyStatusOrd'), $('preview'), `copied ${text.split('\n').length - 1} orders`);
+});
 
 $('tblBody').addEventListener('keydown', e => {
   const td = e.target.closest && e.target.closest('td.spark');
