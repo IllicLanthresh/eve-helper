@@ -280,14 +280,6 @@
     <select id="facStruct" style="width:170px" disabled title="log in with EVE to compute per-ore refine yields from your skills and this facility"></select>
     <button id="facPick" type="button" disabled
       title="log in with EVE, then search a player structure — Athanor/Tatara refinery bases and system security are auto-detected">choose structure…</button>
-    <select id="facRig" style="width:105px" disabled
-      title="reprocessing rig recorded on the structure — edit it in the Structure Manager">
-      <option value="none">no rig</option>
-      <option value="t1">T1 rig +1%</option>
-      <option value="t2">T2 rig +3%</option>
-    </select>
-    <a id="facManage" class="hint" href="structures.html" hidden
-      title="the Structure Manager — rigs, tax, broker rate and notes for this structure">manage</a>
     <select id="facSec" style="width:118px" disabled title="rig bonus security multiplier — auto-detected from the chosen structure's system">
       <option value="hs">highsec ×1.00</option>
       <option value="ls">lowsec ×1.06</option>
@@ -304,6 +296,9 @@
       title="whose skills compute the per-ore refine yields on this page — a page-local role, the topbar's site-wide active character is not touched"></select>
     <span id="reproWarn" class="flag warn" hidden></span>
     <span id="facNote" class="hint"></span>
+    <span id="facRigNote" class="hint" hidden></span>
+    <a id="facManage" class="hint" href="structures.html" hidden
+      title="the Structure Manager — the reprocessing rig, tax, broker rate and notes for this structure">manage structure</a>
     <label for="refine" style="margin:0">flat refine %</label>
     <input id="refine" type="number" min="30" max="95" step="1" value="75" style="width:70px"
       title="fallback yield used when not logged in — once logged in, refine is computed per ore from your actual skills and the facility selectors">
@@ -799,10 +794,33 @@ function facNoteText(){
   return t;
 }
 
+// the reprocessing rig as the structure's central record has it — a read-only line, since
+// this page selects a structure and never manages one. Nothing recorded means no rig
+// bonus in the yield (facilityBasePct agrees), and the line says where to fix that.
+function renderRigNote(isStruct){
+  const el = $('facRigNote');
+  const st = state.fac.structInfo;
+  el.textContent = '';
+  el.hidden = !isStruct;
+  if (!isStruct) return;
+  const rig = reproRig();
+  const labels = (window.EveStructures && EveStructures.REPRO_RIGS) || {};
+  if (rig === 'none'){
+    el.className = 'hint warn';
+    el.textContent = 'no reprocessing rig set — configure it in the structure manager';
+    el.title = 'rig fittings are not in ESI, so the manager is where they are recorded — '
+      + 'until one is, the yield is computed with no rig bonus';
+  } else {
+    el.className = 'hint';
+    el.textContent = labels[rig] || rig;
+    el.title = `recorded on ${st.name}'s central record — edit it in the Structure Manager`;
+  }
+}
+
 // keeps the facility widgets consistent: options, enabled states, titles, note.
 // Rig + security only ever apply to player structures — NPC stations have no rigs.
-// The rig itself is never edited here: it belongs to the structure, so the select only
-// shows what the central record says and the "manage" link opens that record.
+// The rig itself is never edited here: it belongs to the structure, so the line only
+// mirrors what the central record says and the "manage" link opens that record.
 function renderFacControls(){
   const on = !!(charSkills && charSkills.groups && Object.keys(charSkills.groups).length);
   const st = state.fac.structInfo;
@@ -820,23 +838,18 @@ function renderFacControls(){
   sel.disabled = !on;
   $('facPick').disabled = !on;
   $('facImp').disabled = !on;
-  $('facRig').disabled = true;   // never hand-picked here: it lives on the structure record
-  $('facRig').value = reproRig();
   $('facSec').disabled = true;   // never hand-picked: detected from the structure's system
   $('facSec').value = state.fac.sec;
-  $('facManage').hidden = !isStruct;
+  $('facManage').hidden = !(on && isStruct);
   if (isStruct) $('facManage').href = 'structures.html#s' + st.id;
+  renderRigNote(on && isStruct);
   if (on){
     sel.title = '';
     $('facPick').title = 'search a player structure — Athanor/Tatara refinery bases and system security are auto-detected';
     $('facImp').title = "Zainou 'Beancounter' RX reprocessing implant (clone implants are not in ESI — set manually)";
-    if (isStruct){
-      $('facRig').title = 'reprocessing rig recorded on this structure (fittings are not in ESI) — edit it in the Structure Manager';
-      $('facSec').title = `detected from ${st.systemName || 'the system'} security ${st.security != null ? st.security.toFixed(2) : '?'} — not editable`;
-    } else {
-      $('facRig').title = 'NPC stations cannot fit rigs — rig bonuses only exist on player structures';
-      $('facSec').title = 'security multiplier applies only to structure rigs';
-    }
+    $('facSec').title = isStruct
+      ? `detected from ${st.systemName || 'the system'} security ${st.security != null ? st.security.toFixed(2) : '?'} — not editable`
+      : 'security multiplier applies only to structure rigs';
   }
   $('facNote').textContent = on ? facNoteText() : '';
 }
@@ -2654,7 +2667,6 @@ function restore(){
     state.roles.repro = numOrNull(s.roles.repro);
     state.roles.seller = numOrNull(s.roles.seller);
   }
-  $('facRig').value = reproRig();
   $('facImp').value = String(state.fac.imp);
   // refresh the cached structure identity (instant when already cached; needs login otherwise)
   if (state.fac.structInfo && window.EveStructures)
@@ -2722,7 +2734,7 @@ $('facStruct').addEventListener('change', () => {
   renderFacControls(); renderSkillsPanel(); renderPlan(); renderFleet(); persist();
 });
 $('facPick').addEventListener('click', async () => {
-  const s = await EveStructures.pick({ title: 'Refining structure', manage: true });
+  const s = await EveStructures.pick({ title: 'Refining structure', list: true });
   if (s){
     state.fac.struct = 's:' + s.id;
     state.fac.structInfo = identOf(s);

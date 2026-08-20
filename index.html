@@ -131,6 +131,7 @@
         <label for="salesTax" style="margin:0">sales tax % <span class="hint">(all sales)</span></label>
         <input id="salesTax" type="number" step="0.01" min="0" max="20" value="7.5">
       </div>
+      <div class="hint" id="feeSrc" style="margin-top:4px" hidden></div>
     </fieldset>
     <fieldset class="grp">
       <legend>history reference</legend>
@@ -1256,9 +1257,7 @@ function renderMarketOptions(){
   add('__add', '+ add structure…');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'jita';
   $('manageStructs').hidden = !savedStructures().length;
-  // deep-link straight to the selected structure's record when there is one
-  const sid = sel.value.startsWith('s:') ? sel.value.slice(2) : null;
-  $('manageStructs').href = sid ? 'structures.html#s' + sid : 'structures.html';
+  renderFeeSrc();
 }
 
 function hub(){
@@ -1282,18 +1281,43 @@ function syncBrokerForMarket(){
     $('brokerFee').value = hubBrokerFee;
   }
   marketWasStructure = !!h.structure;
+  renderFeeSrc();
+}
+
+// says where the broker % in the box comes from. At an NPC hub it is computed from the
+// character's skills and standings (the ⚡ note below spells that out); at a player
+// structure it is the owner-set rate kept on the structure's central record, which this
+// page only selects — so the line points at the manager entry that owns it.
+function renderFeeSrc(){
+  const box = $('feeSrc');
+  const h = hub();
+  // both routes into the manager point at the selected structure's own record
+  $('manageStructs').href = h.structure ? 'structures.html#s' + h.structure : 'structures.html';
+  box.textContent = '';
+  box.hidden = !h.structure;
+  if (!h.structure) return;
+  const pct = structBrokerOf(h.structure);
+  const txt = document.createElement('span');
+  txt.textContent = pct == null
+    ? `broker % at ${h.label}: owner-set rate from the structure manager — none recorded yet; `
+      + 'read it off the in-game sell window and type it here (it is saved on the structure). '
+    : `broker % at ${h.label}: owner-set rate from the structure manager — typing here updates that record. `;
+  const a = document.createElement('a');
+  a.href = 'structures.html#s' + h.structure;
+  a.textContent = 'open the record';
+  box.append(txt, a);
 }
 
 const STRUCTURE_MARKET_SCOPE = 'esi-markets.structure_markets.v1';
 const scopeHelp = missing =>
   `your login lacks ${missing.join(' + ')} — add the scope${missing.length > 1 ? 's' : ''} to the app in the EVE developer portal, then log in again`;
 
-// the shared modal both adds and manages structures; a pick becomes the market,
-// removing the selected one falls back to Jita
+// the shared modal is a selector: search for a new structure or pick a saved one, and it
+// becomes the market (managing them is the Structure Manager's job, which it links to)
 async function pickStructureMarket(){
   const before = $('market').value;
-  const s = await EveStructures.pick({ title: 'Market structure', manage: true });
-  renderMarketOptions();   // reflects removals; falls back to jita if the selection is gone
+  const s = await EveStructures.pick({ title: 'Market structure', list: true });
+  renderMarketOptions();   // picks up a newly saved structure; falls back to jita if the selection is gone
   const target = s ? 's:' + s.id : $('market').value;
   $('market').value = target;
   if (target !== before) $('market').dispatchEvent(new Event('change'));
@@ -1514,6 +1538,7 @@ function restore(){
   marketWasStructure = !!hub().structure;
   const savedPct = marketWasStructure ? structBrokerOf(hub().structure) : null;
   if (savedPct != null) $('brokerFee').value = String(savedPct);
+  renderFeeSrc();
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
   if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
   if (saved.histMode) $('histMode').value = saved.histMode;
@@ -1525,13 +1550,14 @@ function restore(){
 }
 
 /* ---------- wiring ---------- */
-renderMarketOptions();
+renderMarketOptions();   // also draws the fee-source line for the selected market
 
 // write the owner-set broker rate onto the structure's central record the moment it is
 // edited (registered before the generic rebuild listener so the record is current first)
 $('brokerFee').addEventListener('change', () => {
   const h = hub();
   if (h.structure) setStructBroker(h.structure, Number($('brokerFee').value));
+  renderFeeSrc();
 });
 // a record edited in the manager (another tab) must reach this page live
 if (window.EveStructures) EveStructures.subscribe(ev => {
@@ -1539,6 +1565,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
   renderMarketOptions();
   const h = hub();
   const pct = h.structure ? structBrokerOf(h.structure) : null;
+  renderFeeSrc();
   if (pct != null && $('brokerFee').value !== String(pct)){
     $('brokerFee').value = String(pct);
     rebuild();
@@ -1731,9 +1758,10 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
       $('salesTax').value = tax.toFixed(2);
       if (hNow.structure){
         // player structure: the broker fee is owner-set (no ESI endpoint, skills and
-        // standings don't apply) — only the sales tax comes from the character
+        // standings don't apply) — only the sales tax comes from the character. Where the
+        // rate itself comes from is the #feeSrc line's job, so it is not repeated here.
         if (my !== seq) return;
-        note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · broker fee at ${hNow.label} is set by its owner — ESI doesn't publish it; enter it from the in-game sell window (kept on the structure's record, editable in Structures). Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
+        note.textContent = `⚡ ${EveAuth.character().name}: ${taxBit} · the broker % is the owner-set rate from the structure manager — ESI doesn't publish structure fees, so skills and standings never touch it. Every order also pays a flat ${MIN_BROKER_FEE_ISK} ISK minimum broker fee.`;
         rebuild();
         return;
       }

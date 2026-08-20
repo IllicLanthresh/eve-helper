@@ -1180,7 +1180,7 @@ $('btnAddNpc').addEventListener('click', () => {
   saveProfiles(); renderFacilities();
 });
 $('btnAddStruct').addEventListener('click', async () => {
-  const s = await EveStructures.pick({ title: 'Industry facility', manage: true });
+  const s = await EveStructures.pick({ title: 'Industry facility', list: true });
   if (!s) return;
   const p = activeProfile();
   // the hull's role bonuses and what it CAN run come from the central record; which of

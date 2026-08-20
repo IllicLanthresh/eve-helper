@@ -472,9 +472,8 @@
 .eveModal .row{display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer}
 .eveModal .row:hover,.eveModal .row.active{background:#1b2434}
 .eveModal .row .sub{color:var(--dim,#8b96a8);font-size:12px;margin-left:6px}
-.eveModal .row .del{margin-left:auto;color:var(--dim,#8b96a8);padding:0 6px;border-radius:4px;font-size:15px}
-.eveModal .row .del:hover{color:var(--red,#e06c75);background:#242e42}
 .eveModal .msg{color:var(--dim,#8b96a8);margin-top:8px;min-height:16px}
+.eveModal .msg a{color:var(--cyan,#5bc8e8)}
 .eveModal .msg.err{color:var(--red,#e06c75)}
 .eveModal .sect{color:var(--dim,#8b96a8);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:2px 0 4px}
 .eveModal .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line,#232c3d);border-top-color:var(--cyan,#5bc8e8);border-radius:50%;animation:evemodalspin .8s linear infinite;vertical-align:-2px;margin-right:6px}

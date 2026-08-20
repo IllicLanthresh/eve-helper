@@ -9,8 +9,9 @@
    The manager UI is structures.html; every other page merely SELECTS a structure.
 
    window.EveStructures:
-   - pick({title, manage}) → Promise<entry|null> — modal with live search (as the ACTIVE
-     character), keyboard selection, and (manage) the saved list with remove buttons
+   - pick({title, list}) → Promise<entry|null> — modal with live search (as the ACTIVE
+     character), keyboard selection, and (list) the saved structures to pick from; it is
+     a SELECTOR only — editing and removing happen in the manager it links to
    - info(id)   → Promise<entry> — structure name/type/system/security/region, cached
    - refresh(id) → Promise<entry> — re-resolve identity from ESI, bypassing the cache
    - saved()/remember(entry)/remove(id) — one saved list shared by every tool
@@ -476,7 +477,7 @@
         msg.append(sp, text);
       };
 
-      function rowEl(entry, removable){
+      function rowEl(entry){
         const row = document.createElement('div');
         row.className = 'row';
         const main = document.createElement('span');
@@ -487,13 +488,6 @@
         sub.textContent = [entry.systemName, entry.typeName].filter(Boolean).join(' · ');
         main.append(b, sub);
         row.appendChild(main);
-        if (removable){
-          const del = document.createElement('span');
-          del.className = 'del'; del.textContent = '×';
-          del.title = 'remove from saved structures';
-          del.addEventListener('click', e => { e.stopPropagation(); remove(entry.id); renderSaved(); });
-          row.appendChild(del);
-        }
         row.addEventListener('click', async () => {
           let full = entry;
           if (entry.typeId == null || entry.security == null || !entry.regionId){
@@ -512,16 +506,25 @@
         return row;
       }
 
+      // the saved list is offered for selection only — editing and removing a structure
+      // happen in one place, the manager, which is what the footer link opens
       function renderSaved(){
         savedBox.textContent = '';
-        if (!opts.manage || !list.length) return;
+        if (!opts.list || !list.length) return;
         const cap = document.createElement('div');
         cap.className = 'sect';
         cap.textContent = 'saved';
         const rows = document.createElement('div');
         rows.className = 'rows';
-        for (const s of saved()) rows.appendChild(rowEl(s, true));
-        savedBox.append(cap, rows);
+        for (const s of saved()) rows.appendChild(rowEl(s));
+        const foot = document.createElement('div');
+        foot.className = 'msg';
+        const link = document.createElement('a');
+        link.href = 'structures.html';
+        link.textContent = 'manage structures →';
+        link.title = 'the Structure Manager — rename, edit or remove a structure in one place';
+        foot.appendChild(link);
+        savedBox.append(cap, rows, foot);
       }
       renderSaved();
 
@@ -555,7 +558,7 @@
           if (my !== seq) return;
           msg.className = 'msg';
           msg.textContent = entries.length ? '' : 'matches found, but none could be resolved (no access?)';
-          items = entries.map(e => { const el = rowEl(e, false); results.appendChild(el); return el; });
+          items = entries.map(e => { const el = rowEl(e); results.appendChild(el); return el; });
           if (items.length) setActive(0);
         }catch(e){
           if (my !== seq) return;

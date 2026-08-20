@@ -293,6 +293,27 @@ H.run('structures', async () => {
       await ip.evaluate(() => [...document.querySelectorAll('#facList a')].some(a => /structures\.html#s/.test(a.getAttribute('href')))));
     await ctx.close();
 
+    /* ---------- the picker is a selector, nothing more ---------- */
+    section('the shared picker selects a structure — it never edits or removes one');
+    const pctx = await browser.newContext();
+    await H.seedStorage(pctx, server.url, legacyStorage());
+    await H.mockEsi(pctx, { skills: {}, standings: {} });
+    const pp = await pctx.newPage();
+    H.watchPage(pp, 'picker');
+    await pp.goto(server.url + '/index.html');
+    await pp.waitForFunction(() => !!window.EveStructures);
+    await pp.evaluate(() => { window.__picked = EveStructures.pick({ title: 'Market structure', list: true }); });
+    await pp.waitForSelector('#structPicker .rows .row');
+    check('the saved structures are offered for selection',
+      await pp.$$eval('#structPicker #structSaved .row', els => els.length) >= 1);
+    check('...with no remove button on any row',
+      await pp.evaluate(() => !document.querySelector('#structPicker .del')));
+    eq('...and one link to the place that does manage them',
+      await pp.$eval('#structPicker #structSaved a', el => el.getAttribute('href')), 'structures.html');
+    await pp.keyboard.press('Escape');
+    eq('escaping the picker selects nothing', await pp.evaluate(() => window.__picked), null);
+    await pctx.close();
+
     /* ---------- every page offers the manager ---------- */
     section('the topbar carries a Structures tab on every page');
     for (const p of ['index.html', 'mine.html', 'industry.html', 'structures.html']) {

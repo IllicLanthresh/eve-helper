@@ -26,7 +26,7 @@ async function openSell(browser, server, opts) {
   return { context, page, counters, close: () => context.close() };
 }
 
-const NOTE_JS = "[...document.querySelectorAll('fieldset.grp .hint')].map(n=>n.textContent).find(t=>/⚡|set by its owner/.test(t))||''";
+const NOTE_JS = "[...document.querySelectorAll('fieldset.grp .hint')].map(n=>n.textContent).find(t=>/⚡|owner-set rate/.test(t))||''";
 const waitNote = page => page.waitForFunction(NOTE_JS, null, { timeout: 15000 });
 const feeNote = page => page.evaluate(NOTE_JS);
 
@@ -196,9 +196,14 @@ H.run('fees', async () => {
       // the market switch is settled once syncBrokerForMarket has claimed the structure
       // AND the auto-fill has finished writing its note — then typing cannot be clobbered
       await s.page.waitForFunction(() => hub().structure === 1035466617946
-        && /set by its owner/.test(
+        && /owner-set rate from the structure manager/.test(
           [...document.querySelectorAll('fieldset.grp .hint')].map(x => x.textContent).join(' ')),
         null, { timeout: 15000 });
+      const src = await s.page.$eval('#feeSrc', el => el.textContent);
+      check('a structure market says the rate comes from the structure manager',
+        /owner-set rate from the structure manager/.test(src), src);
+      check('...and offers the record itself',
+        await s.page.$eval('#feeSrc a', el => el.getAttribute('href')) === 'structures.html#s1035466617946');
       await s.page.fill('#brokerFee', '3.75');
       await s.page.dispatchEvent('#brokerFee', 'change');
       await s.page.selectOption('#market', 'jita');

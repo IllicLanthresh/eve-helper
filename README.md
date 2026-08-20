@@ -23,7 +23,10 @@ player structure found through the shared **structure picker**: its type (Athano
 Tatara 55% / anything else 50%) and its system's security band are **auto-detected**,
 while the reprocessing **rig** is read from the structure's central record (managed on the
 **Structures** page — ESI exposes no fittings) and the **implant stays manual** on the Mine
-page, because it is the pilot's, not the structure's. An **imported-skills panel** under the facility row lists
+page, because it is the pilot's, not the structure's. The facility line shows the recorded
+rig next to a **manage structure** link into that record; a structure with no reprocessing
+rig recorded says *"no reprocessing rig set — configure it in the structure manager"* and
+is computed with **no rig bonus** rather than a guessed one. An **imported-skills panel** under the facility row lists
 every reprocessing skill that was pulled, what it governs, and the resulting yield % at
 the current facility. Everything stays client-side: it's the OAuth2 **PKCE** flow, so
 there is no server, no database, and no secret — tokens live in your browser's
@@ -151,10 +154,12 @@ Sell where your alliance actually trades: the market selector's **+ add structur
 option opens the structure picker — a modal with live search that runs **as your
 logged-in character** (so it only finds structures that character has access to). Results
 show name, system and structure type; pick with the mouse or ↑/↓ + Enter. Saved
-structures are listed in the same modal with a remove **×** each (removing the currently
-selected structure falls back to Jita); the **manage structures** link next to the selector
-opens the [Structure Manager](#structure-manager-structureshtml) on that structure's record.
-The saved list is **shared with every tool**. This
+structures are listed in the same modal to pick from — the modal is a **selector only**:
+renaming, editing and removing happen in the
+[Structure Manager](#structure-manager-structureshtml), which the modal's footer link and
+the **manage structures** link next to the market selector both open (deep-linked to the
+selected structure's record). Removing a structure there drops it from the market list and
+falls back to Jita. The saved list is **shared with every tool**. This
 needs the `esi-markets.structure_markets.v1`, `esi-universe.read_structures.v1` and
 `esi-search.search_structures.v1` scopes — if your character logged in before these were
 requested, log in again ("+ alt" on the same character works).
@@ -169,10 +174,12 @@ With a structure selected, a price run fetches:
 - **regional history** (ESI has no per-structure history — the Hist column, flags and
   fallbacks are region-wide, and the status line says so).
 
-The **owner-set broker fee is not in ESI** (there is no endpoint for it): read it once
-from the in-game sell window and type it into the broker % field — typing it here writes it
-onto the **structure's central record** (it can equally be entered on the Structures page,
-and a change there reaches an open Sell tab immediately), and switching back to an NPC hub
+The **owner-set broker fee is not in ESI** (there is no endpoint for it). With a structure
+selected, the fees box says so — *"broker % at ‹structure›: owner-set rate from the
+structure manager"* — and links straight to that record. Read the rate once from the
+in-game sell window and type it into the broker % field: typing it here writes it onto the
+**structure's central record**, exactly as if it had been entered on the Structures page
+(and a change made there reaches an open Sell tab immediately). Switching back to an NPC hub
 restores the skills/standings-derived rate. Sales tax (Accounting) applies everywhere and
 keeps auto-filling.
 
@@ -543,8 +550,10 @@ The store is `localStorage["eveHelper.structures.v1"]`, bumped to **schema v2**:
 `{ v: 2, structures: [record, …] }`. A v1 store (a bare array of identities) is read,
 normalized — every managed fact gets its default — and rewritten in the v2 shape on first
 load. `structures.js` exposes the record API (`get`, `facts`, `update`, `addConflict`,
-`dismissConflict`, `refresh`, `roleBonuses`, `defaultActivities`) next to the unchanged
-`pick` / `info` / `saved` / `remember` / `remove`, plus **`subscribe(fn)`**: it fires on
+`dismissConflict`, `refresh`, `roleBonuses`, `defaultActivities`) next to
+`pick` / `info` / `saved` / `remember` / `remove` — `pick({title, list})` is now a pure
+**selector** (it lists the saved structures and links to the manager; it no longer removes
+anything) — plus **`subscribe(fn)`**: it fires on
 every mutation made through the API on this page *and* on a `storage` event from another
 tab, which is how an edit in the manager re-prices an open Mine or Industry tab live.
 

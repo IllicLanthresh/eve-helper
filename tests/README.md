@@ -28,6 +28,7 @@ anywhere but here.
 | `structures.test.js` | the central structure store and the Structure Manager: the v2 schema bump, the one-time import of the tools' old per-structure facts (with the two-profile conflict note), the record editors, the moved rig-inference solver, and the Industry page reading rigs/tax from the record | yes |
 | `industry-ui.test.js` | the Industry page end to end against a fixture `data/industry.json` | yes |
 | `mine-fleet.test.js` | the Mine page: the two modes (plan production / fleet mode) over one shared DOM, survey-scan parsing, refined vs compressed ISK/m³ from skills + facility against a fixture `data/ores.json`, ISK/h math, persistence | yes |
+| `equivalence.test.js` | value equivalence across the structure centralisation: the **pre-migration build is checked out of git** and served next to the current one, both are handed the same legacy storage, and every Sell fee/plan and Mine yield/profit-mode column is compared exactly | yes |
 
 ## Environment
 
@@ -48,6 +49,12 @@ it is usually absent. `industry-ui.test.js` and `structures.test.js` intercept t
 `page.route` and serve a small hand-written fixture, so they never need the real file
 and never write into `data/`. The engine suite builds its data inline — it needs no
 fixture at all.
+
+`equivalence.test.js` needs one thing the others don't: **git history**. It materializes
+the pre-migration build (`git show <commit>:index.html`, …) into a temp directory and
+serves it on a second port, so the old and new builds can be driven side by side from the
+same legacy storage. In a checkout too shallow to contain that commit it reports a single
+failed check rather than pretending to have proved anything.
 
 ## Adding checks
 
