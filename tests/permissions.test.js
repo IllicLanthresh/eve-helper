@@ -69,7 +69,7 @@ H.run('permissions', async () => {
     check('...and a plain-language consequence, not just the scope name',
       /assumed ME\/TE/.test(rep.chars[0].missing[0].features.join(' ')),
       JSON.stringify(rep.chars[0].missing[0].features));
-    eq('...while the other five are granted', rep.chars[0].granted.length, H.ALL_SCOPES.length - 1);
+    eq('...while the other six are granted', rep.chars[0].granted.length, H.ALL_SCOPES.length - 1);
     check('the report is not all-good', rep.allGood === false, JSON.stringify(rep.allGood));
     eq('...and the application itself is fine', rep.appIssues.length, 0);
 

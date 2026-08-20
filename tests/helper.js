@@ -137,6 +137,7 @@ const ALL_SCOPES = [
   'esi-universe.read_structures.v1',
   'esi-search.search_structures.v1',
   'esi-characters.read_blueprints.v1',
+  'esi-markets.read_character_orders.v1',
 ];
 
 /* The localStorage blob auth.js expects for a logged-in character (storage schema v2). */

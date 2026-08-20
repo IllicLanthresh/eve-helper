@@ -67,7 +67,7 @@ H.run('auth', async () => {
       await page.evaluate(() => location.search));
     let blob = await authBlob(page);
     check('the one-shot PKCE material is discarded', !blob.pkce, JSON.stringify(blob.pkce));
-    eq('all five scopes ride along on the stored token',
+    eq('all six scopes ride along on the stored token',
       (await page.evaluate(() => EveAuth.tokenScopes())).length, H.ALL_SCOPES.length);
     await context.close();
 

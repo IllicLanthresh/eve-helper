@@ -6,8 +6,9 @@
    - Callback URL: this site's index page URL (exactly, incl. trailing slash)
    - Scopes: esi-skills.read_skills.v1 esi-characters.read_standings.v1
      esi-markets.structure_markets.v1 esi-universe.read_structures.v1
-     esi-search.search_structures.v1 (scopes the SSO no longer publishes are dropped
-     from the login request automatically)
+     esi-search.search_structures.v1 esi-markets.read_character_orders.v1
+     (scopes the SSO no longer publishes are dropped from the login request
+     automatically)
 */
 'use strict';
 (function(){
@@ -20,8 +21,10 @@
     'esi-search.search_structures.v1',    // find structures by name
   ];
   const BLUEPRINTS_SCOPE = 'esi-characters.read_blueprints.v1';  // owned BPs with real ME/TE (Industry tool)
+  const ORDERS_SCOPE = 'esi-markets.read_character_orders.v1';   // your own open market orders (Sell tool)
   const SKILLS_SCOPE = 'esi-skills.read_skills.v1';
-  const SCOPES = [SKILLS_SCOPE, STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE].join(' ');
+  const SCOPES = [SKILLS_SCOPE, STANDINGS_SCOPE, ...STRUCTURE_SCOPES, BLUEPRINTS_SCOPE,
+                  ORDERS_SCOPE].join(' ');
 
   /* What the user actually loses when a scope is missing, in plain language. These
      strings are shown verbatim in the permissions modal and in the inline notes next to
@@ -40,6 +43,9 @@
     'esi-search.search_structures.v1': ['searching for your structures by name'],
     [BLUEPRINTS_SCOPE]: [
       "your real researched ME/TE and which BPOs you own — without it the Industry tab uses the profile's assumed ME/TE",
+    ],
+    [ORDERS_SCOPE]: [
+      'your open market orders and the stalled-order triage — without it the Sell tool\'s "My orders" mode cannot see this character\'s orders at all',
     ],
   };
   const featuresOf = scope => SCOPE_FEATURES[scope] || [];
@@ -150,7 +156,7 @@
       clientId = (window.prompt(
         'EVE SSO Client ID needed (one-time setup):\n\n' +
         '1. https://developers.eveonline.com → create an application (any kind — the secret key is never used)\n' +
-        '2. Scopes (tick the ones the portal still offers): esi-skills.read_skills.v1, esi-characters.read_standings.v1, esi-markets.structure_markets.v1, esi-universe.read_structures.v1, esi-search.search_structures.v1\n' +
+        '2. Scopes (tick the ones the portal still offers): ' + SCOPES.split(' ').join(', ') + '\n' +
         `3. Callback URL exactly: ${callbackUrl()}\n\n` +
         'Paste the Client ID here (stored only in your browser):') || '').trim();
       if (!clientId) return;
