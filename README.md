@@ -119,34 +119,138 @@ when all permissions are granted the site says nothing at all.
    (see *Player structure markets* below).
 3. **Fetch prices (ESI)** — pulls the live order book per item (optionally plus ~13 months
    of daily price history) for the chosen hub.
-4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%) and choose how ORDER
-   items get their list price `L`:
+4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%), set your **patience**
+   (*in a rush* / *balanced* / *patient*), and choose where the competitive list price `L`
+   comes from:
    - **current best sell** (optionally one tick under), or
    - **history statistic** — median / average / 10th / 90th percentile of the region's
      daily average price over the last N days. N and the statistic apply instantly, no refetch.
-5. Every item is valued against the actual buy book and gets a plan:
-   - **INSTANT** — dumping the stack into the buy book right now nets the most. Depth-aware:
-     the walk respects each order's remaining volume and `min_volume` (margin-scam bait is
-     ignored), so one 1-unit buy order at a silly price no longer values your whole stack.
-   - **ORDER** — listing at `L` nets more: `qty × L × (1 − tax)` less the broker fee on
-     that one order, `max(100 ISK, broker% × qty × L)`.
-   - **SPLIT** — the best of both: when you import at `L`, the game automatically fills any
-     buy orders priced ≥ `L` first (at *their* price, no broker fee) and lists the rest at
-     `L`. SPLIT means that instant part is non-empty — no manual stack splitting needed.
+     This statistic is also the **patient price** the tool values as its own option.
+5. Every item is valued against the actual buy book *and* against the two ways of listing
+   it, and gets a plan — see [The decision layer](#the-decision-layer) for the model:
+   - **INSTANT** — dumping the stack into the buy book right now is the best of the three.
+     Depth-aware: the walk respects each order's remaining volume and `min_volume`
+     (margin-scam bait is ignored), so one 1-unit buy order at a silly price no longer
+     values your whole stack. Certain, and it uses no market slot.
+   - **LIST** — listing at the competitive price `L`.
+   - **LIST-PATIENT** — listing at the history reference price, when the odds say that is
+     worth the wait and the fee.
+   - **SPLIT** — a listing whose instant leg is non-empty: when you import at a price, the
+     game automatically fills any buy orders above it first (at *their* price, no broker
+     fee) and lists the rest. No manual stack splitting needed, whichever list price the
+     recommendation picked.
    The split point is chosen by comparing the actual net of every cut of the buy book, so
    the 100 ISK per-order minimum is priced in: on a cheap stack it can tip the plan to
    INSTANT, and rows where it binds carry a `min fee 100 ISK → x.x%` flag.
 6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
-   plan type. Filters are a viewing aid only — ticked rows hidden by a filter stay in the
-   import list (the toolbar says so). Selection buttons (top N / all / none) act on the
-   filtered rows and tick only ORDER/SPLIT items.
+   plan. The table opens sorted by **ISK/slot-day**, descending. Filters are a viewing aid
+   only — ticked rows hidden by a filter stay in the import list (the toolbar says so).
+   Selection buttons (top N / all / none) act on the filtered rows and tick only listing
+   rows (INSTANT items have no price to import).
 7. **Export — two artifacts**:
    - **Import list (orders & splits)**: every ticked row as `Item name ⇥ Price` for the
      game's multi-sell import. The tick column is labelled *Import* and only ORDER/SPLIT
      rows have a checkbox — INSTANT rows show ⚡ instead, since there is nothing to import.
    - **Instant checklist**: the INSTANT items as `Item name ⇥ Qty` (plus the instant legs
      of ticked SPLITs as partial stacks) — sell these directly in the hangar.
-8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets.
+8. **Copy full table (TSV)** pastes the whole analysis into Excel / Google Sheets, including
+   the working numbers the table keeps in tooltips (trend %/week, percentile rank, undercut
+   velocity, the broker fee at risk).
+
+## The decision layer
+
+The scarce resource is not ISK, it is a **market slot-day**: you can only have so many
+orders up, so the question per item is not "could this be worth more?" but "is this the
+best thing to spend a slot on, and will it actually sell before I give up on it?".
+
+Three disposals are valued per item, all net of the real fee model:
+
+| Disposal | What it means | Slot | Certainty |
+| --- | --- | --- | --- |
+| **INSTANT** | dump the stack into the buy book now | none | certain |
+| **LIST** | one order at the competitive price `L` | one | probabilistic |
+| **LIST-PATIENT** | one order at the history reference price | one | probabilistic |
+
+**The broker fee is charged when the order goes up, not when it fills.** Cancel or endlessly
+modify the order and the fee is simply gone. So a listing is worth
+
+```
+net = legNet − broker − churn + p × (it fills) + (1 − p) × (you give up and dump it then)
+```
+
+with the broker fee subtracted in **both** branches, `legNet` the part of the stack that
+fills instantly against buy orders above the list price, and the give-up branch valued at
+today's buy-book price **carried forward by the trend** over the patience window
+(`today × (1 + weekly%/100) ^ (window/7)`), which is what makes a decaying item punish
+itself. `churn` prices the relisting a sliding market forces on you: each modification pays
+the broker fee again.
+
+The metrics behind it, all computed from data already fetched (the daily history and the
+live book — no extra ESI endpoint), all recomputed locally when you change a control:
+
+- **Trend** — Theil–Sen slope (the median of every pairwise slope) on the **log** of the
+  last 30 daily averages, in %/week. Median-of-slopes because EVE history is full of
+  single-day spikes that would drag a least-squares line; log because it makes the slope a
+  growth rate, comparable across a 4 ISK mineral and a 400M ship. |trend| under 1.5%/week
+  is called *flat*. It is in the row's tooltip and drawn by the sparkline, not given a
+  column of its own.
+- **Percentile rank** — where the live best sell sits in the last 60 days of daily averages.
+  "The 12th percentile" means the market has been cheaper than this on only 12% of them.
+- **Fill est. (days)** — units already listed at or below the recommended price ÷ Vol/day.
+- **Chance %** — the empirical fill probability: over the last ~12 months, the share of
+  rolling 7 / 14 / 30-day windows (per your patience) whose **daily high** reached the
+  price, then tempered by the queue above. Each past day is first **carried to today's
+  price level at the item's own trend**, because otherwise the metric has the same disease
+  it is curing: on an item that has slid all year, every window from eight months ago
+  cleared today's asking price, and a flat count would report a comfortable probability for
+  a price nobody has paid since spring. The row's tooltip quotes both numbers when they
+  disagree — *that gap is the difference between a dip and a decay*.
+- **ISK/slot-day** — expected net ÷ expected days on the market, the ranking column.
+  INSTANT rows have no value here (they use no slot) and sort to the bottom of it.
+
+**The fee guard.** A listing whose fill chance is under the patience mode's floor is never
+recommended, whatever it would be worth if it filled:
+
+| Patience | Window | Fill-chance floor |
+| --- | --- | --- |
+| in a rush | 7 days | 75% |
+| balanced (default) | 14 days | 55% |
+| patient | 30 days | 35% |
+
+Below the floor the tool recommends the competitive listing or INSTANT instead and says so
+in the row's tooltip, naming the fee that would have been spent for nothing. The patience
+control re-ranks the whole table instantly — it changes no request, only the arithmetic.
+
+Every recommendation carries a plain-language **why** on hover, e.g. *"best sell sits at the
+12th percentile of the last 60 days, trend −4.1%/week (falling), the patient price 1,150,000
+was reached in 8% of past 14-day windows once those days are carried to today's price level
+(74% at the prices of the day — that gap is the decay)"*.
+
+### What this replaced, and why
+
+The old build tagged a row **⏳ wait** when an order at the **p90** of the history window
+would net at least X% more than the current plan. p90 is a *level* statistic: in a declining
+market it is a high-water mark, so the tag fired permanently on exactly the items that were
+decaying, and "hide ⏳" deferred them forever. It also had no notion of probability, of the
+fee spent to put the order up, or of the slot the order occupies. The tag, its threshold
+input and its three-way filter are gone; a **LIST-PATIENT** recommendation — one that has to
+survive the fee guard — replaces it. Old saved settings load cleanly; the dead keys are
+ignored and dropped on the next save.
+
+### Honest caveats
+
+- **Fill est. is an approximation, and an optimistic one.** ESI publishes regional traded
+  volume with no per-side split, so Vol/day mixes buys and sells and every station in the
+  region, while the queue is counted at the hub only — and your own stack is not counted in
+  the queue ahead of you.
+- **Chance % is past behaviour, not a promise.** It says how often this market *did* pay
+  that price, adjusted for where the market trades now. It cannot know about the patch notes
+  that halve the item next week.
+- The trend is a fit to 30 noisy days; on a thin item it is a guess with an error bar the
+  page does not draw. That is why the flat band exists and why the carry factor is capped.
+- Relist churn is modelled as a capped number of repricings, not simulated. Nothing models
+  someone undercutting you by 0.01 ISK five minutes after you list.
+- Price history is per **region**; ESI has none per station or per structure.
 
 ## Player structure markets
 
@@ -198,6 +302,7 @@ keeps auto-filling.
 | `suspect price` | Top buy above best sell — a thin or broken market. Check in game. |
 | `sell ≫ / ≪ history` | Current best sell is far (±50%) from the chosen history statistic. |
 | `depth x/y` | The buy book can only absorb x of your y units at any price. |
+| `↓ x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `no history — using current sell` / `no sell orders — using history price` | The chosen list-price source wasn't available for this item; the other one was used. |
 | `unsellable?` | Ice Storm / Expired filaments the market refuses. Auto-excluded from the export (re-tickable). |
 
@@ -208,12 +313,13 @@ Items with no orders and no history at the hub are listed separately and never p
 - Instant valuation walks buy orders top-down, taking `volume_remain` per level and skipping
   orders whose `min_volume` can't be met — units the book can't absorb are valued at zero
   (and flagged).
-- The ORDER/SPLIT plan models the real import mechanics: fills above `L` execute at the
-  resting buy order's price and pay only sales tax; the listed remainder pays broker + tax,
-  the broker never less than the flat 100 ISK per-order minimum.
-  Order fills are not guaranteed, and relist fees from later repricing are not modelled.
+- The listing plans model the real import mechanics: fills above the list price execute at
+  the resting buy order's price and pay only sales tax; the listed remainder pays broker +
+  tax, the broker never less than the flat 100 ISK per-order minimum — and that broker fee
+  is spent when the order goes up, which is why it is charged in both branches of the
+  expectation and why the fee guard exists.
 - Price history is per **region** (ESI has no station-level history), using each day's
-  average price.
+  average, high and low.
 - ESI usage: `POST /universe/ids`, `GET /markets/{region}/orders?type_id=…` (paginated,
   filtered to the hub station; buy orders count if their range covers it), and optionally
   `GET /markets/{region}/history?type_id=…`. Error-limit headers are honoured, transient
