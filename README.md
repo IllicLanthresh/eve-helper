@@ -175,7 +175,9 @@ remembered.
    INSTANT, and rows where it binds carry a `minfee` chip whose tooltip gives the floor,
    the effective rate and the nominal one.
 6. **Filter and sort**: click headers to sort (▲/▼ indicator), search by name, filter by
-   plan. The table opens sorted by **ISK/slot-day**, descending. Filters are a viewing aid
+   plan. Every row carries the item's icon (CCP's public image CDN — no login, no scope),
+   so a row can be matched against the stack in your hangar by eye; types the CDN has no
+   icon for — many SKINs — leave the box blank rather than showing a broken image. The table opens sorted by **ISK/slot-day**, descending. Filters are a viewing aid
    only — ticked rows hidden by a filter stay in the import list (the toolbar says so).
    Selection buttons (top N / all / none) act on the filtered rows and tick only listing
    rows (INSTANT items have no price to import).
@@ -185,6 +187,14 @@ remembered.
      rows have a checkbox — INSTANT rows show ⚡ instead, since there is nothing to import.
    - **Instant checklist**: the INSTANT items as `Item name ⇥ Qty` (plus the instant legs
      of ticked SPLITs as partial stacks) — sell these directly in the hangar.
+
+   **Use them in that order: orders first, instants second.** Listing a stack moves it out
+   of the hangar and into the order, so once the import list is in, whatever is *left* in
+   the hangar is the instant pile — select all, right-click, Sell, one action. The other
+   way round means picking a few hundred stacks out of a hangar by hand, one at a time,
+   and being careful not to dump something that should have been listed. The only
+   stragglers after the orders go up are items the tool could not price; section 2 names
+   them.
 8. **Copy TSV** pastes the whole analysis into Excel / Google Sheets, including
    the working numbers the table keeps in tooltips (trend %/week, percentile rank, undercut
    velocity, the broker fee at risk). *My orders* has its own **Copy TSV** with the triage

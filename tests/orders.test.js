@@ -264,6 +264,32 @@ H.run('orders', async () => {
     check('...and its row shows the raw id honestly',
       ghostCells.includes(String(GHOST_STATION)), ghostCells && ghostCells.join(' | '));
 
+    section('item icons, on the item cell only');
+    const ordIcons = await page.evaluate(() => {
+      const tr = document.querySelector('#ordBody tr[data-order-id="11"]');
+      const cells = [...tr.querySelectorAll('td.name')];
+      return {
+        cellCount: cells.length,
+        item: (() => {
+          const img = cells[0].querySelector('img.ticon');
+          return img ? { src: img.getAttribute('src'), lazy: img.getAttribute('loading'),
+                         alt: img.getAttribute('alt') } : null;
+        })(),
+        itemText: cells[0].textContent,
+        locationHasIcon: cells.slice(1).some(td => !!td.querySelector('img.ticon')),
+      };
+    });
+    check('the item cell carries the type icon', !!ordIcons.item, JSON.stringify(ordIcons));
+    check('...pointing at that order\u2019s type id',
+      ordIcons.item && /^https:\/\/images\.evetech\.net\/types\/\d+\/icon\?size=64$/.test(ordIcons.item.src),
+      JSON.stringify(ordIcons.item));
+    check('...lazily, and decorative', ordIcons.item &&
+      ordIcons.item.lazy === 'lazy' && ordIcons.item.alt === '', JSON.stringify(ordIcons.item));
+    check('the LOCATION cell shares the class but must never get an item icon',
+      ordIcons.cellCount >= 2 && ordIcons.locationHasIcon === false, JSON.stringify(ordIcons));
+    check('the icon leaves the item cell\u2019s text alone',
+      ordIcons.itemText === 'Hold Widget', ordIcons.itemText);
+
     /* ---------- (d) the table and its totals ---------- */
     section('the table and the header totals');
     const hold = await rowCells(page, 11);

@@ -394,6 +394,44 @@ H.run('sell', async () => {
     check('the preview carries a price per line',
       preview.split('\n').filter(Boolean).every(l => l.split('\t').length === 2), preview);
 
+    section('item icons — matching a row against the stack in your hangar');
+    const icons = await s2.page.evaluate(() => [...document.querySelectorAll('#tblBody tr')].map(tr => {
+      const td = tr.children[2];
+      const img = td.querySelector('img.ticon');
+      return {
+        name: td.textContent,
+        copy: td.dataset.copy || null,
+        src: img ? img.getAttribute('src') : null,
+        lazy: img ? img.getAttribute('loading') : null,
+        alt: img ? img.getAttribute('alt') : null,
+        hidden: img ? img.getAttribute('aria-hidden') : null,
+        box: img ? [img.width, img.height] : null,
+      };
+    }));
+    check('every priced row carries an item icon', icons.length > 0 && icons.every(i => i.src),
+      JSON.stringify(icons.map(i => [i.name, i.src])));
+    check('the icon points at the type id on CCP\u2019s public image CDN',
+      icons.every(i => i.src === `https://images.evetech.net/types/${TYPE_IDS[i.name]}/icon?size=64`),
+      JSON.stringify(icons.map(i => [i.name, TYPE_IDS[i.name], i.src])));
+    check('icons load lazily — a 300-row table must not fetch 300 images at once',
+      icons.every(i => i.lazy === 'lazy'), JSON.stringify(icons.map(i => i.lazy)));
+    check('the icon is decorative: the name is already the label',
+      icons.every(i => i.alt === '' && i.hidden === 'true'),
+      JSON.stringify(icons.map(i => [i.alt, i.hidden])));
+    check('the icon reserves a fixed box so the names keep one left edge',
+      icons.every(i => i.box && i.box[0] === 32 && i.box[1] === 32),
+      JSON.stringify(icons.map(i => i.box)));
+    check('the icon adds nothing to the cell\u2019s text or its click-to-copy value',
+      icons.every(i => i.name === i.copy), JSON.stringify(icons.map(i => [i.name, i.copy])));
+
+    const broke = await s2.page.evaluate(() => {
+      const img = document.querySelector('#tblBody tr img.ticon');
+      img.dispatchEvent(new Event('error'));
+      return { vis: img.style.visibility, w: img.getBoundingClientRect().width };
+    });
+    check('an icon the CDN does not have (SKINs, mostly) hides without collapsing its box',
+      broke.vis === 'hidden' && broke.w > 0, JSON.stringify(broke));
+
     section('filters are view-only');
     const before = await s2.page.$eval('#preview', el => el.value);
     await s2.page.fill('#fltText', 'tritanium');

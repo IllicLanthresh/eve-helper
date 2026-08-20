@@ -61,7 +61,12 @@
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
   td.pos{color:var(--green)}
   td.neg{color:var(--red)}
-  td.name{max-width:320px}
+  td.name{max-width:352px}
+  /* item icon: sits in the name cell so a row can be matched against the hangar by eye.
+     The box is reserved whether or not the image loads, so the names keep one left edge. */
+  img.ticon{width:32px;height:32px;vertical-align:middle;margin-right:8px;flex:0 0 auto;
+    image-rendering:auto;background:#0f1520;border-radius:3px}
+  tbody tr td.name{line-height:32px}
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
   .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
   .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
@@ -151,7 +156,7 @@
   .subhead{margin:4px 0 0;color:var(--dim);font-size:13px}
   #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)}
-  @media (max-width:760px){ td.name{max-width:170px} }
+  @media (max-width:760px){ td.name{max-width:202px} }
 </style>
 </head>
 <body>
@@ -1495,6 +1500,36 @@ const ordinal = n => n + (ORDINALS[(n % 100 - n % 10 !== 10) * (n % 10)] || 'th'
 const fmtDays = d => d == null ? '?' : d < 1 ? '<1' : d < 10 ? d.toFixed(1) : String(Math.round(d));
 const pctSigned = n => (n > 0 ? '+' : '') + n.toFixed(1) + '%';
 
+/* ---------- item icons ----------
+   CCP's public image CDN: https://images.evetech.net/types/{type_id}/icon?size=N
+   No login, no scope, no key — it is the same CDN the client and every third-party
+   site uses. 64px is fetched and drawn at 32 so it stays sharp on a HiDPI screen.
+
+   Icons are here for ONE job: matching a row against the stack in your hangar. The
+   hangar is a wall of icons, the table was a wall of names, and reading one into the
+   other is the slow step in the whole workflow.
+
+   Loading is lazy and errors are swallowed: not every type has an icon on the CDN
+   (SKINs in particular often 404), and a broken-image glyph next to an item name
+   would be worse than no icon at all. On failure the <img> is hidden but keeps its
+   box, so the names in the column stay on one left edge instead of jittering. */
+const ICON_PX = 32;
+const typeIconUrl = typeId => `https://images.evetech.net/types/${typeId}/icon?size=${ICON_PX * 2}`;
+function prependTypeIcon(td, typeId, name){
+  if (td == null || typeId == null) return;
+  const img = document.createElement('img');
+  img.className = 'ticon';
+  img.src = typeIconUrl(typeId);
+  img.width = img.height = ICON_PX;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.alt = '';                       // the name is right there — this would be a duplicate
+  img.setAttribute('aria-hidden', 'true');
+  // keep the box, drop the broken-image glyph
+  img.addEventListener('error', () => { img.style.visibility = 'hidden'; }, { once: true });
+  td.insertBefore(img, td.firstChild);
+}
+
 /* The numbers behind a recommendation, as compact key: value lines — never a paragraph.
    Shown as the Plan badge's tooltip and restated under the expanded chart, so every
    figure the decision used is one hover away and none of it is in the way. */
@@ -1867,6 +1902,7 @@ function render(){
       const td = document.createElement('td'); td.className = cls; td.textContent = text;
       if (copy) td.dataset.copy = copy;
       if (title) td.title = title;
+      if (cls === 'name') prependTypeIcon(td, r.typeId, r.name);
       tr.appendChild(td);
     }
 
@@ -2821,6 +2857,7 @@ function ordRowEl(r){
   cell('', r.charName, r.charName);
   const nameTd = cell('name', r.name || ('type ' + r.typeId), r.name || '',
     r.name ? '' : 'ESI did not resolve this type id');
+  prependTypeIcon(nameTd, r.typeId, r.name);
   if (r.isBuy){
     const b = document.createElement('span');
     b.className = 'badge buy'; b.style.marginLeft = '6px'; b.textContent = 'BUY';
