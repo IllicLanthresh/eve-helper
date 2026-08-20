@@ -360,7 +360,7 @@
         <th data-key="margin" class="num" title="(sell − buy) ÷ buy&#10;negative: crossed market">Margin %</th>
         <th data-key="hist" class="num" title="chosen statistic over the region's daily averages">Hist ISK/u</th>
         <th data-key="sellVsHist" class="num" title="(sell − hist) ÷ hist&#10;green: above history · red: below&#10;dip or decay: the Plan column decides">Sell/Hist %</th>
-        <th data-key="volDay" class="num" title="mean units traded/day over the history window&#10;regional, both sides (no API splits traded volume)">Vol/day</th>
+        <th data-key="volDay" class="num" title="units traded/day over the history window&#10;over CALENDAR days — a day with no trades counts as zero&#10;regional, both sides (no API splits traded volume)">Vol/day</th>
         <th data-key="buyDepth" class="num" title="units wanted by buy orders covering the hub">Buy depth</th>
         <th data-key="sellDepth" class="num" title="units offered by sell orders at the hub">Sell depth</th>
         <th data-key="strategy" title="recommended disposal · hover a badge for its numbers">Plan</th>
@@ -988,12 +988,34 @@ function histStatOf(hist, days, mode){
   const s = [...vals].sort((a, b) => a - b);
   return quantile(s, mode === 'median' ? 0.5 : mode === 'p10' ? 0.1 : 0.9);
 }
+/* Units traded per day over the window.
+
+   The denominator is CALENDAR days, not the days ESI returned. A day with no trades is
+   simply absent from the history, so averaging over the rows present answers "how much
+   moves on a day when something moves" — which on a thin item is the volume of a busy
+   day wearing the label of a daily rate. An item that traded 450 units across 30 days of
+   a year moves 1.2 units a day, not 15, and the 15 is what let a 178-unit queue look as
+   though it would clear inside a fortnight.
+
+   The span is however much of the window the history actually covers, so an item first
+   listed a week ago is not averaged over a year of days that predate it. */
 function histVolOf(hist, days){
   if (!hist || !hist.length) return null;
-  const cutoff = Date.now() - days * 86400e3;
-  const vals = hist.filter(h => Date.parse(h.date) >= cutoff).map(h => h.volume);
-  if (!vals.length) return null;
-  return Math.round(vals.reduce((s, x) => s + x, 0) / vals.length);
+  const now = Date.now(), cutoff = now - days * 86400e3;
+  const rows = hist.filter(h => Date.parse(h.date) >= cutoff);
+  if (!rows.length) return null;
+  let first = Infinity, total = 0;
+  for (const h of rows){
+    const t = Date.parse(h.date);
+    if (t < first) first = t;
+    total += h.volume || 0;
+  }
+  // count whole days between the oldest row and today, inclusive. History dates are
+  // midnight-stamped, so `now` has to be truncated the same way or the current time of
+  // day quietly adds a day to the span and shaves the rate.
+  const today = Math.floor(now / 86400e3) * 86400e3;
+  const span = Math.min(days, Math.max(1, Math.round((today - first) / 86400e3) + 1));
+  return total / span;
 }
 
 /* ---------- the decision layer: direction, level, probability ----------
@@ -1108,6 +1130,219 @@ function histPctRank(e, price){
   let below = 0, ties = 0;
   for (const v of vals){ if (v < price) below++; else if (v === price) ties++; }
   return (below + ties / 2) / vals.length * 100;
+}
+
+/* ---------- how much of a market's volume actually clears at a price ----------------
+
+   `hitRateOf` below asks: over the last year, in what share of rolling W-day windows did
+   the daily HIGH reach this price? That question has a false positive built into it. One
+   outlier print — a unit somebody overpaid for on one day — makes EVERY window containing
+   that day a hit, so a price the market has touched a dozen times in a year reads as a
+   comfortable probability. It is a high-water mark wearing a percentage sign, which is
+   the disease the ⏳ tag was retired for.
+
+   The question that decides whether an order fills is a different one: of the units that
+   change hands, what share change hands at or above my price? ESI publishes three prices
+   a day — lowest, average, highest — so each day's price distribution is reconstructed as
+   the two-segment uniform density that passes through all three AND has exactly the
+   published average as its mean. An outlier high then contributes a sliver of that day's
+   units instead of the whole day, and a price above the day's high contributes nothing at
+   all rather than "the high reached it, so yes".
+
+   Exact at the three published points, continuous, monotone, integrates to 1. Days that
+   carry no high/low collapse to a point mass at the average, which is what the old code
+   already did with its average fallback. */
+function dayReach(lo, avg, hi, x){
+  if (!(avg > 0)) return 0;
+  // no band published, or a day that traded at one price: everything at the average
+  if (!(lo > 0) || !(hi > 0) || hi <= lo) return x <= avg ? 1 : 0;
+  if (x <= lo) return 1;
+  if (x > hi) return 0;
+  const m1 = (hi - avg) / (hi - lo);          // mass on [lo, avg]
+  const m2 = (avg - lo) / (hi - lo);          // mass on [avg, hi]
+  if (x <= avg) return avg > lo ? m1 * (avg - x) / (avg - lo) + m2 : m2;
+  return hi > avg ? m2 * (hi - x) / (hi - avg) : 0;
+}
+
+const REACH_HALF_LIFE_D = 45;   // last month and a half counts double the one before it
+
+/* The weighted share of traded units that cleared at or above `price`, with every past
+   day first carried to today's money at the fitted trend — the same carry, and the same
+   two caps, `hitRateOf` uses, for the same reason: on a sliding market last spring's
+   prints are not evidence about this week's.
+
+   Also returns the trend-adjusted CEILING: the most the market has paid over the window,
+   in today's money. A price above it has a reach of exactly zero, and that is a checkable
+   statement about the history rather than a small percentage. */
+function reachOf(e, price){
+  if (!e || !(price > 0)) return null;
+  const rows = tailOf(e, HIT_DAYS);
+  if (!rows.length) return null;
+  const weekly = histTrend(e);
+  const now = Date.now();
+  let num = 0, numRaw = 0, den = 0, ceiling = 0, withBand = 0;
+  for (const h of rows){
+    const avg = h.average;
+    if (!(avg > 0)) continue;
+    const vol = h.volume > 0 ? h.volume : 0;
+    const age = Math.max(0, (now - Date.parse(h.date)) / 86400e3);
+    let f = 1;
+    if (weekly != null){
+      const w = Math.max(-HIT_TREND_CAP_PCT, Math.min(HIT_TREND_CAP_PCT, weekly));
+      f = Math.min(HIT_ADJ_CAP, Math.pow(Math.max(0.01, 1 + w / 100), age / 7));
+    }
+    const band = Number.isFinite(h.highest) && h.highest > 0
+              && Number.isFinite(h.lowest) && h.lowest > 0 && h.highest > h.lowest;
+    if (band) withBand++;
+    const lo = band ? h.lowest * f : 0, hi = band ? h.highest * f : 0;
+    const wt = Math.pow(0.5, age / REACH_HALF_LIFE_D) * vol;
+    if (wt > 0){
+      num += wt * dayReach(lo, avg * f, hi, price);
+      numRaw += wt * dayReach(band ? h.lowest : 0, avg, band ? h.highest : 0, price);
+      den += wt;
+    }
+    ceiling = Math.max(ceiling, (band ? h.highest : avg) * f);
+  }
+  if (!(den > 0)) return null;
+  return {
+    R: num / den,
+    Rraw: numRaw / den,          // the same without the trend carry — the dip/decay line
+    ceiling,
+    days: rows.length,
+    basis: withBand === rows.length ? 'daily high/low'
+      : withBand === 0 ? 'daily average — this history carries no high/low'
+      : 'daily high/low, average on the days without one',
+  };
+}
+
+/* Regularized lower incomplete gamma P(a,x) = P(Gamma(shape a, rate 1) <= x). Series
+   below the transition, Lentz's continued fraction above it — the standard split, because
+   the series converges slowly exactly where the fraction converges fast. Used for "what
+   are the odds that j units' worth of buying has arrived within t days". */
+function gammaP(a, x){
+  if (!(a > 0)) return 1;
+  if (!(x > 0)) return 0;
+  const lg = lnGamma(a);
+  if (x < a + 1){
+    let ap = a, sum = 1 / a, del = sum;
+    for (let n = 0; n < 500; n++){
+      ap++; del *= x / ap; sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-14) break;
+    }
+    return sum * Math.exp(-x + a * Math.log(x) - lg);
+  }
+  let b = x + 1 - a, c = 1e300, d = 1 / b, h = d;
+  for (let i = 1; i < 500; i++){
+    const an = -i * (i - a);
+    b += 2; d = an * d + b; if (Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an / c;         if (Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1 / d;
+    const del = d * c; h *= del;
+    if (Math.abs(del - 1) < 1e-14) break;
+  }
+  return 1 - Math.exp(-x + a * Math.log(x) - lg) * h;
+}
+// Lanczos, g=7 — plenty for the shapes here and short enough to read
+const LNG_C = [676.5203681218851, -1259.1392167224028, 771.32342877765313,
+  -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+  9.9843695780195716e-6, 1.5056327351493116e-7];
+function lnGamma(z){
+  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - lnGamma(1 - z);
+  z -= 1;
+  let x = 0.99999999999980993;
+  for (let i = 0; i < LNG_C.length; i++) x += LNG_C[i] / (z + i + 1);
+  const t = z + LNG_C.length - 0.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+
+/* ---------- will MY order be reached? ----------------------------------------------
+
+   A sell order is a FIFO queue entry, and that is the shape the arithmetic has to take.
+   Two phases:
+
+     1. the units already listed at or below my price are bought out from under me. Each
+        level drains at the demand rate for ITS OWN price, not for mine — a queue sitting
+        far below me clears far faster than my own price would suggest — so the wait is
+        the exact per-level sum  T1 = SUM v_i / lambda(x_i)  rather than one bulk divide.
+     2. once I am at the front, buyers paying at least MY price arrive and take units.
+        Transactions arrive Poisson and carry `kappa` units each, so the time to sell j
+        units is Gamma(j/kappa, lambda(P)/kappa) and the odds of getting there inside what
+        is left of the window are a regularized incomplete gamma.
+
+   `lambda(x) = capture x share x volPerDay x reach(x)` — units a day bought at or above x
+   AT MY STATION. Three of those four are measured; `capture` is not, and cannot be from
+   ESI. ESI publishes units traded, not which side was the aggressor, and only a
+   BUYER-initiated trade fills a resting sell order. So capture is the share of volume
+   that was buyer-initiated, it is left at 1, and every number that comes out of here is
+   therefore an UPPER bound, flagged as one and rendered with a "<=". An upper bound is
+   still a decision: an order whose BEST case is under your patience floor is dead, and
+   that is the call this tool exists to make.
+
+   `share` is likewise 1 until the regional/station split is measured, for the same
+   reason and with the same flag. */
+const FILL_CAPTURE = 1;          // unmeasured -> upper bound (see above)
+const KAPPA_MAX = 1e6;           // a transaction cannot be bigger than the market
+const EU_EXACT_MAX = 32;         // above this, expected units is quadratured, not summed
+
+function fillOutlook(e, comp, price, qty, windowDays, opts){
+  opts = opts || {};
+  if (!e || !(price > 0) || !(qty > 0) || !(windowDays > 0)) return null;
+  const reach = reachOf(e, price);
+  const volDay = histVolOf(e.hist, opts.histDays || HIT_DAYS);
+  if (!reach || !(volDay > 0)) return null;
+  const share = opts.share != null ? opts.share : 1;
+  const scale = FILL_CAPTURE * share * volDay;
+  const lambdaAt = x => {
+    const r = x === price ? reach.R : (reachOf(e, x) || { R: 0 }).R;
+    return scale * r;
+  };
+  const lambdaP = scale * reach.R;
+
+  // phase 1: the queue in front of me, each level draining at its own price's rate
+  let queue = 0, T1 = 0, stuck = false;
+  for (const lv of (comp || [])){
+    if (lv.p > price * (1 + 1e-9)) break;         // levels are cheapest first
+    queue += lv.v;
+    const lam = lambdaAt(lv.p);
+    if (!(lam > 0)){ stuck = true; break; }
+    T1 += lv.v / lam;
+  }
+  const ceilingBlocked = !(lambdaP > 0);
+  if (ceilingBlocked || stuck || T1 >= windowDays){
+    return { fillFrac: 0, pAny: 0, pFull: 0, expUnits: 0, expDays: Infinity,
+             queue, T1: stuck ? Infinity : T1, lambdaP, reach, volDay,
+             bound: 'upper', capped: ceilingBlocked ? 'ceiling' : 'queue' };
+  }
+
+  // typical units per transaction, from the order_count ESI already returns
+  let kappa = 1;
+  const withN = tailOf(e, HIT_DAYS).filter(h => h.volume > 0 && h.orders > 0);
+  if (withN.length){
+    const per = withN.map(h => h.volume / h.orders).sort((a, b) => a - b);
+    kappa = Math.min(KAPPA_MAX, Math.max(1, per[Math.floor(per.length / 2)]));
+  }
+  const left = windowDays - T1;
+  const rate = lambdaP / kappa;                    // transactions per day paying >= P
+  const pj = j => gammaP(j / kappa, rate * left);
+
+  let expUnits;
+  if (qty <= EU_EXACT_MAX){
+    expUnits = 0;
+    for (let j = 1; j <= qty; j++) expUnits += pj(j);   // E[U] = SUM P(U >= j), exact
+  } else {
+    // same identity, quadratured: p(j) is smooth and monotone in j
+    const n = EU_EXACT_MAX, lo = 0.5, hi = qty + 0.5, h = (hi - lo) / n;
+    expUnits = 0;
+    for (let i = 0; i <= n; i++) expUnits += (i === 0 || i === n ? 0.5 : 1) * pj(lo + i * h);
+    expUnits = Math.min(qty, expUnits * h);
+  }
+  return {
+    fillFrac: Math.max(0, Math.min(1, expUnits / qty)),
+    pAny: pj(1), pFull: pj(qty), expUnits,
+    expDays: T1 + qty / lambdaP,
+    queue, T1, lambdaP, kappa, reach, volDay,
+    bound: 'upper', capped: null,
+  };
 }
 
 /* Empirical fill probability, in TODAY'S money.
@@ -1946,7 +2181,8 @@ function render(){
       ['num', r.margin == null ? '—' : r.margin.toFixed(1) + '%', r.margin == null ? '' : r.margin.toFixed(2)],
       ['num', fmtIsk(r.hist), priceCopy(r.hist)],
       ['num' + signCls(r.sellVsHist), r.sellVsHist == null ? '—' : (r.sellVsHist > 0 ? '+' : '') + r.sellVsHist.toFixed(1) + '%', r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2)],
-      ['num', r.volDay == null ? '—' : fmt.format(r.volDay), r.volDay == null ? '' : String(r.volDay)],
+      ['num', r.volDay == null ? '—' : fmt.format(r.volDay),
+       r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100)],
       ['num', r.buyDepth == null ? '—' : fmt.format(r.buyDepth), r.buyDepth == null ? '' : String(r.buyDepth)],
       ['num', r.sellDepth == null ? '—' : fmt.format(r.sellDepth), r.sellDepth == null ? '' : String(r.sellDepth)],
     ]){
@@ -3021,8 +3257,8 @@ const relistComputedPct = () => feePct('brokerFee') * 100 * (1 - relistDiscount(
 
 /* The whole charge for moving an order to a new price. The growth term is the broker fee
    at its full rate, so it is taken from the broker rate rather than the relist one.
-   The 100 ISK per-order minimum is carried over from a fresh listing; none of the four
-   measurements ran small enough to exercise it, so that part alone is inference. */
+   The 100 ISK per-order minimum applies here too, measured: 1 unit moved from 10.00 to
+   9.83 ISK computes to 0.04 ISK of fee and the client charged the full 100. */
 const modifyFeeOn = (vNew, vOld, relistFrac, brokerFrac) =>
   vNew > 0 ? Math.max(MIN_BROKER_FEE_ISK,
     relistFrac * vNew + brokerFrac * Math.max(0, vNew - (vOld || 0))) : 0;

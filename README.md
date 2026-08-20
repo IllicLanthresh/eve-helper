@@ -537,8 +537,11 @@ it is a fixed number. The resulting % is shown in a box above the table
 (*0.39% — 1.50% broker − 74% Advanced Broker Relations (level 4)*), is **hand-editable**,
 and your correction is **saved** and used everywhere.
 
-The same flat 100 ISK per-order floor applies. That one piece is inference rather than
-measurement: none of the four dialogs above ran small enough to reach it.
+The same flat 100 ISK per-order floor applies, and it is measured too: one Nova Rocket
+moved from 10.00 to 9.83 ISK computes to **0.04 ISK** of broker fee, and the client
+charged the full **100**. So on anything under about 25,700 ISK of order value the floor,
+not the rate, is what a reprice costs — which is why the tool prices it in rather than
+quoting a percentage.
 
 > An earlier version of this page charged a flat 1.20% per reprice against a real 0.38883%
 > — **3.1× too much** — which pushed verdicts away from REPRICE and toward HOLD and

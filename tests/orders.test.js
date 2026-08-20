@@ -641,6 +641,9 @@ H.run('orders', async () => {
         modify: [500000, 1000000, 2166000, 4000000].map(pp => modifyFeeOn(10 * pp, vOld, rl, br)),
         // the growth term on its own, for the one reading that raises the price
         growthOnly: br * (10 * 4000000 - vOld),
+        // 1 unit moved from 10.00 to 9.83: the rate says 0.038 ISK, the client said 100
+        tinyOrder: modifyFeeOn(1 * 9.83, 1 * 10, rl, br),
+        tinyOrderRate: rl * 1 * 9.83,
         floorAtMaxStanding: brokerPctFor({ brokerRelations: 5 }, 10, 10),
       };
     });
@@ -674,6 +677,14 @@ H.run('orders', async () => {
     check('a drop pays no growth term at all',
       CLIENT.modify[0] < CLIENT.modify[1] && CLIENT.modify[1] < CLIENT.modify[2],
       CLIENT.modify.join('|'));
+
+    /* the 100 ISK per-order floor reaches a relist as well as a fresh listing: a single
+       Nova Rocket dropped from 10.00 to 9.83 computes to four hundredths of an ISK, and
+       the client charged the whole hundred */
+    check('the rate alone would have charged well under an ISK',
+      CLIENT.tinyOrderRate < 0.05, String(CLIENT.tinyOrderRate));
+    near('...but the 100 ISK per-order floor is what the client charged',
+      CLIENT.tinyOrder, 100, 1e-9);
 
     // standings cap at 10.00, so the rate cannot go below this by any legitimate route
     near('the broker rate bottoms out at 1% rather than at zero',

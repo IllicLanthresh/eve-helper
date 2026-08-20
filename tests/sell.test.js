@@ -875,6 +875,165 @@ H.run('sell', async () => {
     eq('above everything is the 100th', rank.over, 100);
     eq('no history, no rank', rank.none, null);
 
+    /* ---------- vol/day counts calendar days, not the days ESI bothered to return ------
+       A day with no trades is simply absent from the history. Averaging over the rows
+       present answers "how much moves on a day when something moves", which on a thin
+       item is a busy day's volume wearing the label of a daily rate — and that is what
+       let a queue hundreds of units deep look as though it would clear in a fortnight. */
+    section('vol/day over calendar days');
+    const vol = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      // 450 units across 30 trading days inside a 365-day window
+      const sparse = [];
+      for (let t = 364; t >= 0; t--) if (t % 12 === 0) sparse.push({ date: day(t), volume: 15 });
+      // the same 450 units, but traded every day of a 30-day window
+      const dense = [];
+      for (let t = 29; t >= 0; t--) dense.push({ date: day(t), volume: 15 });
+      return {
+        sparse: histVolOf(sparse, 365),
+        sparseRows: sparse.length,
+        sparseOldRowsAvg: sparse.reduce((s2, h) => s2 + h.volume, 0) / sparse.length,
+        dense: histVolOf(dense, 30),
+        none: histVolOf([], 365),
+        // a history shorter than the window is spanned by what it covers, not by the window
+        young: histVolOf([{ date: day(6), volume: 70 }, { date: day(0), volume: 70 }], 365),
+      };
+    });
+    eq('the thin item traded on 31 days of the year', vol.sparseRows, 31);
+    eq('...which the old rows-present average called 15 a day', vol.sparseOldRowsAvg, 15);
+    check('...where the calendar says it moves well under two a day',
+      vol.sparse > 1.2 && vol.sparse < 1.4, String(vol.sparse));
+    check('...an order of magnitude below what the queue was being divided by',
+      vol.sparseOldRowsAvg / vol.sparse > 10, String(vol.sparseOldRowsAvg / vol.sparse));
+    near('an item that trades every day is unaffected — the two denominators agree',
+      vol.dense, 15, 1e-9);
+    near('a week-old history is spanned by its own week, not by the window asked for',
+      vol.young, 20, 1e-9);
+    eq('no history, no rate', vol.none, null);
+
+    /* ---------- the incomplete gamma the arrival model rests on ---------------------- */
+    section('gammaP against closed forms');
+    const gp = await p4.evaluate(() => ({
+      a1x1: gammaP(1, 1), a1x5: gammaP(1, 5), a2x3: gammaP(2, 3), a3x2: gammaP(3, 2),
+      half: gammaP(0.5, 2), zero: gammaP(5, 0), inf: gammaP(5, 1e4),
+      big100: gammaP(100, 100), big1000: gammaP(1000, 1000),
+      mono: (() => { let ok = true, prev = -1;
+        for (let i = 0; i <= 200; i++){ const v = gammaP(3, i * 0.1); if (v < prev - 1e-15) ok = false; prev = v; }
+        return ok; })(),
+    }));
+    // shape 1 is the exponential; shape 2 and 3 are its first two Erlang cousins
+    near('P(1,1) is 1 - e^-1', gp.a1x1, 1 - Math.exp(-1), 1e-12);
+    near('P(1,5) is 1 - e^-5', gp.a1x5, 1 - Math.exp(-5), 1e-12);
+    near('P(2,3) is the Erlang sum', gp.a2x3, 1 - Math.exp(-3) * (1 + 3), 1e-12);
+    near('P(3,2) likewise', gp.a3x2, 1 - Math.exp(-2) * (1 + 2 + 2), 1e-12);
+    near('P(1/2,2) is erf(sqrt 2)', gp.half, 0.954499736103642, 1e-12);
+    eq('nothing has arrived at time zero', gp.zero, 0);
+    near('...and everything has by the end of time', gp.inf, 1, 1e-12);
+    /* the mean of Gamma(a,1) sits above its median, so P(a,a) approaches a half from
+       ABOVE, by 1/(3 sqrt(2 pi a)) — the check that the tail branch is right, since these
+       shapes take the continued fraction rather than the series */
+    near('P(100,100) is a half plus 1/(3 sqrt(2 pi a))',
+      gp.big100, 0.5 + 1 / (3 * Math.sqrt(2 * Math.PI * 100)), 2e-5);
+    near('...and P(1000,1000) is a half plus a third of that',
+      gp.big1000, 0.5 + 1 / (3 * Math.sqrt(2 * Math.PI * 1000)), 2e-6);
+    check('P is monotone in x', gp.mono, 'not monotone');
+
+    /* ---------- the reconstructed daily price density -------------------------------- */
+    section('reach: the share of units clearing at a price');
+    const rch = await p4.evaluate(() => {
+      const d = (l, a2, h2, x) => dayReach(l, a2, h2, x);
+      let mean = 0; const step = 1e-3;
+      for (let x = 100; x < 200; x += step) mean += d(100, 110, 200, x) * step;
+      let mono = true, prev = 2;
+      for (let i = 0; i <= 400; i++){ const v = d(100, 110, 200, 90 + i * 0.3); if (v > prev + 1e-12) mono = false; prev = v; }
+      return {
+        atLow: d(100, 110, 200, 100), atHigh: d(100, 110, 200, 200),
+        aboveHigh: d(100, 110, 200, 200.01), belowLow: d(100, 110, 200, 50),
+        leftOfMean: d(100, 110, 200, 110 - 1e-9), rightOfMean: d(100, 110, 200, 110 + 1e-9),
+        meanPlusLow: 100 + mean, mono,
+        noBandUnder: d(0, 110, 0, 109.9), noBandOver: d(0, 110, 0, 110.1),
+        flatDay: d(110, 110, 110, 109.9),
+        // the ship skin: a 200,000 outlier high on a market whose average is 12,500
+        spikeAtAsk: d(9800, 12500, 200000, 177600),
+        normalAtAsk: d(9800, 10300, 11000, 177600),
+        spikeAtMarket: d(9800, 12500, 200000, 10010),
+        normalAtMarket: d(9800, 10300, 11000, 10010),
+      };
+    });
+    near('every unit cleared at or above the day low', rch.atLow, 1, 1e-12);
+    eq('nothing cleared above the day high', rch.atHigh, 0);
+    eq('...nor above that', rch.aboveHigh, 0);
+    near('...and everything at or above a price under the low', rch.belowLow, 1, 1e-12);
+    near('the density is continuous where the two segments meet',
+      rch.leftOfMean, rch.rightOfMean, 1e-8);
+    check('...and monotone across the whole band', rch.mono, 'not monotone');
+    /* the reconstruction is pinned to all three published points: it must not merely be
+       shaped like the day, it must have the day's own average as its mean */
+    near('the reconstructed density has the published average as its mean',
+      rch.meanPlusLow, 110, 2e-3);
+    eq('a day with no high/low is a point mass at its average', rch.noBandUnder, 1);
+    eq('...with nothing above it', rch.noBandOver, 0);
+    eq('...and a day that traded at one price behaves the same', rch.flatDay, 1);
+
+    /* THE REGRESSION THIS MODEL EXISTS FOR. Twelve outlier prints in a year put the daily
+       HIGH above 177,600, so the old window-hit metric called that price a 62% chance. In
+       units, those prints are a sliver of one day's trade. */
+    check('an outlier high carries a sliver of its day, not the whole day',
+      rch.spikeAtAsk > 0 && rch.spikeAtAsk < 0.002, String(rch.spikeAtAsk));
+    eq('...and a day whose high never got there carries nothing', rch.normalAtAsk, 0);
+    check('...while at the price the market actually trades at, most units qualify',
+      rch.spikeAtMarket > 0.9 && rch.normalAtMarket > 0.7,
+      rch.spikeAtMarket + ' / ' + rch.normalAtMarket);
+    check('...a ratio of more than five hundred to one between the two prices',
+      rch.spikeAtMarket / rch.spikeAtAsk > 500, String(rch.spikeAtMarket / rch.spikeAtAsk));
+
+    /* ---------- the whole outlook, on the order that started this -------------------
+       A ship skin listed at 177,600 with 178 units of other people's stock ahead of it,
+       on a market that trades ~15 units on the 30 days a year it trades at all and whose
+       average price is 12,500. The old metric said 62%. */
+    section('the fill outlook on a hopeless order');
+    const OUT = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      const hist = [];
+      for (let t = 364; t >= 0; t--){
+        if (t % 12) continue;
+        const spike = (t / 12) % 3 === 0;          // a third of trading days print an outlier
+        hist.push({ date: day(t), average: spike ? 12500 : 10300,
+                    highest: spike ? 200000 : 11000, lowest: 9800, volume: 15, orders: 3 });
+      }
+      const e = { hist };
+      const comp = [{ p: 10010, v: 178 }];
+      return {
+        withQueue: fillOutlook(e, comp, 177600, 5, 14, { histDays: 365 }),
+        noQueue:   fillOutlook(e, [],   177600, 5, 14, { histDays: 365 }),
+        atMarket:  fillOutlook(e, [],   10010,  5, 14, { histDays: 365 }),
+        aboveCeiling: fillOutlook(e, [], 948900, 5, 14, { histDays: 365 }),
+        volDay: histVolOf(hist, 365),
+      };
+    });
+    check('the market moves a unit or two a day, not fifteen',
+      OUT.volDay > 0.8 && OUT.volDay < 2, String(OUT.volDay));
+    eq('the queue alone condemns it — 178 units cannot clear in a fortnight',
+      OUT.withQueue.fillFrac, 0);
+    eq('...and the tool says which of the two reasons it was', OUT.withQueue.capped, 'queue');
+    /* the brief asked for TWO independent reasons. Delete the queue entirely and the
+       price alone still cannot clear the patience floor. */
+    check('delete the queue and the price alone still fails the floor',
+      OUT.noQueue.fillFrac < 0.35, String(OUT.noQueue.fillFrac));
+    check('...even though this is an UPPER bound, not an estimate',
+      OUT.noQueue.bound === 'upper', OUT.noQueue.bound);
+    check('...while at the price the market actually pays, the same stack clears',
+      OUT.atMarket.fillFrac > 0.9, String(OUT.atMarket.fillFrac));
+    check('...which is the case the old metric got backwards, in the other direction',
+      OUT.atMarket.fillFrac > OUT.noQueue.fillFrac * 3,
+      OUT.atMarket.fillFrac + ' vs ' + OUT.noQueue.fillFrac);
+    /* a price above everything the market has ever paid is not a small percentage, it is
+       a checkable statement about the history */
+    eq('a price above the ceiling is exactly zero, not nearly zero',
+      OUT.aboveCeiling.fillFrac, 0);
+    eq('...and says so', OUT.aboveCeiling.capped, 'ceiling');
+    eq('...with no finite estimate of when', OUT.aboveCeiling.expDays, Infinity);
+
     section('daysToFill — the queue already listed at or below your price');
     const queue = await p4.evaluate(() => ({
       atMid: daysToFillAt([{ p: 100, v: 10 }, { p: 110, v: 20 }, { p: 130, v: 5 }], 110, 5),
