@@ -690,6 +690,52 @@ H.run('orders', async () => {
     near('the broker rate bottoms out at 1% rather than at zero',
       CLIENT.floorAtMaxStanding, 1, 1e-12);
 
+    /* ---------- (k3) how many market slots the character has ------------------------
+       5 to start with, then 4/8/16/32 per level of Trade, Retail, Wholesale and Tycoon.
+       Slots are what runs out — the whole page ranks by ISK per slot-DAY — so the number
+       is read off the character, with the four skills resolved by NAME. The ids below are
+       deliberately not EVE's: if anything ever reached for a hardcoded id, this fails. */
+    section('the order cap');
+    const CAP = await page.evaluate(() => {
+      const was = orderSkillIds, wasAll = EveAuth.allSkills;
+      orderSkillIds = { Trade: 9201, Retail: 9202, Wholesale: 9203, Tycoon: 9204 };
+      const capFor = lv => {
+        EveAuth.allSkills = () => ({ 9201: lv[0], 9202: lv[1], 9203: lv[2], 9204: lv[3] });
+        return orderCapOf(1).cap;
+      };
+      const out = {
+        none: capFor([0, 0, 0, 0]),
+        allFive: capFor([5, 5, 5, 5]),
+        trade1: capFor([1, 0, 0, 0]),
+        retail1: capFor([0, 1, 0, 0]),
+        wholesale1: capFor([0, 0, 1, 0]),
+        tycoon1: capFor([0, 0, 0, 1]),
+        mixed: capFor([4, 3, 0, 0]),
+        everyTerm: capFor([5, 4, 3, 2]),
+      };
+      // an id that never resolved must read as unknown, not as a silent zero
+      orderSkillIds = { Trade: 9201 };
+      EveAuth.allSkills = () => ({ 9201: 5 });
+      out.partial = orderCapOf(1);
+      orderSkillIds = was; EveAuth.allSkills = wasAll;
+      return out;
+    });
+    eq('an untrained character has the base five', CAP.none, 5);
+    eq('...and a maxed one has 305', CAP.allFive, 305);
+    // each skill's own contribution, isolated
+    eq('Trade is 4 a level', CAP.trade1 - CAP.none, 4);
+    eq('Retail is 8', CAP.retail1 - CAP.none, 8);
+    eq('Wholesale is 16', CAP.wholesale1 - CAP.none, 16);
+    eq('Tycoon is 32', CAP.tycoon1 - CAP.none, 32);
+    eq('every term adds up', CAP.everyTerm, 5 + 4 * 5 + 8 * 4 + 16 * 3 + 32 * 2);
+    eq('Trade 4 with Retail 3 is the 45 slots the owner reads in the client',
+      CAP.mixed, 45);
+    eq('a skill whose id never resolved counts as nothing...',
+      CAP.partial.cap, 5 + 4 * 5);
+    check('...and is reported as unknown rather than as level zero',
+      CAP.partial.levels.Trade === 5 && CAP.partial.levels.Retail === null,
+      JSON.stringify(CAP.partial.levels));
+
     /* ---------- (l) patience drives the same window ---------- */
     section('patience');
     await fetchOrders(page);

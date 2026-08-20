@@ -2942,6 +2942,7 @@ async function runOrders(){
     state.orders.fetched = new Date().toISOString();
     persistOrders();
     await resolveAdvBroker();
+    resolveOrderSkills();
     await diagnoseOrders();
     const failed = report.filter(r => r.error).length;
     const stalled = Object.values(state.orders.diag).filter(x => x && x.stalled).length;
@@ -3089,8 +3090,16 @@ function renderOrdChars(){
       sub.style.color = 'var(--red)';
       line.appendChild(sub);
     } else if (rep){
-      sub.textContent = `${rep.count} slots · ${rep.sell} sell · ${rep.buy} buy`;
-      sub.title = `open orders: ${rep.count}\nsell: ${rep.sell} · buy: ${rep.buy}`;
+      const capInfo = orderCaps[c.id] || null;
+      sub.textContent = capInfo
+        ? `${rep.count}/${capInfo.cap} slots · ${rep.sell} sell · ${rep.buy} buy`
+        : `${rep.count} slots · ${rep.sell} sell · ${rep.buy} buy`;
+      sub.title = `open orders: ${rep.count}\nsell: ${rep.sell} · buy: ${rep.buy}`
+        + (capInfo
+          ? `\ncap: ${capInfo.cap} = ${ORDER_CAP_BASE} + `
+            + ORDER_SKILLS.map(([n, per]) => `${per}×${n} ${capInfo.levels[n] ?? '?'}`).join(' + ')
+            + `\nfree: ${Math.max(0, capInfo.cap - rep.count)}`
+          : '\ncap: skills not read yet — ↻ in the topbar');
       line.appendChild(sub);
     } else {
       sub.textContent = 'not fetched';
@@ -3226,6 +3235,60 @@ function restoreOrders(){
    hardcoded id, and the resulting % stays hand-editable and persisted. */
 const RELIST_DISCOUNT_BASE = 0.50;              // at Advanced Broker Relations 0
 const RELIST_DISCOUNT_PER_LEVEL = 0.06;         // +6pp per level -> 0.80 at V
+/* ---------- how many market slots a character actually has -------------------------
+   Every character starts with 5 open-order slots, and four skills add to them:
+
+       cap = 5 + 4 x Trade + 8 x Retail + 16 x Wholesale + 32 x Tycoon
+
+   which runs from 5 to 305 across the full range. Slots, not ISK, are the thing that
+   runs out — it is why this page ranks by ISK per slot-DAY — so how many are left is
+   read off the character rather than assumed. The four skills are resolved BY NAME
+   through the same /universe/ids lookup everything else here uses, never by a hardcoded
+   type id, and the number is shown with its derivation on hover so it can be checked
+   against the client's own market window. */
+const ORDER_CAP_BASE = 5;
+const ORDER_SKILLS = [['Trade', 4], ['Retail', 8], ['Wholesale', 16], ['Tycoon', 32]];
+const ORDER_SKILL_KEY = 'eveHelper.orderSkills.v1';
+let orderSkillIds = null;       // name -> type id, resolved once and cached
+const orderCaps = {};           // charId -> { cap, levels } once the skills are read
+
+function orderCapOf(charId){
+  const all = window.EveAuth && EveAuth.allSkills ? EveAuth.allSkills(charId) : null;
+  if (!orderSkillIds || !all) return null;
+  let cap = ORDER_CAP_BASE;
+  const levels = {};
+  for (const [name, per] of ORDER_SKILLS){
+    const id = orderSkillIds[name];
+    const lvl = id != null ? (all[id] || 0) : 0;
+    levels[name] = id == null ? null : lvl;      // null = the id never resolved
+    cap += per * lvl;
+  }
+  return { cap, levels };
+}
+
+async function resolveOrderSkills(){
+  if (!window.EveAuth || !EveAuth.isLoggedIn()) return;
+  if (!orderSkillIds){
+    try{ orderSkillIds = JSON.parse(localStorage.getItem(ORDER_SKILL_KEY) || 'null'); }catch(_e){}
+  }
+  if (!orderSkillIds){
+    try{
+      const names = ORDER_SKILLS.map(x => x[0]);
+      const got = await resolveTypeIds(names);
+      orderSkillIds = {};
+      for (const n of names){ const id = got.get(n.toLowerCase()); if (id != null) orderSkillIds[n] = id; }
+      if (Object.keys(orderSkillIds).length) localStorage.setItem(ORDER_SKILL_KEY, JSON.stringify(orderSkillIds));
+      else { orderSkillIds = null; return; }
+    }catch(_e){ return; }
+  }
+  let any = false;
+  for (const c of EveAuth.characters()){
+    const got = orderCapOf(c.id);
+    if (got){ orderCaps[c.id] = got; any = true; }
+  }
+  if (any) renderOrdChars();
+}
+
 const ADV_BROKER_SKILL = 'Advanced Broker Relations';
 const ADV_BROKER_KEY = 'eveHelper.advBrokerSkill.v1';
 let relistOverride = null;    // the hand-typed %, or null = use the computed one
@@ -3834,6 +3897,7 @@ $('ordBody').addEventListener('click', e => {
 });
 if (window.EveAuth) EveAuth.onChange(() => {
   resolveAdvBroker();
+  resolveOrderSkills();      // a character added or removed changes whose slots these are
   if (state.mode === 'orders') renderOrders();
 });
 
@@ -4104,7 +4168,7 @@ if (!restore()) rebuild(false);   // renders the empty state and syncs controls 
 applyMode();
 renderOrders();
 // the relist % needs Advanced Broker Relations, and the box is shown before any fetch
-if (window.EveAuth) EveAuth.ready.then(() => resolveAdvBroker()).catch(() => {});
+if (window.EveAuth) EveAuth.ready.then(() => { resolveAdvBroker(); resolveOrderSkills(); }).catch(() => {});
 
 // fees from the ACTIVE character, computed with the constants at the top of this script
 // from Accounting, Broker Relations and the UNMODIFIED standings toward the hub
@@ -4185,9 +4249,11 @@ if (window.EveAuth) EveAuth.ready.then(() => resolveAdvBroker()).catch(() => {})
     try{
       let sk = EveAuth.skills();
       if (!sk || Date.now() - Date.parse(sk.fetched) > 86400e3) sk = await EveAuth.fetchSkills();
-      // the relist % is built on this character's Advanced Broker Relations, so it is
-      // refreshed wherever the fees are — by then the full skill list is certainly loaded
+      // the relist % is built on this character's Advanced Broker Relations, and the
+      // order cap on its four trade skills, so both are refreshed wherever the fees are —
+      // by then the full skill list is certainly loaded
       resolveAdvBroker();
+      resolveOrderSkills();
       const hNow = hub();
       const tax = salesTaxPctFor(sk);
       exactFee.salesTax = tax;

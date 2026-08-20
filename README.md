@@ -503,6 +503,20 @@ cancelling. Charging it there is the classic error that keeps dead orders alive 
 paid for this listing"); a sunk cost cannot be recovered by waiting. The only fee anywhere
 in the comparison is the **relist fee**, because that one is a payment you have not made yet.
 
+### How many slots you actually have
+
+Every character has 5 open-order slots and four skills that add to them:
+
+```
+cap = 5 + 4×Trade + 8×Retail + 16×Wholesale + 32×Tycoon        (5 to 305)
+```
+
+The character list above the table shows `used/cap slots` per character, with the
+derivation on hover, so it can be checked against the client's own market window. The four
+skills are resolved **by name** through the same `/universe/ids` lookup the rest of the
+site uses — no hardcoded type ids. Slots, not ISK, are the thing that runs out, which is
+why both modes rank by ISK per slot-**day**.
+
 ### The relist fee, and the half of it that is easy to miss
 
 Changing an open order's price is charged in **two** parts:
