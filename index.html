@@ -1807,7 +1807,37 @@ function dayReach(lo, avg, hi, x){
   return hi > avg ? m2 * (hi - x) / (hi - avg) : 0;
 }
 
-const REACH_HALF_LIFE_D = 45;   // last month and a half counts double the one before it
+/* Recency decay, ADAPTIVE — it is a property of the item, not a number.
+
+   The old rule was a flat 45-day half-life for everything, which is wrong at both ends.
+   For Tritanium, six-week-old prints are noise: it trades all day, and last week alone is
+   a bigger sample than anyone needs. For something that changes hands twice a month, six
+   weeks holds three prints, and discarding the rest leaves nothing to estimate from.
+
+   So the half-life is measured off the item's own tempo, and the yardstick is the horizon
+   the model is being asked about:
+
+     how far back do you have to go to find as many TRADING DAYS as the patience
+     window is long?
+
+   Trades every day → the half-life is the window itself. Trades one day in six → six
+   times the window, because that is what it costs to see the same amount of trading.
+   Never traded that much in the whole history → the whole history counts, evenly, which
+   is the honest answer when there is no more evidence to be had.
+
+   There is no free number in this: the window is the owner's patience setting and the
+   trading days are counted, not assumed. */
+function reachHalfLife(rows, windowDays){
+  const want = Math.max(1, Math.round(windowDays > 0 ? windowDays : 1));
+  const now = Date.now();
+  const ageOf = h => Math.max(1, (now - Date.parse(h.date)) / 86400e3);
+  let seen = 0;
+  for (let i = rows.length - 1; i >= 0; i--){
+    if (!(rows[i].volume > 0)) continue;
+    if (++seen >= want) return ageOf(rows[i]);
+  }
+  return rows.length ? ageOf(rows[0]) : want;
+}
 
 /* The weighted share of traded units that cleared at or above `price`, with every past
    day first carried to today's money at the fitted trend — the same carry, and the same
@@ -1817,10 +1847,11 @@ const REACH_HALF_LIFE_D = 45;   // last month and a half counts double the one b
    Also returns the trend-adjusted CEILING: the most the market has paid over the window,
    in today's money. A price above it has a reach of exactly zero, and that is a checkable
    statement about the history rather than a small percentage. */
-function reachOf(e, price){
+function reachOf(e, price, windowDays){
   if (!e || !(price > 0)) return null;
   const rows = tailOf(e, HIT_DAYS);
   if (!rows.length) return null;
+  const halfLife = reachHalfLife(rows, windowDays);
   const weekly = histTrend(e);
   const now = Date.now();
   let num = 0, numRaw = 0, den = 0, ceiling = 0, withBand = 0;
@@ -1838,7 +1869,7 @@ function reachOf(e, price){
               && Number.isFinite(h.lowest) && h.lowest > 0 && h.highest > h.lowest;
     if (band) withBand++;
     const lo = band ? h.lowest * f : 0, hi = band ? h.highest * f : 0;
-    const wt = Math.pow(0.5, age / REACH_HALF_LIFE_D) * vol;
+    const wt = Math.pow(0.5, age / halfLife) * vol;
     if (wt > 0){
       num += wt * dayReach(lo, avg * f, hi, price);
       numRaw += wt * dayReach(band ? h.lowest : 0, avg, band ? h.highest : 0, price);
@@ -1852,6 +1883,7 @@ function reachOf(e, price){
     Rraw: numRaw / den,          // the same without the trend carry — the dip/decay line
     ceiling,
     days: rows.length,
+    halfLife,                    // measured off this item, not a house number
     basis: withBand === rows.length ? 'daily high/low'
       : withBand === 0 ? 'daily average — this history carries no high/low'
       : 'daily high/low, average on the days without one',
@@ -1862,11 +1894,13 @@ function reachOf(e, price){
    candidate listing and once per order triaged, and the history it reads does not change
    between fetches. Memoised on the entry the same way hitRateCached is, and on the
    tracker adapter rather than the ESI entry when the model is reading tracker prints. */
-function reachCached(e, price){
+function reachCached(e, price, windowDays){
   if (!e) return null;
   if (!e._reach) e._reach = new Map();
-  if (!e._reach.has(price)) e._reach.set(price, reachOf(e, price));
-  return e._reach.get(price);
+  // the half-life moves with the window, so the window is part of the key
+  const k = price + '@' + (windowDays > 0 ? windowDays : 0);
+  if (!e._reach.has(k)) e._reach.set(k, reachOf(e, price, windowDays));
+  return e._reach.get(k);
 }
 
 /* Regularized lower incomplete gamma P(a,x) = P(Gamma(shape a, rate 1) <= x). Series
@@ -1949,12 +1983,12 @@ function fillOutlook(e, comp, price, qty, windowDays, opts){
   const trk = (opts.tracker && opts.tracker.sell && opts.tracker.sell.length) ? opts.tracker : null;
   if (trk && !trk._e) trk._e = { hist: trk.sell, typeId: e.typeId };
   const src = trk ? trk._e : e;
-  const reach = reachCached(src, price);
+  const reach = reachCached(src, price, windowDays);
   const volDay = trk ? trk.sellUnitsDay : histVolOf(e.hist, opts.histDays || HIT_DAYS);
   if (!reach || !(volDay > 0)) return null;
   const scale = volDay;             // no capture constant, no station-share guess
   const lambdaAt = x => {
-    const r = x === price ? reach.R : (reachCached(src, x) || { R: 0 }).R;
+    const r = x === price ? reach.R : (reachCached(src, x, windowDays) || { R: 0 }).R;
     return scale * r;
   };
   const lambdaP = scale * reach.R;
@@ -2029,6 +2063,7 @@ function fillOutlook(e, comp, price, qty, windowDays, opts){
     pAny: pj(1), pFull: pj(qty), expUnits,
     expDays: T1 + qty / lambdaP,
     queue, T1, lambdaP, kappa, kappaSrc, kappaCapped, kappaCeil, reach, volDay,
+    halfLife: reach.halfLife,        // days, measured off this item's own trading
     bound: trk ? 'estimate' : 'upper', reachSrc: trk ? 'tracker' : 'esi',
     capture: trk ? trk.capture : null,
     capped: null,
@@ -2141,7 +2176,7 @@ function listingOutlook(e, comp, price, qty, windowDays, opts){
     // or nothing, and the fraction already carries the verdict
     expDays: Number.isFinite(o.expDays) ? o.expDays : null,
     bound: o.bound, src: o.reachSrc, capped: o.capped, queue: o.queue,
-    kappa: o.kappa, kappaSrc: o.kappaSrc, kappaCapped: !!o.kappaCapped,
+    kappa: o.kappa, kappaSrc: o.kappaSrc, kappaCapped: !!o.kappaCapped, halfLife: o.halfLife,
     model: o, hit: null, queueFactor: null,
   };
   const hit = hitRateCached(e, price, windowDays);
@@ -2151,7 +2186,7 @@ function listingOutlook(e, comp, price, qty, windowDays, opts){
   const p = hit.p * queueFactor;
   return { frac: p, pAny: p, pFull: p, expUnits: p * qty, expDays: fillDays,
            bound: 'upper', src: 'esi', capped: null, queue: null,
-           kappa: null, kappaSrc: null, kappaCapped: false, model: null, hit, queueFactor };
+           kappa: null, kappaSrc: null, kappaCapped: false, halfLife: null, model: null, hit, queueFactor };
 }
 
 /* ---------- pick the odds, get the price -------------------------------------------
@@ -2172,7 +2207,7 @@ function listingOutlook(e, comp, price, qty, windowDays, opts){
 const ODDS_STEPS = 22;                 // 2^-22 of the bracket: finer than any tick
 function priceForOdds(e, comp, qty, windowDays, target, opts){
   if (!e || !(qty > 0) || !(target > 0) || !(target <= 1)) return null;
-  const reach = reachOf(e, 1e-9);      // any positive price: this is only for the ceiling
+  const reach = reachOf(e, 1e-9, windowDays);   // any positive price: this is only for the ceiling
   const hi0 = reach && reach.ceiling > 0 ? reach.ceiling : null;
   const lo0 = opts && opts.floor > 0 ? opts.floor : 0.01;
   if (hi0 == null || hi0 <= lo0) return null;
@@ -2201,6 +2236,10 @@ function priceForOdds(e, comp, qty, windowDays, target, opts){
 const pcBound = (p, bound) => p == null ? '—'
   : (bound === 'upper' ? '≤' : '') + Math.round(p * 100) + '%';
 const boundWord = bound => bound === 'estimate' ? 'estimate' : 'upper bound';
+/* The recency half-life is measured, so it is stated. Reading it: "older prints count
+   half from 38d back" — and on a thin item that number runs into the hundreds, which is
+   the model saying it had to reach that far to find any trading at all. */
+const halfLifeWord = d => d == null ? '' : ` · older prints halve at ${fmtDays(d)}d`;
 
 /* Days to work through the queue at `price`: units already listed at or below it on the
    hub's sell side, divided by the daily traded volume. BOTH halves are approximations and
@@ -2701,7 +2740,8 @@ function whyText(r){
       + ` · source ${c2.src === 'tracker' ? 'Adam4EVE sell side' : 'ESI regional, both sides'}`
       + (c2.capped === 'queue' ? ` · queue ${fmt.format(Math.round(c2.queue))} u never clears` : '')
       + (c2.capped === 'ceiling' ? ' · above every price the market has paid' : '')
-      + (c2.kappaCapped ? ' · trade size clamped to the window' : ''));
+      + (c2.kappaCapped ? ' · trade size clamped to the window' : '')
+      + halfLifeWord(c2.halfLife));
   const ev = [];
   if (r.pctRank != null && r.bestSell != null) ev.push(`rank: p${Math.round(r.pctRank)} of ${RANK_DAYS}d`);
   if (r.trendPctWk != null) ev.push(`trend: ${pctSigned(r.trendPctWk)}/wk (${r.dir})`);
@@ -4580,6 +4620,7 @@ function diagnoseOne(o, cfg){
   d.chanceSrc = out ? out.src : null;
   d.capped = out ? out.capped : null;
   d.kappaCapped = !!(out && out.kappaCapped);
+  d.halfLife = out ? out.halfLife : null;
   d.queueFactor = out ? out.queueFactor : null;
   d.hitRaw = out && out.hit ? out.hit.raw : null;
   d.hitBasis = out ? (out.model ? out.model.reach.basis : out.hit.basis) : null;
@@ -4698,7 +4739,8 @@ function verdictWhy(o, d, cfg){
     + (d.chanceAny != null ? ` · any unit ${pc(d.chanceAny)}` : '')
     + (d.capped === 'queue' ? ` · queue ${fmt.format(Math.round(d.queueAhead))} u never clears` : '')
     + (d.capped === 'ceiling' ? ' · above every price the market has paid' : '')
-    + (d.kappaCapped ? ' · trade size clamped to the window' : ''));
+    + (d.kappaCapped ? ' · trade size clamped to the window' : '')
+    + halfLifeWord(d.halfLife));
   if (d.floored && d.floored.length)
     out.push(`floor: ${d.floored.join(' · ')} under ${pc(cfg.pat.minFill)} ("${cfg.pat.label}") · not offered`);
   if (d.reasons.length) out.push('against it: ' + d.reasons.map(r => r.t).join(' · '));

@@ -409,6 +409,15 @@ the broker fee again.
 The metrics behind it, all computed from data already fetched (the daily history and the
 live book — no extra ESI endpoint), all recomputed locally when you change a control:
 
+- **Recency** — old prints count for less, and *how much* less is measured off the item
+  rather than set by the house. The half-life is the answer to **how far back you have to
+  go to find as many trading days as the patience window is long**. Tritanium trades every
+  day, so at 30 days' patience its memory is 30 days; something that changes hands one day
+  in six gets 180; something that has traded four times all year counts its whole history
+  evenly, because there is no more evidence to be had. The odds tooltip states the number
+  it used ("older prints halve at 180d"). This replaced a flat 45-day half-life, which was
+  six weeks of memory whether the item traded a thousand times a day or twice a month —
+  too long at one end and far too short at the other.
 - **Trend** — Theil–Sen slope (the median of every pairwise slope) on the **log** of the
   last 30 daily averages, in %/week. Median-of-slopes because EVE history is full of
   single-day spikes that would drag a least-squares line; log because it makes the slope a

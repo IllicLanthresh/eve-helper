@@ -1029,6 +1029,69 @@ H.run('sell', async () => {
     check('...a ratio of more than five hundred to one between the two prices',
       rch.spikeAtMarket / rch.spikeAtAsk > 500, String(rch.spikeAtMarket / rch.spikeAtAsk));
 
+    /* ---------- recency decay, measured off the item ---------- */
+    /* It used to be a flat 45 days for everything: six weeks of memory whether the item
+       trades a thousand times a day or twice a month. The half-life is now the answer to
+       "how far back do I have to go to find as many trading days as the patience window
+       is long" — so a daily trader remembers the window, and a thin one remembers as far
+       as it has to in order to have seen anything at all. */
+    section('the recency half-life is the item\'s own tempo, not a house number');
+    const HL = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      // every day for a year
+      const daily = [];
+      for (let t = 364; t >= 0; t--) daily.push({ date: day(t), volume: 100 });
+      // one day in six
+      const thin = [];
+      for (let t = 364; t >= 0; t--) thin.push({ date: day(t), volume: t % 6 === 0 ? 100 : 0 });
+      // traded four times, ever
+      const rare = [];
+      for (let t = 364; t >= 0; t--) rare.push({ date: day(t), volume: t % 90 === 0 ? 100 : 0 });
+      return {
+        daily7: reachHalfLife(daily, 7), daily30: reachHalfLife(daily, 30),
+        daily90: reachHalfLife(daily, 90),
+        thin30: reachHalfLife(thin, 30),
+        rare30: reachHalfLife(rare, 30),
+        oldest: (Date.now() - Date.parse(day(364))) / 86400e3,
+        empty: reachHalfLife([], 30),
+      };
+    });
+    near('an item that trades every day remembers exactly the window: 7d', HL.daily7, 7, 1);
+    near('...30d', HL.daily30, 30, 1);
+    near('...90d', HL.daily90, 90, 1);
+    check('...so the half-life follows the window, rather than sitting at a fixed 45',
+      HL.daily7 < HL.daily30 && HL.daily30 < HL.daily90,
+      [HL.daily7, HL.daily30, HL.daily90].join(' / '));
+    near('one trading day in six costs six times the memory', HL.thin30, 180, 6);
+    check('...which is far past the 45 days the old rule allowed anything',
+      HL.thin30 > 45 * 2, String(HL.thin30));
+    check('an item that has traded four times in a year counts its whole history',
+      Math.abs(HL.rare30 - HL.oldest) < 2, HL.rare30 + ' vs ' + HL.oldest);
+    check('...and never longer than the history it has', HL.rare30 <= HL.oldest + 1e-9,
+      HL.rare30 + ' vs ' + HL.oldest);
+    eq('no history at all falls back to the window itself', HL.empty, 30);
+
+    /* The point of all this: a thin item's older prints must actually survive into the
+       estimate. Same history, same price, two patience windows — the reach the model
+       computes has to move, because the memory it is built on moved. */
+    const HLR = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      // traded one day in ten; the OLD prints are the expensive ones
+      const hist = [];
+      for (let t = 364; t >= 0; t--){
+        if (t % 10) continue;
+        const px = t > 180 ? 2000 : 1000;
+        hist.push({ date: day(t), average: px, highest: px, lowest: px, volume: 100, order_count: 5 });
+      }
+      const e = { typeId: 1, hist };
+      const r7 = reachOf(e, 1500, 7), r90 = reachOf(e, 1500, 90);
+      return { hl7: r7.halfLife, hl90: r90.halfLife, R7: r7.Rraw, R90: r90.Rraw };
+    });
+    check('a longer window buys a longer memory on a thin item', HLR.hl90 > HLR.hl7,
+      HLR.hl7 + ' -> ' + HLR.hl90);
+    check('...and the old, expensive prints then carry more of the estimate',
+      HLR.R90 > HLR.R7 + 0.05, HLR.R7 + ' -> ' + HLR.R90);
+
     /* ---------- the whole outlook, on the order that started this -------------------
        A ship skin listed at 177,600 with 178 units of other people's stock ahead of it,
        on a market that trades ~15 units on the 30 days a year it trades at all and whose
