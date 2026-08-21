@@ -255,6 +255,12 @@ const rowOf = (page, name) => page.evaluate(n => {
   return { volDay: r.volDay, volSell: r.volSell, volBuy: r.volBuy, capture: r.capture,
     volSrc: r.volSrc, volState: r.volState, volHeldDays: r.volHeldDays,
     volUnitsSell: r.volUnitsSell, volUnitsBuy: r.volUnitsBuy,
+    volSellRaw: r.metrics ? r.metrics.volSellRaw : null,
+    volBuyRaw: r.metrics ? r.metrics.volBuyRaw : null,
+    trkCorr: r.metrics ? r.metrics.trkCorr : null,
+    patSrc: r.metrics ? r.metrics.patSrc : null,
+    patientPrice: r.metrics ? r.metrics.patientPrice : null,
+    flags: (r.flags || []).map(f => ({ t: f.t, ttl: f.ttl })),
     cells: { volSell: cellOf('volSell'), volBuy: cellOf('volBuy'),
       capture: cellOf('capture'), volDay: cellOf('volDay') } };
 }, name);
@@ -482,8 +488,11 @@ H.run('tracker-model', async () => {
     eq('the sell side holds thirty days of the fixture\'s 100 units', late.volUnitsSell, 3000);
     eq('...and the buy side four days of its 300', late.volUnitsBuy, 1200);
     near('the share is units over units', late.capture, 3000 / 4200, 1e-12);
+    /* The RATE columns carry the ESI-ratio correction (see D5 below); the raw reading
+       behind them is what has to share a denominator, and it does. */
     near('...and both rates carry the same denominator, the days held',
-      late.volBuy, 1200 / 30, 1e-12);
+      late.volBuyRaw, 1200 / 30, 1e-12);
+    near('...the sell side likewise', late.volSellRaw, 3000 / 30, 1e-12);
     const twoRate = await s2.page.evaluate(async () => {
       const recs = await trkDb.rowsFor(60003760, 9106);
       const rows = [].concat.apply([], recs.map(r => r.r));
@@ -493,6 +502,78 @@ H.run('tracker-model', async () => {
     });
     check('the shipped two-rate formula reads this pair as a third of what it is',
       twoRate.share < 0.35, twoRate.share + ' vs ' + (3000 / 4200));
+
+    /* ---------- D2b: the undercount correction ------------------------------------- */
+    /* A4E's bulk files read a vanished order as a cancel, so they undercount real trade —
+       a median 54% of ESI's regional volume over 28 measured type-days, range 0.28-1.01.
+       The correction is the ITEM's own ratio over the days A4E holds, not that median. It
+       cannot separate its three causes, so its size goes on the row instead of being
+       folded away. */
+    section('the tracker undercount is corrected per item, and the correction is shown');
+    const corrRows = await s2.page.evaluate(() => state.rows.filter(r => r.metrics && r.metrics.trkCorr)
+      .map(r => ({ name: r.name, c: r.metrics.trkCorr, volSell: r.volSell,
+                   raw: r.metrics.volSellRaw, capture: r.capture,
+                   flags: r.flags.map(f => f.t) })));
+    check('some rows carry a correction at all', corrRows.length > 0, String(corrRows.length));
+    for (const r of corrRows.slice(0, 1)){
+      near('the correction is ESI regional units over what the tracker counted',
+        r.c.ratio, r.c.esi / r.c.a4e, 1e-12);
+      near('...applied to the arrival rate', r.volSell, r.raw * Math.max(1, r.c.ratio), 1e-9);
+    }
+    const bigCorr = corrRows.find(r => r.c.ratio > 1.1);
+    if (bigCorr){
+      check('a correction worth noticing is on the row as a chip',
+        bigCorr.flags.some(t => /^vol ×/.test(t)), JSON.stringify(bigCorr.flags));
+    } else {
+      check('a correction worth noticing is on the row as a chip', false, 'no row corrected past 1.1');
+    }
+    /* volUnitsSell/Buy are the RAW counts — what the tracker saw, uncorrected. The share
+       computed from them has to equal the share on the row, which is the whole claim: a
+       common factor on both sides cancels. */
+    near('the sell/buy split is a ratio, so the correction cancels out of it',
+      late.capture, late.volUnitsSell / (late.volUnitsSell + late.volUnitsBuy), 1e-12);
+    check('...and the correction on that row was not 1, so the claim has teeth',
+      (late.trkCorr && late.trkCorr.ratio) > 1.0001, JSON.stringify(late.trkCorr));
+
+    /* ---------- D2c: the patient price anchors to what sold HERE ------------------- */
+    /* The history reference is ESI regional — both sides of the book pooled across every
+       station in the region. Fine as a statistic the owner picks; wrong as the price to
+       hold out for at one hub. The tracker's sell-side prints are trades at this station
+       that filled a sell order, which is the event being waited for. */
+    section('the patient price anchors to sell-side trades at this hub');
+    const pat = await s2.page.evaluate(() => state.rows
+      .filter(r => r.metrics && r.metrics.patientPrice != null)
+      .map(r => ({ name: r.name, src: r.metrics.patSrc, price: r.metrics.patientPrice,
+                   volState: r.volState, sellUnits: r.volUnitsSell })));
+    const withSells = pat.filter(r => r.volState === 'tracker' && r.sellUnits > 0);
+    const noSells = pat.filter(r => !(r.volState === 'tracker' && r.sellUnits > 0));
+    check('there are rows on both sides of the fallback', withSells.length > 0 && noSells.length > 0,
+      withSells.length + ' anchored / ' + noSells.length + ' not');
+    check('a row with sell-side prints here anchors to them',
+      withSells.every(r => r.src === 'tracker'), JSON.stringify(withSells));
+    /* An item the tracker HAS rows for but only on the buy side has no sell-side print to
+       anchor to — nothing at this station has filled a sell order — so it falls back
+       exactly as an untracked item does. */
+    check('...and a row with none falls back to ESI regional, buy-side-only rows included',
+      noSells.every(r => r.src === 'esi'), JSON.stringify(noSells));
+    check('...one of which is a tracked item that only ever sold into buy orders',
+      noSells.some(r => r.volState === 'tracker'), JSON.stringify(noSells));
+    const anchored = await s2.page.evaluate(() => {
+      const r = state.rows.find(x => x.volState === 'tracker' && x.metrics.patSrc === 'tracker');
+      const trk = trkSeriesFor(hub().station, r.typeId);
+      const days = Number(document.getElementById('histDays').value) || 30;
+      const mode = document.getElementById('histMode').value;
+      return {
+        fromTracker: round4sig(histStatOf(trk.sell, days, mode)),
+        fromEsi: round4sig(histStatOf(state.esi.get(r.name.toLowerCase()).hist, days, mode)),
+        shown: r.metrics.patientPrice,
+      };
+    });
+    eq('...the number being the tracker statistic, computed the owner\'s way',
+      anchored.shown, anchored.fromTracker);
+    check('...which is not simply the ESI one wearing a different label',
+      anchored.fromEsi !== anchored.fromTracker,
+      anchored.fromEsi + ' vs ' + anchored.fromTracker);
 
     section('the split is a column, not a number with the split hidden on hover');
     const cols = await s2.page.evaluate(() => {

@@ -1427,9 +1427,59 @@ async function loadTrackerMemo(){
     if (seq !== trkMemoSeq) return;
     byKey.set(k, trkSeries(recs, days, held.length));
   }
-  state.trk = { days, byKey, cov, held: held.length, newest: held[held.length - 1] || null,
-                on: held.length > 0 };
+  state.trk = { days, byKey, cov, held: held.length, heldSet: new Set(held),
+                newest: held[held.length - 1] || null, on: held.length > 0 };
   renderTrackerAge();
+}
+
+/* ---------- correcting the tracker's undercount ------------------------------------
+
+   A4E's bulk files carry only the `has_gone=0` reading: an order that vanished between
+   two scans is counted as cancelled, not sold. That undercounts real trade, and by a lot
+   — measured against ESI's regional totals, A4E sees a median 54% of the volume over 28
+   type-days, range 0.28 to 1.01.
+
+   The correction is the item's OWN ratio, not that median: ESI's regional units over the
+   days A4E holds, divided by what A4E counted over the same days. Same denominator on
+   both sides, which is the whole point — an earlier version of the capture number
+   normalised each side by its own first-seen day and came out 33% wrong on thin items.
+
+   What the ratio CANNOT do is separate its three causes: vanished orders read as cancels,
+   trade at other stations in the same region, and 15-minute sampling missing a fill
+   entirely. So it is an upper correction, and its size is put on the row rather than
+   folded away — a x1.2 is a tracker that saw most of the trade, a x6 is a number to
+   distrust. The sell/buy SPLIT is a ratio, so the correction cancels out of it and
+   `capture` is left exactly as measured.
+
+   Days A4E downloaded, not days this item traded: a day A4E holds with no row for the
+   item is a measured zero and belongs in the denominator. */
+function trkEsiRatio(trk, e){
+  if (!trk || !e || !e.hist || !e.hist.length) return null;
+  const held = state.trk && state.trk.heldSet;
+  if (!held || !held.size) return null;
+  let esi = 0;
+  for (const h of e.hist) if (held.has(h.date)) esi += h.volume || 0;
+  const a4e = (trk.sellUnits || 0) + (trk.buyUnits || 0);
+  if (!(a4e > 0) || !(esi > 0)) return null;
+  return { ratio: esi / a4e, esi, a4e, days: held.size };
+}
+
+/* The series the model reads: the same rows, with the absolute rates scaled by that
+   ratio. The per-day rows are left alone — they only ever supply RELATIVE weights and a
+   price distribution, both of which a common factor does not touch. */
+function trkCorrected(trk, e){
+  if (!trk) return { series: null, corr: null };
+  const c = trkEsiRatio(trk, e);
+  if (!c || !(c.ratio > 1)) return { series: trk, corr: c };
+  const k = c.ratio;
+  return {
+    series: Object.assign({}, trk, {
+      sellUnits: trk.sellUnits * k, buyUnits: trk.buyUnits * k,
+      sellUnitsDay: trk.sellUnitsDay * k, buyUnitsDay: trk.buyUnitsDay * k,
+      corrected: k,
+    }),
+    corr: c,
+  };
 }
 
 // null both when nothing is cached and when this hub/type carries no tracker row — the
@@ -2491,13 +2541,16 @@ function rebuild(keepChecks = true){
     const volDay = histVolOf(e.hist, histDays);
     // measured at THIS station, sell side split from buy side. null when nothing is
     // cached and when the tracker carries no row here — the two read differently below.
-    const trk = trkSeriesFor(hubStation, e.typeId);
+    const trkRaw = trkSeriesFor(hubStation, e.typeId);
+    const { series: trk, corr: trkCorr } = trkCorrected(trkRaw, e);
     const volSell = trk ? trk.sellUnitsDay : null;
     const volBuy  = trk ? trk.buyUnitsDay : null;
     const capture = trk ? trk.capture : null;
     // the units and the days behind those rates, so a tooltip never has to guess either
-    const volUnitsSell = trk ? trk.sellUnits : null;
-    const volUnitsBuy  = trk ? trk.buyUnits : null;
+    // what the tracker ACTUALLY SAW stays raw: it is a measurement, and the tooltip
+    // quotes it beside the correction rather than folding one into the other
+    const volUnitsSell = trkRaw ? trkRaw.sellUnits : null;
+    const volUnitsBuy  = trkRaw ? trkRaw.buyUnits : null;
     const volHeldDays  = trk ? trk.days : null;
     /* Three states, three marks. `off` is "nobody has fetched this" — unknown. `none` is
        a covered hub with no row for this item across every day held, which is a market
@@ -2628,7 +2681,17 @@ function rebuild(keepChecks = true){
     const compKind = (priceSrc === 'hist' && hist != null) ? 'patient' : 'comp';
     const comp = evalListing(L, compKind);
     // ---- disposal 3: LIST-PATIENT at the history reference price ----
-    const patientPrice = (hist != null && hist > 0) ? round4sig(hist) : null;
+    /* THE PATIENT PRICE ANCHORS TO WHAT SOLD HERE. The history reference above is ESI
+       regional, both sides of the book pooled across every station in the region — fine
+       as a reference statistic the owner picks, wrong as the price to hold out for at
+       ONE hub. The tracker's sell-side prints are trades at this station that filled a
+       sell order, which is exactly the event being waited for. ESI stays the fallback
+       where the tracker has nothing. */
+    const patTrk = (trk && trk.sell && trk.sell.length)
+      ? histStatOf(trk.sell, histDays, histMode) : null;
+    const patSrc = patTrk != null && patTrk > 0 ? 'tracker' : 'esi';
+    const patBase = patSrc === 'tracker' ? patTrk : hist;
+    const patientPrice = (patBase != null && patBase > 0) ? round4sig(patBase) : null;
     const patOpt = (patientPrice != null && (comp == null || patientPrice > comp.price))
       ? evalListing(patientPrice, 'patient') : null;
     const patHit = patientPrice != null ? hitRateCached(e, patientPrice, pat.days) : null;
@@ -2699,6 +2762,18 @@ function rebuild(keepChecks = true){
         + '\nnever traded: not at that price, not once'
         + '\ncase: falling into the bottom, not from the top'
         + '\ngive-up value: stops at the floor' });
+    /* The correction's size IS the data-quality signal. A x1.2 is a tracker that saw
+       most of the trade; a x6 is a rate to distrust, and the row should not let that pass
+       without saying it. Under x1.1 there is nothing worth a chip. */
+    if (trkCorr && trkCorr.ratio > 1.1) flags.push({
+      t: `vol ×${trkCorr.ratio.toFixed(trkCorr.ratio >= 10 ? 0 : 1)}`,
+      cls: trkCorr.ratio > 3 ? 'warn' : 'info',
+      ttl: `tracker saw: ${fmt.format(Math.round(trkCorr.a4e))} u over ${trkCorr.days}d`
+        + `\nESI regional: ${fmt.format(Math.round(trkCorr.esi))} u over the same days`
+        + `\ncorrection: ×${trkCorr.ratio.toFixed(2)} on the arrival rate`
+        + '\nnot in it: the sell/buy split, which is a ratio and cancels'
+        + '\nthe gap: cancels read as sales, other stations, sampling misses'
+        + '\nunseparable, so this is an upper correction' });
     if (decayInfo.at === 'ceiling') flags.push({ t: 'at ceiling', cls: 'info',
       ttl: `range high: ${fmtIsk(decayInfo.hi)} over ${HIT_DAYS}d`
         + `\ntrend alone: ${fmtIsk(decayInfo.hi / decayInfo.f * decayInfo.raw)} in ${pat.days}d`
@@ -2771,6 +2846,9 @@ function rebuild(keepChecks = true){
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
                  floorCost, floorBest,
                  skipped: clean.dropped, skipFloor: clean.floor, decayInfo,
+                 patSrc, trkCorr,
+                 volSellRaw: trkRaw ? trkRaw.sellUnitsDay : null,
+                 volBuyRaw: trkRaw ? trkRaw.buyUnitsDay : null,
                  window: pat.days, minFill: pat.minFill, label: pat.label },
       flags, unsellable, dupOrders,
       // latent tick state — survives strategy flips; instants are excluded from the
@@ -2852,8 +2930,14 @@ function volTip(r, side){
   if (r.volState !== 'tracker') return volNoneTip(r);
   const d = r.volHeldDays;
   const u = side === 'sell' ? r.volUnitsSell : r.volUnitsBuy;
+  const m = r.metrics || {};
+  const raw = side === 'sell' ? m.volSellRaw : m.volBuyRaw;
   return `${side} side: ${fmt.format(Math.round(u))} u over ${d}d held`
-    + `\nstation: ${hub().label}`;
+    + `\nstation: ${hub().label}`
+    + (m.trkCorr && m.trkCorr.ratio > 1
+      ? `\nas seen: ${fmtShort(raw)} u/d`
+        + `\ncorrected: ×${m.trkCorr.ratio.toFixed(2)} to ESI's regional total`
+      : '');
 }
 const volNoneTip = r => r.volState === 'none'
   ? `no trade at this hub · ${state.trk.held}d held`
@@ -2971,7 +3055,8 @@ function whyText(r){
   if (m.patHit && patientIsLive)
     out.push(`patient ${fmtIsk(m.patientPrice)}: ${pc(m.patHit.p)} of ${m.window}d windows carried to today`
       + (Math.abs(m.patHit.raw - m.patHit.p) > 0.05 ? ` · raw ${pc(m.patHit.raw)} (the gap is the decay)` : '')
-      + ` · ${m.patHit.basis}`);
+      + ` · ${m.patHit.basis}`
+      + ` · anchored to ${m.patSrc === 'tracker' ? 'Adam4EVE sell-side trades here' : 'ESI regional history'}`);
   else if (m.patientPrice != null && c && c.price > m.patientPrice)
     out.push(`patient ${fmtIsk(m.patientPrice)}: below your ask — nothing to wait for`);
   for (const g of (m.guarded || []))
@@ -4796,13 +4881,19 @@ function diagnoseOne(o, cfg){
   d.trendPctWk = e ? histTrend(e) : null;
   d.dir = trendClass(d.trendPctWk);
   d.volDay = e ? histVolOf(e.hist, cfg.histDays) : null;
-  // measured at THIS station, both sides kept apart. Reported, not yet ranked with.
-  const trk = trkSeriesFor(TRACKED_HUBS.has(o.locationId) ? o.locationId : null, o.typeId);
+  // measured at THIS station, both sides kept apart, and corrected for A4E's undercount
+  // by the same per-item ESI ratio the Sell mode uses — one model, two screens
+  const trkRaw = trkSeriesFor(TRACKED_HUBS.has(o.locationId) ? o.locationId : null, o.typeId);
+  const { series: trk, corr: trkCorr } = trkCorrected(trkRaw, e);
+  d.trkCorr = trkCorr;
   d.volSell = trk ? trk.sellUnitsDay : null;
   d.volBuy  = trk ? trk.buyUnitsDay : null;
   d.capture = trk ? trk.capture : null;
-  d.volUnitsSell = trk ? trk.sellUnits : null;
-  d.volUnitsBuy  = trk ? trk.buyUnits : null;
+  // the raw counts are a measurement and stay one; the tooltip quotes them beside it
+  d.volSellRaw = trkRaw ? trkRaw.sellUnitsDay : null;
+  d.volBuyRaw  = trkRaw ? trkRaw.buyUnitsDay : null;
+  d.volUnitsSell = trkRaw ? trkRaw.sellUnits : null;
+  d.volUnitsBuy  = trkRaw ? trkRaw.buyUnits : null;
   d.volHeldDays  = trk ? trk.days : null;
   // a structure is not a fourth state of the tracker, it is outside its coverage entirely
   d.volState = trk ? 'tracker'
@@ -4964,6 +5055,7 @@ function verdictWhy(o, d, cfg){
     + (d.capped === 'queue' ? ` · queue ${fmt.format(Math.round(d.queueAhead))} u never clears` : '')
     + (d.capped === 'ceiling' ? ' · above every price the market has paid' : '')
     + (d.kappaCapped ? ' · trade size clamped to the window' : '')
+    + (d.trkCorr && d.trkCorr.ratio > 1.1 ? ` · volume corrected ×${d.trkCorr.ratio.toFixed(1)}` : '')
     + halfLifeWord(d.halfLife));
   if (d.floored && d.floored.length)
     out.push(`floor: ${d.floored.join(' · ')} under ${pc(cfg.pat.minFill)} ("${cfg.pat.label}") · not offered`);
@@ -4990,8 +5082,13 @@ function ordVolTip(r, side){
   if (side === 'share') return `sell side: ${Math.round(r.capture * 100)}% of units traded`
     + `\nbuy side: ${100 - Math.round(r.capture * 100)}% — no help to a sell order`;
   const u = side === 'sell' ? r.volUnitsSell : r.volUnitsBuy;
+  const raw = side === 'sell' ? r.volSellRaw : r.volBuyRaw;
   return `${side} side: ${fmt.format(Math.round(u))} u over ${days}d held`
-    + `\nstation: ${r.locName || r.locationId}`;
+    + `\nstation: ${r.locName || r.locationId}`
+    + (r.trkCorr && r.trkCorr.ratio > 1
+      ? `\nas seen: ${fmtShort(raw)} u/d`
+        + `\ncorrected: ×${r.trkCorr.ratio.toFixed(2)} to ESI's regional total`
+      : '');
 }
 
 function ordDiagCells(tr, r, cell){

@@ -254,7 +254,8 @@ remembered.
    - **current best sell** (optionally one tick under), or
    - **history statistic** — median / average / 10th / 90th percentile of the region's
      daily average price over the last N days. N and the statistic apply instantly, no refetch.
-     This statistic is also the **patient price** the tool values as its own option.
+     (The **patient price** the tool values as its own option is anchored separately —
+     see [The patient price](#the-patient-price).)
    - **price for X% chance** — no price is chosen at all; the tool is handed the *odds you
      want* and solves backwards for the price that delivers them inside your patience
      window. See [Solving for the odds](#solving-for-the-odds).
@@ -500,6 +501,43 @@ price the trend alone would have reached, and the sentence that separates the tw
 An item falling from the top has room below it and is discounted for all of it.
 
 Two invented constants left with this.
+
+### The patient price
+
+LIST-PATIENT is the plan that says *hold out for the better price*. What that price should
+be is not the same question as what statistic you want in the History column.
+
+It anchors to **Adam4EVE's sell-side prints at this hub** — trades at this station that
+filled a sell order, which is exactly the event you are waiting for. Your chosen statistic
+(median / average / p10 / p90 over N days) is applied to *that* series. **ESI regional is
+the fallback**, used where the tracker has no sell-side print here: an item that has only
+ever been dumped into buy orders at this station has nothing to anchor to, and is treated
+the same as one the tracker does not carry at all. The row's tooltip names which of the two
+it used.
+
+It used to be the ESI regional statistic — both sides of the book pooled across every
+station in the region. Fine as a reference number you pick; wrong as the price to hold out
+for at one hub.
+
+### Correcting the tracker's undercount
+
+A4E's bulk files carry only the `has_gone=0` reading: an order that vanished between two
+scans is counted as cancelled, not sold. That undercounts real trade, and by a lot —
+measured against ESI's regional totals, A4E sees a median **54%** of the volume over 28
+type-days, range 0.28 to 1.01.
+
+The correction is **the item's own ratio**, not that median: ESI's regional units over the
+days A4E holds, divided by what A4E counted over the same days. Same denominator on both
+sides — an earlier version of the capture number normalised each side by its own first-seen
+day and came out 33% wrong on thin items.
+
+What the ratio **cannot** do is separate its three causes: vanished orders read as cancels,
+trade at other stations in the same region, and 15-minute sampling missing a fill entirely.
+So its size goes on the row instead of being folded away — a **`vol ×1.2`** is a tracker
+that saw most of the trade; a **`vol ×6`** (amber) is a rate to distrust. The sell/buy
+**split is a ratio**, so the correction cancels out of it and `Sell share` is left exactly
+as measured. The volume tooltips give both readings: what the tracker saw, and what it was
+corrected to.
 
 ### Absurd sell orders
 
@@ -965,6 +1003,7 @@ Every chip is at most ten-odd characters and carries its numbers on hover.
 | `▼x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `minfee` | The flat 100 ISK per-order broker fee beats the percentage; the tooltip gives the effective and nominal rates. |
 | `L=sell` / `L=hist` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `vol ×2.4` | The tracker's arrival rate was corrected upward by this much to match ESI's regional total over the same days. Amber past ×3 — the bigger it is, the less of the real trade A4E saw, and the less the rate is worth trusting. |
 | `at floor` | The item is at the bottom of the range this market has traded in over the history window, so the give-up branch is not allowed to project it any cheaper. Falling *into* the bottom, not *from* the top. |
 | `at ceiling` | The same the other way up: at the top of its own range, and the carry stops there. |
 | `floor 618k` | The fill floor blocked a listing that was worth **more** than the plan taken instead, and this is the difference. The tooltip gives the price, the odds, the floor they missed, and the fee that was at risk. Lower the floor to take the bet. |
