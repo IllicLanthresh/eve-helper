@@ -273,9 +273,12 @@ H.run('density', async () => {
 
     /* the TSV is where the long numbers went — the terse table must not be the only copy */
     const tsvHead = await o.page.evaluate(() => ordTsv().split('\n')[0].split('\t'));
+    // REWRITTEN: the odds column is 'Fill %' now — a share of the units on the order, not
+    // a coin flip on all of them — and 'Fill bound' says which kind of number it is.
     check('the triage TSV still carries the diagnostics the table compresses',
-      ['Queue ahead', 'Fill est. d', 'Chance %', 'Trend %/wk', 'Hold ISK', 'Reprice ISK', 'Dump ISK',
-        'Relist fee ISK'].every(h => tsvHead.includes(h)), tsvHead.join('|'));
+      ['Queue ahead', 'Fill est. d', 'Fill %', 'Fill bound', 'Trend %/wk', 'Hold ISK',
+        'Reprice ISK', 'Dump ISK', 'Relist fee ISK'].every(h => tsvHead.includes(h)),
+      tsvHead.join('|'));
     await o.close();
   } finally {
     await browser.close();

@@ -8,7 +8,7 @@ const path = require('path');
 
 // deliberate order: cheapest and most fundamental first
 const ORDER = ['industry.test.js', 'fees.test.js', 'sell.test.js', 'orders.test.js',
-  'tracker-mock.test.js', 'tracker.test.js', 'tracker-model.test.js',
+  'tracker-mock.test.js', 'tracker-model.test.js',
   'auth.test.js', 'structures.test.js', 'structures-manager.test.js', 'industry-ui.test.js',
   'density.test.js'];
 

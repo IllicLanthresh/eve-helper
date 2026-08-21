@@ -17,6 +17,9 @@
    Nothing here touches the network: the static host is routed in this file, the same way
    helper.js routes ESI. */
 'use strict';
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
 const H = require('./helper');
 const { check, eq, near, section } = H;
 
@@ -29,6 +32,7 @@ const TYPE_IDS = {
   'Buy Only': 9102,          // tracker rows, zero sell-side units
   'Ghost Widget': 9103,      // no tracker row at all
   'Clamp Widget': 9104,      // iskValue/amount lands outside the day's band
+  'Late Buyer': 9106,        // its buy side starts 26 days after its sell side
 };
 
 const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
@@ -46,10 +50,11 @@ const BOOKS = {
   'Buy Only': { buys: [{ p: 40, v: 5000 }], sells: [{ p: 50, v: 5000 }], hist: FLAT },
   'Ghost Widget': { buys: [{ p: 40, v: 5000 }], sells: [{ p: 50, v: 5000 }], hist: FLAT },
   'Clamp Widget': { buys: [{ p: 90, v: 5000 }], sells: [{ p: 100, v: 5000 }], hist: FLAT },
+  'Late Buyer': { buys: [{ p: 90, v: 5000 }], sells: [{ p: 100, v: 5000 }], hist: FLAT },
 };
 
 const PASTE = ['Tritanium\t1000', 'Dump Widget\t100', 'Buy Only\t100',
-  'Ghost Widget\t100', 'Clamp Widget\t100'].join('\n');
+  'Ghost Widget\t100', 'Clamp Widget\t100', 'Late Buyer\t100'].join('\n');
 
 /* ---------- the static host, in fixture form ----------------------------------------
    Semicolon separated, one header line, the columns in the order A4E publishes them.
@@ -65,15 +70,22 @@ const SIDES = {
   9101: { sell: 220,  buy: 780,  lo: 90,   hi: 110,  vw: 100 },
   9102: { sell: 0,    buy: 500,  lo: 40,   hi: 50,   vw: 45 },
   9104: { sell: 300,  buy: 100,  lo: 90,   hi: 110,  vw: 200 },   // outside the band: clamped
+  /* The population the sell-share column exists for: the two sides of one book started
+     trading here on different days. buyDays keeps the buy rows to the four most recent
+     days, so over a 30-day window the sides carry 30 days of prints and 4. */
+  9106: { sell: 100,  buy: 300,  lo: 90,   hi: 110,  vw: 100, buyDays: 4 },
 };
 
 function a4eRows(d) {
   const out = [];
+  // days back from today, so one side of a book can be made to start later than the other
+  const age = Math.round((Date.parse(todayUTC() + 'T00:00:00Z') - Date.parse(d + 'T00:00:00Z')) / 86400e3);
   for (const loc of HUBS) {
     for (const [tid, s] of Object.entries(SIDES)) {
       for (const isBuy of [0, 1]) {
         const amount = isBuy ? s.buy : s.sell;
         if (!amount) continue;
+        if (isBuy && s.buyDays && age > s.buyDays) continue;
         // the published avg, deliberately below `low` — the trap this suite exists for
         const avg = s.lo - 1;
         out.push([loc, 10000002, tid, isBuy, 0, d, amount, s.hi, s.lo, avg,
@@ -107,6 +119,8 @@ async function mockA4E(context, opts) {
   await context.route('**://static.adam4eve.eu/**', async route => {
     const url = route.request().url();
     counters.urls.push(url);
+    // a host that accepts the connection and then says nothing, for as long as it takes
+    if (opts.hang) return new Promise(() => {});
     counters.concurrent++;
     counters.maxConcurrent = Math.max(counters.maxConcurrent, counters.concurrent);
     const finish = async r => {
@@ -144,6 +158,46 @@ async function mockA4E(context, opts) {
     return finish({ status: 404, body: 'unknown', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   return counters;
+}
+
+/* The real published dump, re-dated onto the last seven days and nothing else changed:
+   the same rows, hubs, sides and per-day shape, so the shares the page derives are the
+   shares tools/verify-tracker.mjs derives from the file on disk. */
+async function mockA4EReal(context, file) {
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const head = lines[0].replace(/\r$/, '');
+  const src = lines.slice(1).map(l => l.replace(/\r$/, '')).filter(l => l.trim());
+  const fileDays = [...new Set(src.map(l => l.split(';')[5]))].sort();
+  // the file's last day becomes yesterday, the newest day the host ever publishes
+  const remap = new Map(fileDays.map((d, i) => [d, shift(todayUTC(), -(fileDays.length - i))]));
+  const byDay = new Map();
+  for (const l of src) {
+    const f = l.split(';');
+    const nd = remap.get(f[5]);
+    if (!nd) continue;
+    f[5] = nd;
+    if (!byDay.has(nd)) byDay.set(nd, []);
+    byDay.get(nd).push(f.join(';'));
+  }
+  const csv = rs => ({ status: 200, contentType: 'text/csv',
+    headers: { 'Access-Control-Allow-Origin': '*' }, body: [head].concat(rs).join('\n') + '\n' });
+  await context.route('**://static.adam4eve.eu/**', async route => {
+    const url = route.request().url();
+    let m = url.match(/_daily_(\d{4}-\d{2}-\d{2})\.csv$/);
+    if (m) return route.fulfill(csv(byDay.get(m[1]) || []));
+    m = url.match(/_weekly_(\d{4})-(\d{1,2})\.csv$/);
+    if (m) {
+      const rs = [];
+      for (const [d, list] of byDay) {
+        const w = isoWeekOf(d);
+        if (w.y === +m[1] && w.w === +m[2]) rs.push.apply(rs, list);
+      }
+      return route.fulfill(csv(rs));
+    }
+    return route.fulfill({ status: 404, body: 'unknown',
+      headers: { 'Access-Control-Allow-Origin': '*' } });
+  });
+  return [...byDay.keys()].sort();
 }
 
 async function openSell(browser, server, opts) {
@@ -190,7 +244,9 @@ const rowOf = (page, name) => page.evaluate(n => {
       copy: tr.children[i].dataset.copy || '' } : { text: '(no such column)', tip: '', copy: '' };
   };
   return { volDay: r.volDay, volSell: r.volSell, volBuy: r.volBuy, capture: r.capture,
-    volSrc: r.volSrc, cells: { volSell: cellOf('volSell'), volBuy: cellOf('volBuy'),
+    volSrc: r.volSrc, volState: r.volState, volHeldDays: r.volHeldDays,
+    volUnitsSell: r.volUnitsSell, volUnitsBuy: r.volUnitsBuy,
+    cells: { volSell: cellOf('volSell'), volBuy: cellOf('volBuy'),
       capture: cellOf('capture'), volDay: cellOf('volDay') } };
 }, name);
 
@@ -377,14 +433,46 @@ H.run('tracker-model', async () => {
       trit.capture + ' vs ' + dump.capture);
     eq('a type with rows but no sell side reads ZERO, a number', buyOnly.cells.volSell.text, '0');
     eq('...and its capture is zero too', buyOnly.cells.capture.text, '0%');
-    eq('a type the tracker does not carry reads a DASH', ghost.cells.volSell.text, '—');
-    eq('...with a tooltip that says which of the two it is', ghost.cells.volSell.tip,
-      'no tracker row at this hub');
-    check('the three tooltips are pairwise different', new Set([
+    /* REWRITTEN: the two absences used to be one glyph apart — both `—`, told apart only
+       on hover — while the README claimed they did not look alike. "Nothing has been
+       downloaded" is unknown; "this item does not trade at this hub across every day
+       held" is a measurement, and a measurement gets its own mark. */
+    eq('a covered hub with no row for the item says so in the CELL', ghost.cells.volSell.text, 'none');
+    eq('...on the buy side too', ghost.cells.volBuy.text, 'none');
+    eq('...and in the share column', ghost.cells.capture.text, 'none');
+    check('...with the days it was measured over', /^no trade at this hub · 30d held$/
+      .test(ghost.cells.volSell.tip), ghost.cells.volSell.tip);
+    eq('nothing downloaded is still the dash, which is not a measurement', cold.cells.volSell.text, '—');
+    check('the three states are three MARKS, before any hovering', new Set([
+      cold.cells.volSell.text, ghost.cells.volSell.text, buyOnly.cells.volSell.text]).size === 3,
+      JSON.stringify([cold.cells.volSell.text, ghost.cells.volSell.text, buyOnly.cells.volSell.text]));
+    check('...and three tooltips behind them', new Set([
       cold.cells.volSell.tip, ghost.cells.volSell.tip, buyOnly.cells.volSell.tip]).size === 3,
       JSON.stringify([cold.cells.volSell.tip, ghost.cells.volSell.tip, buyOnly.cells.volSell.tip]));
     eq('a tracker-backed row records that source', trit.volSrc, 'tracker');
     eq('...and an uncovered one does not', ghost.volSrc, 'esi');
+
+    /* ---------- D2: a share of units, over one day set ------------------------------ */
+    section('the sell share is a share of units, not a ratio of two rates');
+    /* Late Buyer's sell side prints on all thirty days and its buy side on the last four
+       — the shape nine of the thirteen real fixture pairs have, and exactly the illiquid
+       population this column exists to flag. histVolOf spans each side from ITS OWN first
+       row, so the shipped formula divided 96.7 u/d by 336.7 u/d and called it a share. */
+    const late = await rowOf(s2.page, 'Late Buyer');
+    eq('the sell side holds thirty days of the fixture\'s 100 units', late.volUnitsSell, 3000);
+    eq('...and the buy side four days of its 300', late.volUnitsBuy, 1200);
+    near('the share is units over units', late.capture, 3000 / 4200, 1e-12);
+    near('...and both rates carry the same denominator, the days held',
+      late.volBuy, 1200 / 30, 1e-12);
+    const twoRate = await s2.page.evaluate(async () => {
+      const recs = await trkDb.rowsFor(60003760, 9106);
+      const rows = [].concat.apply([], recs.map(r => r.r));
+      const side = b => rows.filter(r => !!r.b === b).map(trkHistRow);
+      const sell = histVolOf(side(false), 30) || 0, buy = histVolOf(side(true), 30) || 0;
+      return { sell, buy, share: sell / (sell + buy) };
+    });
+    check('the shipped two-rate formula reads this pair as a third of what it is',
+      twoRate.share < 0.35, twoRate.share + ' vs ' + (3000 / 4200));
 
     section('the split is a column, not a number with the split hidden on hover');
     const cols = await s2.page.evaluate(() => {
@@ -414,8 +502,15 @@ H.run('tracker-model', async () => {
     check('...and each names the estimate for what it is',
       cols.tips.some(t => /Adam4EVE/.test(t)) && cols.tips.some(t => /this station only/.test(t)),
       JSON.stringify(cols.tips));
-    check('My orders carries the same two facts',
-      cols.ordKeys.includes('volSell') && cols.ordKeys.includes('capture'), cols.ordKeys.join(','));
+    /* REWRITTEN: My orders used to get Sell u/d and Sell share, with the buy side on the
+       tooltip of one of them. This is the screen where live orders are read, and the
+       split behind a hover is the shape that was rejected. It gets the column. */
+    check('My orders carries all three, as columns',
+      ['volSell', 'volBuy', 'capture'].every(k => cols.ordKeys.includes(k)), cols.ordKeys.join(','));
+    check('...with the two sides next to each other there too',
+      cols.ordKeys.indexOf('volBuy') === cols.ordKeys.indexOf('volSell') + 1
+      && cols.ordKeys.indexOf('capture') === cols.ordKeys.indexOf('volBuy') + 1,
+      cols.ordKeys.join(','));
     check('the TSV gained the split and the source',
       ['Sell u/d', 'Buy u/d', 'Sell share', 'Vol source'].every(h => cols.head.includes(h)),
       cols.head.join('|'));
@@ -716,6 +811,318 @@ H.run('tracker-model', async () => {
     check('the days that landed before the cancel are still held', stopped.held >= 0,
       String(stopped.held));
     await s7.close();
+
+    /* ================= the denominator =============================================
+       Every number below used to be divided by the wrong thing. histVolOf spans a series
+       from its own oldest row to today, which is right for ESI history — a day absent
+       from it really had no trades — and wrong for a cache, where an absent day is a day
+       nobody downloaded. The cache knows exactly which days it holds. */
+
+    section('a day nobody downloaded is not a day with no trades');
+    const gapDays = [3, 7, 8, 12, 15, 16, 17, 22, 26].map(n => shift(todayUTC(), -n));
+    const s11 = await openSell(browser, server, { missing: gapDays });
+    await fetchPrices(s11.page);
+    await refreshVolume(s11.page, 30);
+    const gapped = await rowOf(s11.page, 'Tritanium');
+    const gapLines = await s11.page.evaluate(() => ({
+      age: document.getElementById('trkAge').textContent,
+      src: document.getElementById('volSrc').textContent,
+      held: state.trk.held, window: state.trk.days,
+      rows: state.rows.length, fed: state.rows.filter(r => r.volSrc === 'tracker').length,
+    }));
+    eq('nine of the thirty days never arrived', gapLines.held, 21);
+    eq('...and the window still asked for thirty', gapLines.window, 30);
+    eq('the cache holds twenty-one days of the fixture\'s 8,000 units', gapped.volUnitsSell, 168000);
+    near('...so the rate is 8,000 a day, undamaged by the holes', gapped.volSell, 8000, 1e-9);
+    eq('...and every rate says which days it was measured over', gapped.volHeldDays, 21);
+    const spanRate = await s11.page.evaluate(async () => {
+      const recs = await trkDb.rowsFor(60003760, 34);
+      const rows = [].concat.apply([], recs.map(r => r.r)).filter(r => !r.b).map(trkHistRow);
+      return histVolOf(rows, 30);
+    });
+    check('the span divisor would have called this market a quarter quieter than it is',
+      spanRate < 6000, spanRate + ' vs ' + gapped.volSell);
+
+    section('the tooltip states the units the cache holds, over the days it holds');
+    const tips = await s11.page.evaluate(() => {
+      const r = state.rows.find(x => x.name === 'Tritanium');
+      const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key || '');
+      const tr = [...document.querySelectorAll('#tblBody tr')].find(x => x.children[2].textContent === 'Tritanium');
+      const tip = k => tr.children[heads.indexOf(k)].title.split('\n')[0];
+      return {
+        sell: tip('volSell'), buy: tip('volBuy'),
+        held: `sell side: ${fmt.format(Math.round(r.volUnitsSell))} u over ${r.volHeldDays}d held`,
+        window: `sell side: ${fmt.format(Math.round(r.volSell * state.trk.days))} u over ${state.trk.days}d held`,
+      };
+    });
+    eq('the sell tooltip is the cache, unit for unit', tips.sell, tips.held);
+    check('...and not the dropdown setting, which would claim half as many again',
+      tips.sell !== tips.window, tips.sell + ' | ' + tips.window);
+    check('the buy side is stated the same way', /^buy side: [\d,]+ u over 21d held$/.test(tips.buy),
+      tips.buy);
+
+    section('the provenance line and the age line state one coverage, not two');
+    check('the age line counts the days held, and names the holes',
+      /^21d through \d\d-\d\d · 9 gaps$/.test(gapLines.age), gapLines.age);
+    check('...and the volume line counts the same days', /· 21d through \d\d-\d\d/.test(gapLines.src),
+      gapLines.src);
+    eq('...the two numbers are one number',
+      (gapLines.age.match(/^(\d+)d/) || [])[1], (gapLines.src.match(/· (\d+)d/) || [])[1]);
+    check('...and it says how many rows the tracker actually fed',
+      gapLines.src.includes(` · ${gapLines.fed}/${gapLines.rows} rows`) && gapLines.fed < gapLines.rows,
+      gapLines.src);
+    await s11.page.fill('#inv', 'Ghost Widget\t100');
+    await s11.page.dispatchEvent('#inv', 'input');
+    await s11.page.waitForFunction(() => state.rows.length === 1);
+    const ghostOnly = await s11.page.evaluate(() => ({
+      src: document.getElementById('volSrc').textContent,
+      tip: document.getElementById('volSrc').title,
+    }));
+    check('a covered hub whose items the tracker has no rows for is an ESI table, and says ESI',
+      /ESI regional/.test(ghostOnly.src), ghostOnly.src);
+    check('...naming the tracker\'s silence rather than pretending it fed anything',
+      /holds no row for these items/.test(ghostOnly.tip), ghostOnly.tip);
+    await s11.close();
+
+    /* ================= the page against its own harness ==============================
+       tools/verify-tracker.mjs is a second implementation of this aggregate, written to
+       be run by hand against the real published dumps. The fixture below IS a real dump —
+       published week 2026-33, 380 rows, seven days, five hubs — re-dated onto the last
+       seven days so the page's own window arithmetic applies to it. Every per (hub, type)
+       share the page derives is checked against the one the harness derives from the same
+       bytes, and the harness is asked for its numbers directly rather than through a
+       committed copy of them. */
+    section('the page reproduces the harness, share for share, on a real dump');
+    const FIXTURE = path.join(H.REPO, 'tests', 'fixtures', 'marketOrderTrades_weekly_2026-33.csv');
+    const truth = JSON.parse(execFileSync(process.execPath,
+      [path.join(H.REPO, 'tools', 'verify-tracker.mjs'), FIXTURE, '--json'], { encoding: 'utf8' }))
+      .aggregate.filter(a => a.hasGone === 0);
+    const s12 = await openSell(browser, server, { noTracker: true });
+    const realDays = await mockA4EReal(s12.context, FIXTURE);
+    await fetchPrices(s12.page);
+    await refreshVolume(s12.page, 30);
+    const mine = await s12.page.evaluate(async pairs => {
+      const held = trkHeldDays(await trkDb.meta('coverage'), 30);
+      const out = [];
+      for (const [hub, typeId] of pairs) {
+        const recs = await trkDb.rowsFor(hub, typeId);
+        const s = trkSeries(recs, 30, held.length);
+        const side = b => (s ? (b ? s.buy : s.sell) : []);
+        const sr = histVolOf(side(false), 30) || 0, br = histVolOf(side(true), 30) || 0;
+        out.push({ hub, typeId,
+          sellUnits: s ? s.sellUnits : null, buyUnits: s ? s.buyUnits : null,
+          share: s ? s.capture : null, rate: s ? s.sellUnitsDay : null,
+          twoRate: sr + br > 0 ? sr / (sr + br) : null });
+      }
+      return { held: held.length, rows: out };
+    }, truth.map(a => [a.hub, a.typeId]));
+    eq('only the days that carried rows are held', mine.held, realDays.length);
+    eq('...which is the week the file covers', mine.held, 7);
+    const missPair = mine.rows.filter((r, i) =>
+      r.sellUnits !== truth[i].sellUnits || r.buyUnits !== truth[i].buyUnits);
+    eq('every unit the harness counted is in the cache, on the side it counted it',
+      JSON.stringify(missPair.map(r => r.hub + '|' + r.typeId)), '[]');
+    const missShare = mine.rows.filter((r, i) => Math.abs((r.share || 0) - (truth[i].share || 0)) > 1e-12);
+    eq('and every share matches it exactly, all ' + truth.length + ' pairs',
+      JSON.stringify(missShare.map(r => r.hub + '|' + r.typeId)), '[]');
+    near('the rate is units over the days held', mine.rows[0].rate, mine.rows[0].sellUnits / 7, 1e-9);
+    const twoRateWrong = mine.rows.filter((r, i) =>
+      r.twoRate != null && Math.abs(r.twoRate - truth[i].share) > 1e-9);
+    check('the shipped two-rate formula disagrees with the file on the uneven pairs',
+      twoRateWrong.length >= 8, twoRateWrong.length + ' of ' + truth.length + ' pairs');
+    check('...which is why nothing but the file itself could have caught this',
+      truth.filter(a => a.sellDays !== a.buyDays).length >= twoRateWrong.length,
+      truth.filter(a => a.sellDays !== a.buyDays).length + ' pairs have uneven sides');
+    await s12.close();
+
+    /* ================= a host that stops talking ==================================== */
+    section('a stalled host cannot keep the buttons');
+    /* `fetch` has no timeout of its own. Measured on the shipped page against a host that
+       accepts and then says nothing: settled=false after 25 s, both Refresh buttons
+       disabled, and Clear could not recover them — it bumped the cancel token while the
+       request it was waiting on stayed open. Only a reload escaped. */
+    const s13 = await openSell(browser, server, { hang: true });
+    await fetchPrices(s13.page);
+    await s13.page.selectOption('#trkDays', '30');
+    await s13.page.waitForFunction(() => !state.trkRunning);
+    await s13.page.click('#btnTrk');
+    await s13.page.waitForFunction(() => state.trkRunning === true, null, { timeout: 20000 });
+    // wait for a request to be genuinely in flight before cancelling it
+    await s13.page.waitForFunction(() => /^(week|day) 1\//.test(
+      document.getElementById('trkStatus').textContent), null, { timeout: 20000 });
+    const hangStatus = await s13.page.textContent('#trkStatus');
+    check('the running line quotes the download it is making',
+      / · \d+ MB$/.test(hangStatus), hangStatus);
+    const t13 = Date.now();
+    await s13.page.click('#btnClear');
+    let clearWorked = true;
+    try {
+      // well inside the 30 s watchdog: only an ABORT can settle it this fast
+      await s13.page.waitForFunction(() => !state.trkRunning
+        && !document.getElementById('btnTrk').disabled, null, { timeout: 12000 });
+    } catch (_e) { clearWorked = false; }
+    check('Clear aborts the request, not only its token', clearWorked,
+      'still running after ' + Math.round((Date.now() - t13) / 1000) + 's');
+    const afterClear = await s13.page.evaluate(() => ({
+      running: state.trkRunning,
+      disabled: document.getElementById('btnTrk').disabled,
+      ordDisabled: document.getElementById('btnOrdTrk').disabled,
+      bar: document.getElementById('trkBar').hidden,
+    }));
+    check('...with both Refresh buttons back', !afterClear.disabled && !afterClear.ordDisabled,
+      JSON.stringify(afterClear));
+    check('...the bar put away', afterClear.bar);
+    check('...and nothing left running', !afterClear.running);
+    await s13.close();
+
+    section('...and a stall nobody cancels is given up on, counted, and shown');
+    /* One day of the window missing, so the run is exactly one request: the watchdog is
+       what ends it, and the page must land in the same place the ABORTING host already
+       lands — buttons back, red, "1 failed". */
+    const s14 = await openSell(browser, server, { hang: true });
+    await fetchPrices(s14.page);
+    await s14.page.evaluate(async d => {
+      const days = {};
+      for (let i = 1; i <= 30; i++) {
+        const x = new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10);
+        if (x !== d) days[x] = { at: Date.now(), src: 'seed', hubs: { 60003760: 1 } };
+      }
+      await trkDb.setMeta('coverage', { v: 1, days });
+    }, shift(todayUTC(), -3));
+    await s14.page.selectOption('#trkDays', '30');
+    await s14.page.waitForFunction(() => !state.trkRunning);
+    await s14.page.click('#btnTrk');
+    let watchdog = true;
+    try {
+      await s14.page.waitForFunction(() => !state.trkRunning
+        && !document.getElementById('btnTrk').disabled, null, { timeout: 75000 });
+    } catch (_e) { watchdog = false; }
+    check('the watchdog ends a run the host has abandoned', watchdog, 'never settled');
+    const stalled = await s14.page.evaluate(() => ({
+      text: document.getElementById('trkStatus').textContent,
+      cls: document.getElementById('trkStatus').className,
+      disabled: document.getElementById('btnTrk').disabled,
+      held: Object.keys(state.trk.cov.days).length,
+    }));
+    check('...counting the file it lost', / · 1 failed$/.test(stalled.text), stalled.text);
+    eq('...in red', stalled.cls, 'err');
+    check('...with the button given back', !stalled.disabled);
+    eq('...and the days that were already held still held', stalled.held, 29);
+    await s14.close();
+
+    /* ================= the guard that became the measurement ========================= */
+    section('a clamped trade size says it is clamped');
+    /* Measured on a liquid item: amount/orderNum came to 3.58 M, the flat 1e6 guard took
+       it, and the model then ran on the constant while the source still read a
+       measurement. The guard is a rule now — one transaction cannot be larger than
+       everything that trades inside the window — and when it bites it is named. */
+    const s15 = await openSell(browser, server, { noTracker: true });
+    const kappaCase = await s15.page.evaluate(() => {
+      const d = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      // one enormous print in a month of silence: 3.3e7 a day, one trade of 1e9
+      const lumpy = [{ date: d(29), average: 100, highest: 110, lowest: 90, volume: 1, orders: 1 },
+                     { date: d(1), average: 100, highest: 110, lowest: 90, volume: 1e9, orders: 1 }];
+      const steady = [];
+      for (let t = 29; t >= 0; t--)
+        steady.push({ date: d(t), average: 100, highest: 110, lowest: 90, volume: 1000, orders: 100 });
+      return {
+        lumpy: fillOutlook({ hist: lumpy, typeId: 7001 }, [], 100, 50, 14, { histDays: 30 }),
+        steady: fillOutlook({ hist: steady, typeId: 7002 }, [], 100, 50, 14, { histDays: 30 }),
+        max: typeof KAPPA_MAX,
+      };
+    });
+    eq('the invented ceiling is gone from the file', kappaCase.max, 'undefined');
+    check('a trade bigger than the whole window is cut down to it',
+      kappaCase.lumpy.kappaCapped === true
+      && Math.abs(kappaCase.lumpy.kappa - kappaCase.lumpy.volDay * 14) < 1e-6,
+      kappaCase.lumpy.kappa + ' vs ' + kappaCase.lumpy.volDay * 14);
+    eq('...and the source stops calling the constant a measurement',
+      kappaCase.lumpy.kappaSrc, 'esi-capped');
+    check('on an ordinary item the guard never touches the number',
+      kappaCase.steady.kappaCapped === false && Math.abs(kappaCase.steady.kappa - 10) < 1e-9,
+      kappaCase.steady.kappa + ' / ' + kappaCase.steady.kappaSrc);
+    eq('...which is what an inert guard looks like', kappaCase.steady.kappaSrc, 'esi');
+    await s15.close();
+
+    /* ================= the ordering the last pass claimed and did not pin ============ */
+    section('the memo settles BEFORE the button comes back');
+    /* "!state.trkRunning is a signal a test can wait on" is only true if the numbers are
+       in place before the flag drops. Moving the settle after the re-enable — the natural
+       mutation of that exact claim — left every check green last time, so the order is
+       recorded here rather than inferred from a timing race: the memo stamps the sequence
+       when it resolves, a MutationObserver stamps it when the button loses `disabled`. */
+    const s16 = await openSell(browser, server, {});
+    await fetchPrices(s16.page);
+    await s16.page.evaluate(() => {
+      window.__order = [];
+      const orig = loadTrackerMemo;
+      window.loadTrackerMemo = async function (...a) {
+        const r = await orig.apply(null, a);
+        window.__order.push('memo');
+        return r;
+      };
+      new MutationObserver(() => {
+        if (!document.getElementById('btnTrk').disabled) window.__order.push('button');
+      }).observe(document.getElementById('btnTrk'), { attributes: true, attributeFilter: ['disabled'] });
+    });
+    await s16.page.selectOption('#trkDays', '30');
+    await s16.page.waitForFunction(() => !state.trkRunning);
+    await s16.page.evaluate(() => { window.__order.length = 0; });
+    await s16.page.click('#btnTrk');
+    await s16.page.waitForFunction(() => !state.trkRunning
+      && !document.getElementById('btnTrk').disabled, null, { timeout: 90000 });
+    const order = await s16.page.evaluate(() => window.__order.slice());
+    check('the run reloaded the memo and gave the button back', order.includes('memo')
+      && order.includes('button'), JSON.stringify(order));
+    check('...in that order, so "not running" means the numbers are the cache\'s',
+      order.indexOf('memo') < order.indexOf('button'), JSON.stringify(order));
+    const settledNow = await s16.page.evaluate(() =>
+      (state.rows.find(r => r.name === 'Tritanium') || {}).volSell);
+    check('...and the table already carries them at that instant', settledNow > 7000,
+      String(settledNow));
+    await s16.close();
+
+    /* ================= what the download costs, before it is made ==================== */
+    section('the page states the size of the download it is about to make');
+    const s17 = await openSell(browser, server, {});
+    const quoted = await s17.page.evaluate(() => ({
+      window: document.getElementById('trkDays').title,
+      btn: document.getElementById('btnTrk').title,
+      ord: document.getElementById('btnOrdTrk').title,
+      feeds: document.querySelector('#trkAge').parentElement.title,
+      opts: [...document.getElementById('trkDays').options].map(o => o.title),
+      notes: (() => {
+        const c = document.body.cloneNode(true);
+        for (const x of c.querySelectorAll('script, style')) x.remove();   // copy, not code
+        return c.textContent.replace(/\s+/g, ' ');
+      })(),
+    }));
+    /* Priced by the page's own planner against the measured gzip sizes, so the copy
+       cannot drift from either. The figures are checked against that arithmetic rather
+       than against a number typed into the markup. */
+    const priced = await s17.page.evaluate(() => {
+      const now = new Date();
+      const out = {};
+      for (const d of [30, 90, 180, 365])
+        out[d] = trkMb(trkWireBytes(trkPlanJobs({ v: 1, days: {} }, {}, d, now)));
+      return out;
+    });
+    check('the window control prices every setting it offers',
+      [30, 90, 180, 365].every(d => quoted.window.includes(`${d}d ${priced[d]} MB`)),
+      quoted.window + ' | ' + JSON.stringify(priced));
+    check('...at the measured size of a gzipped weekly file, not a guess',
+      priced[90] >= 55 && priced[90] <= 70 && priced[365] > 200,
+      JSON.stringify(priced));
+    check('...and every option carries its own figure',
+      quoted.opts.every(t => / MB gzipped$/.test(t)), JSON.stringify(quoted.opts));
+    check('both Refresh buttons quote the rule behind those figures',
+      /4\.76 MB gzipped per week/.test(quoted.btn) && quoted.btn === quoted.ord, quoted.btn);
+    check('the feeds line quotes the first run in bytes and rows',
+      quoted.feeds.includes(`${priced[90]} MB`) && /2\.1 M rows/.test(quoted.feeds), quoted.feeds);
+    check('the notes state the real row count, not "a few hundred thousand"',
+      /2\.1 million rows/.test(quoted.notes) && !/few hundred thousand/.test(quoted.notes),
+      (quoted.notes.match(/[^.]*million rows[^.]*/) || ['(absent)'])[0]);
+    await s17.close();
 
   } finally {
     await browser.close();

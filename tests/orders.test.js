@@ -457,10 +457,12 @@ H.run('orders', async () => {
     check('being above the best sell on a falling market is stalled on its own',
       dSlide.stalled && dSlide.reasons.length === 1
         && /^\+[\d.]+%▼$/.test(dSlide.reasons[0].t), JSON.stringify(dSlide.reasons));
+    // read defensively: a suite whose earlier claim fails must still reach the ones below
+    const slideTtl = (dSlide.reasons[0] || {}).ttl || '';
     check('...its tooltip naming the gap and the slide that widens it',
-      /above best sell: \+[\d.]+%/.test(dSlide.reasons[0].ttl)
-        && /trend: -[\d.]+%\/wk/.test(dSlide.reasons[0].ttl)
-        && /the gap only widens/.test(dSlide.reasons[0].ttl), dSlide.reasons[0].ttl);
+      /above best sell: \+[\d.]+%/.test(slideTtl)
+        && /trend: -[\d.]+%\/wk/.test(slideTtl)
+        && /the gap only widens/.test(slideTtl), slideTtl);
     check('...even though the odds pass the floor and the queue clears in time',
       dSlide.chance > 0.55 && dSlide.daysToFill < dSlide.daysLeft,
       dSlide.chance + ' / ' + dSlide.daysToFill + ' vs ' + dSlide.daysLeft);

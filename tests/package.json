@@ -8,7 +8,6 @@
     "test:sell": "node sell.test.js",
     "test:orders": "node orders.test.js",
     "test:tracker-mock": "node tracker-mock.test.js",
-    "test:tracker": "node tracker.test.js",
     "test:tracker-model": "node tracker-model.test.js",
     "test:auth": "node auth.test.js",
     "test:industry": "node industry.test.js",

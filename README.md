@@ -300,14 +300,15 @@ live book — no extra ESI endpoint), all recomputed locally when you change a c
 - **Percentile rank** — where the live best sell sits in the last 60 days of daily averages.
   "The 12th percentile" means the market has been cheaper than this on only 12% of them.
 - **Fill est. (days)** — units already listed at or below the recommended price ÷ Vol/day.
-- **Chance %** — the empirical fill probability: over the last ~12 months, the share of
-  rolling 7 / 14 / 30-day windows (per your patience) whose **daily high** reached the
-  price, then tempered by the queue above. Each past day is first **carried to today's
-  price level at the item's own trend**, because otherwise the metric has the same disease
-  it is curing: on an item that has slid all year, every window from eight months ago
-  cleared today's asking price, and a flat count would report a comfortable probability for
-  a price nobody has paid since spring. The row's tooltip quotes both numbers when they
-  disagree — *that gap is the difference between a dip and a decay*.
+- **Fill %** — the **share of the listed stack** expected to sell inside the patience
+  window, not a coin flip on the whole stack. The queue at or below your price drains level
+  by level, each level at its own demand rate; then transactions paying at least your price
+  arrive Poisson and take `kappa` units each, so the units sold are the expectation of a
+  gamma arrival process over what is left of the window. A `≤` prefix marks an **upper
+  bound** — the input was ESI's regional history with both sides of the book pooled across
+  every station — and no prefix means the Adam4EVE sell-side prints at this station fed it.
+  Where there is no history at all, the old trend-adjusted hit rate stands in, tempered by
+  the queue, and is labelled an upper bound like any other.
 - **ISK/slot-day** — expected net ÷ expected days on the market, and the column the table
   opens sorted by: market slots, not ISK, are what you run out of. INSTANT rows have no
   value here (they use no slot) and sort to the bottom of it. Without history there is no
@@ -372,9 +373,11 @@ so instead of drawing an empty box.
   volume with no per-side split, so Vol/day mixes buys and sells and every station in the
   region, while the queue is counted at the hub only — and your own stack is not counted in
   the queue ahead of you.
-- **Chance % is past behaviour, not a promise.** It says how often this market *did* pay
-  that price, adjusted for where the market trades now. It cannot know about the patch notes
-  that halve the item next week.
+- **Fill % is past behaviour, not a promise.** It is built from the units this market *did*
+  buy at or above that price, at whatever rate it did. It cannot know about the patch notes
+  that halve the item next week. Where the tracker has not fed it, it is an upper bound and
+  says so with a `≤` — an order whose *best* case is under your patience floor is dead, and
+  that is a decision.
 - The trend is a fit to 30 noisy days; on a thin item it is a guess with an error bar the
   page does not draw. That is why the flat band exists and why the carry factor is capped.
 - Relist churn is modelled as a capped number of repricings, not simulated. Nothing models
@@ -407,7 +410,15 @@ was on.
 | **Vol/day** | ESI, regional, both sides pooled — unchanged, still the Fill est. denominator |
 | **Sell u/d** | units a day bought **from sell orders** at this station |
 | **Buy u/d** | units a day sold **to buy orders** at this station |
-| **Sell share** | `Sell u/d ÷ (Sell u/d + Buy u/d)` |
+| **Sell share** | `sell units ÷ (sell units + buy units)`, over the days held |
+
+Both rates divide by the **days actually downloaded**, which the coverage manifest knows
+exactly, and the share is taken over **raw units on that one day set** — not as a ratio of
+the two rates. The two sides of a book routinely start on different days, and two rates
+spanned from their own first rows carry different denominators, so their ratio is a share
+of nothing (Hek 62516 read 1.90% against a true 1.43%). `tools/verify-tracker.mjs`
+computes the same share independently from the published file, and the test suite checks
+the page against it, pair for pair, on a real dump.
 
 Sell share is the number this exists to produce, and it is why a single constant could
 never have worked. Measured over week 2026-33 at Jita, across 2,325 items that moved more
@@ -419,9 +430,9 @@ Three states, and they deliberately do not look alike:
 
 | On screen | Means |
 | --- | --- |
-| `—`, tooltip *no tracker data* | nothing cached — press the button |
-| `—`, tooltip *no tracker row at this hub* | cached, and this item does not trade here |
-| `0` | measured, and nothing hit a sell order all window |
+| `—` | nothing cached — press the button. Unknown, not measured |
+| `none` | cached, and this item does not trade at this hub on any day held |
+| `0` | measured, and nothing hit a sell order while the other side did |
 
 **Honest about what it is.** A differenced sample is not a trade log: it is good on slow
 markets, weaker on fast ones, and it covers the five NPC hubs only. A player structure has
@@ -454,9 +465,23 @@ line as ` · n failed`.
 **Storage.** Rows are packed one record per (hub, type, ISO week) — measured 22× faster to
 write than one record per row — but nothing is aggregated: every day, every side and every
 published column survives, so the model can change later without re-downloading anything.
-Budget about 1.5 MB per day held; the run checks `navigator.storage.estimate()` first and
-refuses rather than truncating your window behind your back. Shrinking the window does not
-delete anything, it only narrows what the model reads.
+Budget **9.4 MB of IndexedDB per week held** (measured: 122 MB for the 13 weeks of a
+90-day window, against a 1,109 MB quota). The run checks `navigator.storage.estimate()`
+first and refuses rather than truncating your window behind your back. Shrinking the
+window does not delete anything, it only narrows what the model reads.
+
+**Bandwidth.** The host serves gzip and every browser asks for it: a weekly file is
+22,147,080 B raw and **4,756,781 B on the wire** (1.73 s measured), a daily 2.9 MB raw and
+629,186 B on the wire (1.22 s). A 90-day first run is 13 weekly files — about **62 MB
+gzipped and 2,124,746 rows kept** at the five hubs (163,442 rows per weekly survive the
+hub filter, out of 279,349 published). The window control prices every setting before you
+press anything, and the status line quotes the size of the run it is making.
+
+**A host that stops talking.** `fetch` has no timeout of its own, so every request carries
+an abort controller: **Clear** aborts the request in flight rather than only marking the
+run dead, and a watchdog gives up on a socket that has delivered nothing for 30 s — 17×
+the 1.73 s a whole weekly takes. The file is counted as failed, in red, and both Refresh
+buttons come back.
 
 With no cache and no network the page is exactly the page it was before any of this
 existed: the ESI regional figure, both sides pooled, and fill odds flagged as upper bounds.
@@ -540,8 +565,9 @@ to sell *to* you, and the ISK is in escrow), so none of the sell-side triage is 
 | **Queue ahead** | Units listed at or below your price at that location, **with your own units taken back out**. Your order is a public sell order like any other and *is* in the book that was just fetched; counting it inflates every wait, and when you happen to be cheapest it tells you that you are undercutting yourself. Own orders are matched by **order id** (exact), falling back to price only for an order the book does not carry. |
 | **vs best %** | How far your price sits above the best **competing** sell — again, your own orders excluded. |
 | **Fill est. (d)** | Queue ahead ÷ daily traded volume, the same `daysToFillAt` the Sell table uses, with the same caveat: regional volume mixes buy and sell sides and every station in the region, so it is an optimistic order of magnitude. |
+| **Sell u/d · Buy u/d · Sell share** | The Adam4EVE split at **that** station, the same three columns Sell mode carries — columns, not a figure with the other side hidden on a tooltip. |
 | **Trend %/wk** | The same Theil–Sen slope over 30 days of daily average price the Sell mode ranks with. |
-| **Chance %** | The same **trend-adjusted hit rate**: the share of past windows whose daily high reached your price, every past day first carried to today's price level at the item's own trend, then tempered by the queue already ahead of you. The window is whichever runs out first — your patience setting, or the days left on the order. |
+| **Fill %** | The **share of the units still on the order** expected to sell before the window runs out: the queue ahead drains level by level at each level's own demand rate, then buyers paying your price arrive and take units. The same quantity, off the same model, the Sell plan ranks listings by, so the two screens cannot disagree about one order. The window is whichever runs out first — your patience setting, or the days left on the order. A `≤` prefix marks an upper bound (ESI regional volume, both sides pooled); no prefix means the sell-side prints at that station fed it. |
 | **History** | The Sell table's sparkline, with a marker at **your** asking price and at the best competing sell. A price the market has left behind is a picture, not a number. |
 
 ### Stalled, and why

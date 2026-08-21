@@ -33,6 +33,7 @@ const TYPE_IDS = {
   'Nohigh Widget': 9008,        // history without a `highest` field
   'Blind Widget': 9009,         // no history at all
   'Spark Widget': 9010,         // a history built for the sparkline's arithmetic
+  'Patience Widget': 9011,      // thin enough that the window is what decides
 };
 
 /* ---------- history fixtures for the decision layer ----------
@@ -72,6 +73,16 @@ const DECAY_HIST = series(400, t => {
 /* Same shape, but ESI gave us no `highest` — the hit rate must fall back to the average
    and say so. */
 const NOHIGH_HIST = series(200, t => ({ average: 1000000, volume: 50 }));
+
+/* THIN, and coherent. Three units trade a day in a band of 950,000-1,050,000 around an
+   average of 1,000,000, so half of them clear at or above 1,000,000: 1.5 units a day
+   reach a listing at that price, and each trade carries one unit (volume = order_count).
+   Twenty units therefore need about thirteen days of arrivals — more than a rush window
+   has, comfortably inside a balanced one. This is the item the patience control decides,
+   and it decides it through the arrival rate rather than through how often a year of
+   daily highs happened to touch the price. */
+const PATIENCE_HIST = series(400, () => ({
+  average: 1000000, highest: 1050000, lowest: 950000, volume: 3, order_count: 3 }));
 
 /* Exactly 120 days, one point per day, a straight decline — the sparkline's geometry is
    then a closed form the suite can re-derive. */
@@ -116,6 +127,9 @@ const BOOKS = {
      scale, its point count and both marker positions are arithmetic, not eyeballing. */
   'Spark Widget':    { buys: [{ p: 800, v: 1000 }], sells: [{ p: 1200, v: 40 }],
                        hist: SPARK_HIST },
+  // one unit queued ahead, so the wait is the arrival rate and almost nothing else
+  'Patience Widget': { buys: [{ p: 900000, v: 1000 }], sells: [{ p: 1000000, v: 1 }],
+                       hist: PATIENCE_HIST },
 };
 
 const PASTE = [
@@ -189,15 +203,22 @@ const decisionRow = (page, name) => page.evaluate(n => {
   const m = r.metrics || {};
   return {
     strategy: r.strategy, exportPrice: r.exportPrice, totalNet: r.totalNet, netInstant: r.netInstant,
-    fillDays: r.fillDays, fillChance: r.fillChance, perSlot: r.perSlot,
+    fillDays: r.fillDays, fillChance: r.fillChance, fillBound: r.fillBound, fillPAny: r.fillPAny,
+    perSlot: r.perSlot,
     trendPctWk: r.trendPctWk, dir: r.dir, pctRank: r.pctRank, hist: r.hist, why: r.why,
     patientPrice: m.patientPrice, decay: m.decay, velPctDay: m.velPctDay, window: m.window,
     patHitP: m.patHit ? m.patHit.p : null, patHitRaw: m.patHit ? m.patHit.raw : null,
     guarded: (m.guarded || []).map(g => ({ price: g.price, p: g.p, raw: g.hit ? g.hit.raw : null })),
     comp: m.comp ? { price: m.comp.price, net: m.comp.net, p: m.comp.p, days: m.comp.days,
-                     broker: m.comp.brokerCharge, churn: m.comp.churn, relists: m.comp.relists } : null,
+                     broker: m.comp.brokerCharge, churn: m.comp.churn, relists: m.comp.relists,
+                     listQty: m.comp.listQty, pAny: m.comp.pAny, bound: m.comp.bound,
+                     expUnits: m.comp.out ? m.comp.out.expUnits : null,
+                     capped: m.comp.out ? m.comp.out.capped : null,
+                     src: m.comp.out ? m.comp.out.src : null } : null,
     patOpt: m.patOpt ? { price: m.patOpt.price, net: m.patOpt.net, p: m.patOpt.p, days: m.patOpt.days,
-                         broker: m.patOpt.brokerCharge, churn: m.patOpt.churn, relists: m.patOpt.relists } : null,
+                         broker: m.patOpt.brokerCharge, churn: m.patOpt.churn, relists: m.patOpt.relists,
+                         listQty: m.patOpt.listQty, pAny: m.patOpt.pAny, bound: m.patOpt.bound,
+                         expUnits: m.patOpt.out ? m.patOpt.out.expUnits : null } : null,
   };
 }, name);
 
@@ -1100,7 +1121,7 @@ H.run('sell', async () => {
     /* ---------- the three disposals, driven through the page ---------- */
     section('the three disposals, valued net of fees');
     const DEC_PASTE = ['Steady Trinket\t20', 'Sliding Trinket\t20', 'Decay Widget\t20',
-                       'Nohigh Widget\t20', 'Blind Widget\t20'].join('\n');
+                       'Nohigh Widget\t20', 'Blind Widget\t20', 'Patience Widget\t20'].join('\n');
     // the user's own settings: a LEVEL statistic over a long window, which is exactly
     // what used to fire the ⏳ tag forever
     await fetchWithHistory(p4, DEC_PASTE, 'median', 120);
@@ -1167,31 +1188,54 @@ H.run('sell', async () => {
     check('...which is a real probability, not a certainty',
       steady.patHitP > 0.6 && steady.patHitP < 0.8, steady.patHitP);
 
-    /* The two-branch expectation, hand-computed:
-         net = legNet - broker - churn + p x (fills) + (1 - p) x (give up and dump, decayed)
-       The flat item has no trend and no slide, so decay = 1 and churn = 0 — the whole
-       formula reduces to the fee-charged expectation over the two outcomes. */
+    /* REWRITTEN — the value is no longer priced off that window share.
+
+       The two-branch expectation is unchanged in shape and its fee handling is unchanged,
+       but the p in it is now the share of the stack the arrival model expects to SELL,
+       not the share of past windows whose daily high touched the price. On this fixture
+       the two disagree flatly: the window metric says 70%, because a 1.2M high prints
+       only every twentieth day; the market it is asking about trades AT 1,000,000 every
+       single day, 100 units of it, against a queue of 40 and a stack of 20. Every unit
+       sells, and the old metric called that a coin flip with a 30% tail.
+
+       So p is asserted at 1 from the market's own arithmetic, and the value identity is
+       then checked against the p the page actually used. */
     const qty = 20, LP = 1000000, LC = 950000;
     const netInstant = 20 * 900000 * (1 - TAX);
     const brokerAt = v => Math.max(100, BROKER * v);
-    const expPatSteady = -brokerAt(qty * LP) + pSteady.p * qty * LP * (1 - TAX) + (1 - pSteady.p) * netInstant;
-    const expCompSteady = -brokerAt(qty * LC) + pSteady.p * qty * LC * (1 - TAX) + (1 - pSteady.p) * netInstant;
+    near('the market moves a hundred units a day at the patient price', steady.comp.p, 1, 1e-9);
+    near('...so all twenty of them are expected to sell', steady.patOpt.expUnits, qty, 1e-6);
+    check('...which the window metric put at seven in ten',
+      pSteady.p > 0.6 && pSteady.p < 0.8 && steady.patOpt.p - pSteady.p > 0.2,
+      pSteady.p + ' vs ' + steady.patOpt.p);
+    const expPatSteady = -brokerAt(qty * LP) + steady.patOpt.p * qty * LP * (1 - TAX)
+      + (1 - steady.patOpt.p) * netInstant;
+    const expCompSteady = -brokerAt(qty * LC) + steady.comp.p * qty * LC * (1 - TAX)
+      + (1 - steady.comp.p) * netInstant;
     near('the instant leg is the plain buy-book walk', steady.netInstant, netInstant, 1e-6);
-    near('the patient listing is worth p x (it fills) + (1-p) x (dump it later), fee charged in both',
+    near('the patient listing is worth p x (it sells) + (1-p) x (dump it later), fee charged in both',
       steady.patOpt.net, expPatSteady, 1e-6);
     near('...and the competitive listing likewise', steady.comp.net, expCompSteady, 1e-6);
     check('the broker fee is charged even in the branch where nothing sells',
-      steady.patOpt.net < pSteady.p * qty * LP * (1 - TAX) + (1 - pSteady.p) * netInstant,
-      steady.patOpt.net);
+      steady.patOpt.net < steady.patOpt.p * qty * LP * (1 - TAX)
+        + (1 - steady.patOpt.p) * netInstant, steady.patOpt.net);
     eq('a flat market with no slide needs no relists', steady.patOpt.relists, 0);
     eq('the flat item is told to list patiently', steady.strategy, 'pat');
     eq('...at the patient price', steady.exportPrice, LP);
 
     section('ISK per slot-day is the ranking objective');
-    const expDays = pSteady.p * 0.5 + (1 - pSteady.p) * 14;   // queue is 0.4d, floored at 0.5
-    near('expected days = p x (queue estimate) + (1-p) x the whole window',
-      steady.patOpt.days, expDays, 1e-9);
-    near('ISK/slot-day is the expectation over those days', steady.perSlot, expPatSteady / expDays, 1e-6);
+    /* REWRITTEN: the days term used to blend the queue-over-volume divide with the whole
+       window. It now blends the MODEL's own clearing time — the queue walked level by
+       level at each level's demand rate, plus the wait for your own units — which is the
+       number the same model already produced to price the fill. 40 units queued at
+       950,000 drain at the full 100 a day, then 20 of your own at ~95 a day: 0.4 + 0.21. */
+    const expDays = steady.patOpt.p * 0.61 + (1 - steady.patOpt.p) * 14;
+    near('expected days = p x (the model\u2019s own clearing time) + (1-p) x the whole window',
+      steady.patOpt.days, expDays, 0.01);
+    check('...which is well under the one slot-day a listing is charged at minimum',
+      steady.patOpt.days < 1, String(steady.patOpt.days));
+    near('ISK/slot-day is the expectation over those days, floored at one',
+      steady.perSlot, expPatSteady / Math.max(steady.patOpt.days, 1), 1e-6);
     check('the patient listing beats the competitive one per slot-day',
       steady.patOpt.net / expDays > steady.comp.net / expDays, steady.perSlot);
     const sorted = await p4.evaluate(() => ({
@@ -1243,24 +1287,68 @@ H.run('sell', async () => {
       /skip [\d,.]+: \d+% < 55% floor \(balanced\)/.test(decay.why), decay.why);
     eq('the item is still sold — listed at a price the market does pay', decay.strategy, 'ord');
     eq('...which is the live best sell', decay.exportPrice, 700000);
-    eq('...with a fill chance the guard is happy with', decay.fillChance, 1);
+    /* REWRITTEN from eq(…, 1): the model integrates a gamma rather than counting windows,
+       so a certainty comes out as one minus a rounding crumb. */
+    near('...with a fill chance the guard is happy with', decay.fillChance, 1, 1e-4);
+
+    /* ================= PARTIAL FILLS ===============================================
+       The listing that neither fills nor fails. Twenty units at 1,000,000 on a market
+       that sends 1.5 units a day past that price: a week is nowhere near enough for the
+       stack, and almost certainly enough for SOMETHING. The old model had no way to say
+       that — it multiplied one probability by the whole listing value, so its only two
+       stories were "all twenty sold" and "none did". */
+    section('a listing that half-fills is worth half a fill');
+    await setPatience(p4, 'rush');
+    const half = await decisionRow(p4, 'Patience Widget');
+    const HQ = 20, HP = 1000000;
+    const netInstantHalf = HQ * 900000 * (1 - TAX);
+    near('the whole stack is listed — the buy book beats nothing here', half.comp.listQty, HQ, 1e-12);
+    check('under half the stack is expected to sell inside a week',
+      half.comp.expUnits > 6 && half.comp.expUnits < 12, String(half.comp.expUnits));
+    near('...and that fraction IS the p the value is priced with',
+      half.comp.p, half.comp.expUnits / HQ, 1e-12);
+    check('...while selling at least ONE unit is all but certain',
+      half.comp.pAny > 0.99, String(half.comp.pAny));
+    check('...which is the sentence an all-or-nothing model cannot say',
+      half.comp.pAny - half.comp.p > 0.4, half.comp.pAny + ' vs ' + half.comp.p);
+    const asEvent = -Math.max(100, BROKER * HQ * HP) + half.comp.pAny * HQ * HP * (1 - TAX)
+      + (1 - half.comp.pAny) * netInstantHalf;
+    check('pricing the same odds as an event would overvalue this listing by a million ISK',
+      asEvent - half.comp.net > 1e6, asEvent + ' vs ' + half.comp.net);
+    near('the value is the expected UNITS at your price, plus the rest dumped later',
+      half.comp.net,
+      -Math.max(100, BROKER * HQ * HP) + half.comp.expUnits * HP * (1 - TAX)
+        + (HQ - half.comp.expUnits) / HQ * netInstantHalf, 1e-6);
+    eq('...and it is an upper bound until the tracker feeds it', half.comp.bound, 'upper');
 
     section('patience: one control, three answers, no refetch');
+    /* REWRITTEN onto an item the window can actually decide. Steady Trinket used to carry
+       this section, on the strength of a 20-day high pattern that a 7-day window caught
+       less often than a 14-day one — an artefact of counting windows, not a statement
+       about the market, which trades AT the patient price every day and always filled.
+       Patience Widget makes the same point out of arrival rates: 1.5 units a day reach
+       1,000,000, so twenty of them take about thirteen days. */
     const fetchedTypes = await p4.evaluate(() => state.esi.size);
-    await setPatience(p4, 'rush');
-    const rush = await decisionRow(p4, 'Steady Trinket');
+    const rush = await decisionRow(p4, 'Patience Widget');
     eq('in a rush the window is 7 days', rush.window, 7);
-    check('...a 7-day window catches the 20-day high pattern far less often',
-      rush.fillChance == null || rush.fillChance < 0.75, String(rush.fillChance));
-    eq('...so the flat item is sold now rather than listed on a hope', rush.strategy, 'imm');
+    check('...which is not enough days of arrivals to clear the stack',
+      rush.comp.p < 0.75, String(rush.comp.p));
+    eq('...so the thin item is sold now rather than listed on a hope', rush.strategy, 'imm');
+    check('...the guard naming the fee it would have spent to move part of a stack',
+      rush.guarded.some(g => g.price === 1000000), JSON.stringify(rush.guarded));
     await setPatience(p4, 'patient');
-    const patient = await decisionRow(p4, 'Steady Trinket');
+    const patient = await decisionRow(p4, 'Patience Widget');
     eq('patient stretches the window to 30 days', patient.window, 30);
-    eq('...where the same pattern always fills', patient.fillChance, 1);
-    eq('...so the patient listing comes back', patient.strategy, 'pat');
+    near('...twice over what the stack needs, so all of it sells', patient.fillChance, 1, 1e-5);
+    eq('...so the listing comes back', patient.strategy, 'ord');
     eq('flipping patience never refetches anything', await p4.evaluate(() => state.esi.size), fetchedTypes);
     await setPatience(p4, 'balanced');
-    eq('...and balanced restores the middle answer',
+    const balanced = await decisionRow(p4, 'Patience Widget');
+    eq('...and balanced restores the middle answer', balanced.strategy, 'ord');
+    check('...a middle answer that really is in the middle',
+      balanced.comp.p > rush.comp.p && balanced.comp.p < patient.comp.p,
+      [rush.comp.p, balanced.comp.p, patient.comp.p].join(' < '));
+    eq('the liquid item is listed patiently whatever the hurry',
       (await decisionRow(p4, 'Steady Trinket')).strategy, 'pat');
 
     section('rows without usable history degrade instead of guessing');
@@ -1333,8 +1421,13 @@ H.run('sell', async () => {
     check('the chance cell shows a percentage', /%$/.test(cols.chance), cols.chance);
     check('the slot-day cell copies its raw value', Number(cols.slot) > 0, cols.slot);
     check('the fill cell copies its raw value', Number(cols.fill) >= 0, cols.fill);
-    check('the TSV gained the three columns',
-      ['Fill est. days', 'Chance %', 'ISK/slot-day'].every(h => cols.head.includes(h)), cols.head.join('|'));
+    /* REWRITTEN: 'Chance %' became 'Fill %' when the number stopped being a coin flip on
+       the whole stack, and 'Fill bound' travels beside it so an upper bound off ESI
+       regional volume and an estimate off the station's own sell-side prints cannot
+       export as the same number. */
+    check('the TSV gained the four columns',
+      ['Fill est. days', 'Fill %', 'Fill bound', 'ISK/slot-day'].every(h => cols.head.includes(h)),
+      cols.head.join('|'));
     check('...and dropped the wait upside', !cols.head.includes('Wait upside %'), cols.head.join('|'));
     eq('every TSV row is as wide as its header', cols.row.length, cols.head.length);
     check('the TSV keeps the working numbers the table hides',
@@ -1491,8 +1584,9 @@ H.run('sell', async () => {
       det.markers.includes('sell') && det.markers.includes('patient')
       && det.labels.some(t => /best sell/.test(t)) && det.labels.some(t => /patient price/.test(t)),
       JSON.stringify(det.labels));
+    // REWRITTEN with the column it restates: the odds cell is a share of the stack now
     eq('the row’s decision numbers are restated under the chart',
-      det.nums.join(','), 'plan,net ISK,fill est. d,chance,ISK/slot-day');
+      det.nums.join(','), 'plan,net ISK,fill est. d,fill,ISK/slot-day');
     check('...with real values', det.values.every(v => v && v !== ''), JSON.stringify(det.values));
     check('...and the same key: value why', /^(INSTANT|LIST) /.test(det.why), det.why);
     check('the chart is labelled for a screen reader',
