@@ -70,6 +70,9 @@
   #tbl td.name .flag{flex:none;margin:0}
   #tbl td.name img.ticon{flex:none}
   #tbl td.plan .badge{padding:1px 5px}
+  #tbl input.oddsin{width:52px;padding:1px 3px;font-size:11px;text-align:right;
+    background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:3px}
+  #tbl input.oddsin.pinned{border-color:var(--violet);color:var(--violet)}
   #tbl tbody tr.a>td.tick,#tbl tbody tr.a>td.pos{border-bottom:1px solid #1a2233;
     vertical-align:middle;text-align:center}
   #tbl tbody tr.a:hover>td,#tbl tbody tr.a:hover+tr.b>td{background:#141b28}
@@ -273,6 +276,12 @@
       <div class="grow" style="margin-top:4px">
         <label style="margin:0"><input type="radio" name="psrc" id="srcHist" value="hist"> history reference
           <span id="srcHistEcho" class="hint" title="set in the history reference group"></span></label>
+      </div>
+      <div class="grow" style="margin-top:4px">
+        <label style="margin:0" title="solves for the price with this chance of selling inside the patience window&#10;a row can be nudged off this on its own"><input type="radio" name="psrc" id="srcOdds" value="odds"> price for</label>
+        <input id="oddsTarget" type="number" min="1" max="99" step="1" value="70" style="width:56px"
+          title="the chance you want, per row&#10;higher: a lower price, sooner&#10;the Fill column becomes editable">
+        <span class="hint">% chance</span>
       </div>
     </fieldset>
     <fieldset class="grp" id="patienceBox">
@@ -894,6 +903,7 @@ const state = {
   esiToken: 0,         // bumped to invalidate an in-flight fetch
   fetchedHist: false,  // whether the last fetch included history
   savedTicked: new Set(),  // ticks restored from storage, applied when rows (re)appear
+  oddsRow: new Map(),      // key -> the fill chance THIS row is priced for, when overridden
   patience: 'balanced',    // rush / balanced / patient — drives every probability below
   sortKey: 'perSlot', sortDir: -1,
   filterType: 'all', filterText: '',
@@ -2148,6 +2158,49 @@ function listingOutlook(e, comp, price, qty, windowDays, opts){
            kappa: null, kappaSrc: null, kappaCapped: false, model: null, hit, queueFactor };
 }
 
+/* ---------- pick the odds, get the price -------------------------------------------
+
+   Everywhere else the tool takes a price and reports the odds. This runs it backwards,
+   which is the question actually worth asking of a hangar full of loot: not "what are the
+   odds at this price" but "what do I have to ask to be N% sure of selling it".
+
+   listingOutlook's fill fraction is monotone non-increasing in price — a higher ask is
+   never easier to fill — so a bisection finds the crossing without any assumption about
+   the curve's shape. The bracket is real rather than arbitrary: the floor is the best buy
+   order, because below it you would simply sell into the book instead, and the ceiling is
+   the most the market has paid over the window in today's money, above which the model
+   returns zero by construction.
+
+   Returns null when the target is unreachable anywhere in the bracket — which is a fact
+   about the item, not a failure, and the row says so rather than inventing a price. */
+const ODDS_STEPS = 22;                 // 2^-22 of the bracket: finer than any tick
+function priceForOdds(e, comp, qty, windowDays, target, opts){
+  if (!e || !(qty > 0) || !(target > 0) || !(target <= 1)) return null;
+  const reach = reachOf(e, 1e-9);      // any positive price: this is only for the ceiling
+  const hi0 = reach && reach.ceiling > 0 ? reach.ceiling : null;
+  const lo0 = opts && opts.floor > 0 ? opts.floor : 0.01;
+  if (hi0 == null || hi0 <= lo0) return null;
+  const at = price => {
+    const o = listingOutlook(e, comp, price, qty, windowDays, opts);
+    return o ? o.frac : null;
+  };
+  // the cheapest ask must clear the target, or nothing in the bracket will
+  const loFrac = at(lo0);
+  if (loFrac == null || loFrac < target) return null;
+  if ((at(hi0) || 0) >= target) return round4sig(hi0);
+  let lo = lo0, hi = hi0;
+  for (let i = 0; i < ODDS_STEPS; i++){
+    const mid = (lo + hi) / 2;
+    const f = at(mid);
+    if (f != null && f >= target) lo = mid; else hi = mid;
+  }
+  // round DOWN to the tick: rounding to nearest can land above the price that was solved
+  // for, which would quietly return worse odds than the ones asked for
+  const t = tickFor(lo);
+  const px = Math.floor(lo / t + 1e-9) * t;
+  return px > 0 ? Number(px.toFixed(2)) : null;
+}
+
 // an upper bound is not an estimate, and the two never get to look alike on screen
 const pcBound = (p, bound) => p == null ? '—'
   : (bound === 'upper' ? '≤' : '') + Math.round(p * 100) + '%';
@@ -2206,7 +2259,9 @@ function rebuild(keepChecks = true){
   const broker = feePct('brokerFee');
   const tax    = feePct('salesTax');
   const useUndercut = $('undercut').checked;
-  const priceSrc = $('srcHist').checked ? 'hist' : 'sell';
+  const priceSrc = $('srcOdds').checked ? 'odds' : $('srcHist').checked ? 'hist' : 'sell';
+  const oddsTarget = Math.min(0.99, Math.max(0.01,
+    (parseFloat($('oddsTarget').value) || 70) / 100));
   const histMode = $('histMode').value;
   const histDays = currentHistDays();
   state.patience = $('patRush').checked ? 'rush' : $('patPatient').checked ? 'patient' : 'balanced';
@@ -2264,7 +2319,23 @@ function rebuild(keepChecks = true){
 
     // L: the price ORDER/SPLIT items are imported at
     let L = null, lFlag = null;
-    if (priceSrc === 'sell'){
+    // a row can be nudged off the global target without moving anything else
+    const rowTarget = state.oddsRow.has(key) ? state.oddsRow.get(key) : oddsTarget;
+    if (priceSrc === 'odds'){
+      // e.sellLevels directly: the local alias is declared further down
+      L = priceForOdds(e, e.sellLevels || null, i.qty, pat.days, rowTarget,
+                       { histDays, tracker: trk, volDay, floor: bestBuy });
+      if (L == null){
+        // no price in the bracket reaches those odds: say which, and fall back to the
+        // competitive price rather than leaving the row without a plan
+        if (bestSell != null) L = useUndercut ? undercut(bestSell) : bestSell;
+        else if (hist != null) L = round4sig(hist);
+        lFlag = { t: `${Math.round(rowTarget * 100)}%?`, cls: 'warn',
+          ttl: `target: ${Math.round(rowTarget * 100)}% inside ${pat.days}d`
+            + '\nnot reachable at any price this market has paid'
+            + '\nlist price: fell back to the competitive one' };
+      }
+    } else if (priceSrc === 'sell'){
       if (bestSell != null) L = useUndercut ? undercut(bestSell) : bestSell;
       else if (hist != null){ L = round4sig(hist);
         lFlag = {t:'L=hist', cls:'info', ttl:'list price: history reference\nreason: no sell orders here'}; }
@@ -2448,6 +2519,8 @@ function rebuild(keepChecks = true){
 
     const row = {
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit, typeId: e.typeId ?? null,
+      oddsTarget: priceSrc === 'odds' ? rowTarget : null,
+      oddsPinned: priceSrc === 'odds' && state.oddsRow.has(key),
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
       volSell, volBuy, capture, volSrc: trk ? 'tracker' : 'esi',
       volUnitsSell, volUnitsBuy, volHeldDays, volState,
@@ -3090,7 +3163,7 @@ function render(){
        r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100), exactTip(r.volDay)],
       ['fillChance', 'num', pcBound(r.fillChance, r.fillBound),
        r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
-       r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why],
+       r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why, r.oddsTarget != null],
       ['totalNet', 'num', fmtShort(r.totalNet), priceCopy(r.totalNet), exactTip(r.totalNet)],
     ]){
       const td = document.createElement('td'); td.className = cls; td.textContent = text;
@@ -3098,6 +3171,27 @@ function render(){
       if (copy) td.dataset.copy = copy;
       if (title) td.title = title;
       tr.appendChild(td);
+    }
+    /* Pricing FOR a chance makes the chance the input, so the cell becomes one. Typing a
+       number here nudges this row alone; clearing it hands the row back to the global
+       target, and the row says which of the two it is on. */
+    if (r.oddsTarget != null && r.strategy !== 'imm'){
+      const td = tr.querySelector('[data-cell="fillChance"]');
+      td.textContent = '';
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '1'; inp.max = '99'; inp.step = '1';
+      inp.className = 'oddsin' + (r.oddsPinned ? ' pinned' : '');
+      inp.value = String(Math.round(r.oddsTarget * 100));
+      inp.title = (r.oddsPinned ? 'this row only — clear to follow the global target'
+                                : 'following the global target — type to pin this row')
+        + `\nprice solved for it: ${fmtIsk(r.exportPrice)}`;
+      inp.addEventListener('change', () => {
+        const v = parseFloat(inp.value);
+        if (Number.isFinite(v) && v >= 1 && v <= 99) state.oddsRow.set(r.key, v / 100);
+        else state.oddsRow.delete(r.key);
+        rebuild(); persist();
+      });
+      td.appendChild(inp);
     }
 
     /* ---- line 2: what the decision rests on ---- */
@@ -4909,11 +5003,14 @@ function persist(){
       salesTax: $('salesTax').value,
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
-      priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
+      priceSrc: $('srcOdds').checked ? 'odds' : $('srcHist').checked ? 'hist' : 'sell',
+      histMode: $('histMode').value, histDays: $('histDays').value,
       patience: state.patience, trkDays: $('trkDays').value,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
       ticked,
+      oddsTarget: $('oddsTarget').value,
+      oddsRow: [...state.oddsRow],
     }));
     /* Keep the restore fallback in step with what was just saved. Until now only a page
        load ever narrowed it, so a tick that None removed came back the next time its row
@@ -4950,7 +5047,11 @@ function restore(){
   if (savedPct != null) $('brokerFee').value = String(savedPct);
   renderFeeSrc();
   if (saved.histOn != null) $('histOn').checked = !!saved.histOn;
-  if (saved.priceSrc){ $('srcHist').checked = saved.priceSrc === 'hist'; $('srcSell').checked = saved.priceSrc !== 'hist'; }
+  if (saved.priceSrc){
+    $('srcOdds').checked = saved.priceSrc === 'odds';
+    $('srcHist').checked = saved.priceSrc === 'hist';
+    $('srcSell').checked = saved.priceSrc === 'sell' || !saved.priceSrc;
+  }
   if (saved.histMode) $('histMode').value = saved.histMode;
   if (saved.histDays) $('histDays').value = saved.histDays;
   if (saved.mode === 'sell' || saved.mode === 'orders') state.mode = saved.mode;
@@ -4965,6 +5066,8 @@ function restore(){
     $('trkDays').value = String(saved.trkDays);
   if (PATIENCE[saved.patience]) state.patience = saved.patience;
   $('pat' + state.patience[0].toUpperCase() + state.patience.slice(1)).checked = true;
+  if (saved.oddsTarget != null) $('oddsTarget').value = saved.oddsTarget;
+  if (Array.isArray(saved.oddsRow)) state.oddsRow = new Map(saved.oddsRow);
   state.savedTicked = new Set(saved.ticked || []);
   rebuild(false);   // applies savedTicked via the checked fallback — also after a later refetch
   return true;
@@ -5026,7 +5129,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
 });
 
 $('inv').addEventListener('input', () => { rebuild(); trkMemoSoon(); });
-for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays',
+for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'srcOdds', 'oddsTarget', 'histMode', 'histDays',
                   'patRush', 'patBalanced', 'patPatient'])
   // patience, fees and the history window re-rank BOTH modes locally, with no refetch
   $(id).addEventListener('change', () => { rebuild(); ordRecompute(); });

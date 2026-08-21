@@ -1276,6 +1276,134 @@ H.run('sell', async () => {
       steady.why.includes('\n') && !/\. [A-Z]/.test(steady.why), JSON.stringify(steady.why));
 
     section('the fee guard: no listing that would spend the broker fee for nothing');
+    /* ---------- pick the odds, get the price ---------------------------------------
+       The inverse of everything else here. It only works because the fill fraction never
+       rises with price, so these check that property directly rather than trusting it. */
+    section('solving a price for a target chance');
+    const solve = await p4.evaluate(() => {
+      const e = state.esi.get('steady trinket');
+      const r = state.rows.find(x => x.name === 'Steady Trinket');
+      const opts = { histDays: currentHistDays(), volDay: r.volDay, tracker: null,
+                     floor: r.bestBuy };
+      const at = px => { const o = listingOutlook(e, e.sellLevels, px, r.qty, (PATIENCE[state.patience] || PATIENCE.balanced).days, opts);
+                         return o ? o.frac : null; };
+      const ceiling = reachOf(e, 1e-9).ceiling;
+      // the curve itself: sampled across the whole bracket
+      const xs = [], fs = [];
+      for (let i = 0; i <= 40; i++){
+        const px = r.bestBuy + (ceiling - r.bestBuy) * i / 40;
+        xs.push(px); fs.push(at(px));
+      }
+      const solved = {};
+      for (const t of [0.3, 0.5, 0.7, 0.9]) solved[t] = priceForOdds(e, e.sellLevels, r.qty, (PATIENCE[state.patience] || PATIENCE.balanced).days, t, opts);
+      return {
+        ceiling, floor: r.bestBuy,
+        monotone: fs.every((f, i) => i === 0 || f == null || fs[i-1] == null || f <= fs[i-1] + 1e-12),
+        solved,
+        got: Object.fromEntries(Object.entries(solved).map(([t, px]) => [t, px == null ? null : at(px)])),
+        aboveCeiling: at(ceiling * 1.5),
+        // no history is the real can't-solve case: there is no ceiling to search up to
+        noHistory: priceForOdds({ hist: [], typeId: 1 }, e.sellLevels, r.qty, 30, 0.6, opts),
+        // ...and so is a bracket whose floor already misses the target
+        floorMisses: priceForOdds(e, e.sellLevels, r.qty, 30, 0.6,
+          Object.assign({}, opts, { floor: reachOf(e, 1e-9).ceiling * 10 })),
+      };
+    });
+    check('the fill fraction never rises with price — what makes a bisection valid',
+      solve.monotone, 'not monotone');
+    check('a price above everything the market has paid fills nothing',
+      solve.aboveCeiling === 0, String(solve.aboveCeiling));
+    for (const t of ['0.3', '0.5', '0.7', '0.9']){
+      check(`a price exists for ${Math.round(Number(t) * 100)}%`, solve.solved[t] > 0,
+        String(solve.solved[t]));
+      check(`...and it actually delivers at least the odds asked for`,
+        solve.got[t] >= Number(t) - 1e-9, `${solve.got[t]} for ${t}`);
+    }
+    check('asking for better odds never costs more — the price falls as the target rises',
+      solve.solved['0.3'] >= solve.solved['0.5']
+      && solve.solved['0.5'] >= solve.solved['0.7']
+      && solve.solved['0.7'] >= solve.solved['0.9'],
+      JSON.stringify(solve.solved));
+    check('the solved price sits inside the bracket it was searched in',
+      Object.values(solve.solved).every(px => px >= solve.floor * 0.999 && px <= solve.ceiling),
+      JSON.stringify(solve.solved) + ' in ' + solve.floor + '..' + solve.ceiling);
+    /* a target nothing can reach is a fact about the item, not a failure — the tool must
+       not invent a price for it, and the row falls back with a chip saying so */
+    eq('an item with no history has no ceiling to search, so no price is invented',
+      solve.noHistory, null);
+    eq('...nor when even the cheapest price in the bracket misses the target',
+      solve.floorMisses, null);
+
+    section('the odds source prices every row, and a row can be pinned off it');
+    await p4.check('#srcOdds');
+    await p4.fill('#oddsTarget', '60');
+    await p4.dispatchEvent('#oddsTarget', 'change');
+    await p4.waitForFunction(() => state.rows.some(r => r.oddsTarget != null));
+    const odds = await p4.evaluate(() => {
+      const listed = state.rows.filter(r => r.strategy !== 'imm');
+      return {
+        allTargeted: listed.every(r => Math.abs(r.oddsTarget - 0.6) < 1e-9),
+        nonePinned: listed.every(r => !r.oddsPinned),
+        cellIsInput: !!document.querySelector('#tblBody input.oddsin'),
+        cellValue: (document.querySelector('#tblBody input.oddsin') || {}).value,
+      };
+    });
+    check('every listed row is priced for the global target', odds.allTargeted);
+    check('...none of them pinned to a target of its own', odds.nonePinned);
+    check('the Fill cell becomes the input, because the chance is now what you set',
+      odds.cellIsInput);
+    eq('...showing the global target', odds.cellValue, '60');
+
+    // one row nudged off the global target, and nothing else moving with it
+    const beforePin = await p4.evaluate(() =>
+      state.rows.filter(r => r.strategy !== 'imm').map(r => [r.name, r.exportPrice]));
+    // the row the FIRST input belongs to, addressed by a locator so it survives the
+    // re-render that typing into it causes
+    const pinName = await p4.evaluate(() => {
+      const tr = document.querySelector('#tblBody tr.a input.oddsin').closest('tr');
+      return tr.querySelector('.nm').textContent;
+    });
+    /* Set and fire in one go: the row re-renders on change, which replaces the input, so a
+       multi-step fill loses its own element halfway through. */
+    await p4.evaluate(n => {
+      const tr = [...document.querySelectorAll('#tblBody tr.a')]
+        .find(x => x.querySelector('.nm').textContent === n);
+      const inp = tr.querySelector('input.oddsin');
+      inp.value = '85';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+    }, pinName);
+    await p4.waitForFunction(() => state.oddsRow.size === 1);
+    const pinned = await p4.evaluate(prev => {
+      const now = state.rows.filter(r => r.strategy !== 'imm');
+      const was = new Map(prev);
+      const p = now.find(r => r.oddsPinned);
+      /* A re-plan re-solves every row against a clock that has moved on, because the trend
+         carry is measured from now(), so an unpinned row can shift by a tick. What must
+         not happen is an unpinned row moving MATERIALLY. */
+      const others = now.filter(r => !r.oddsPinned)
+        .map(r => Math.abs(r.exportPrice - was.get(r.name)) / was.get(r.name));
+      return { pinnedName: p && p.name, pinnedTarget: p && p.oddsTarget,
+        drop: p ? (was.get(p.name) - p.exportPrice) / was.get(p.name) : null,
+        othersMax: others.length ? Math.max(...others) : 0,
+        pinnedCount: state.oddsRow.size,
+        markedCount: document.querySelectorAll('#tblBody input.oddsin.pinned').length };
+    }, beforePin);
+    eq('exactly one row is pinned', pinned.pinnedCount, 1);
+    eq('...and exactly one is marked as such', pinned.markedCount, 1);
+    eq('...it is the row whose input was typed into', pinned.pinnedName, pinName);
+    near('...carrying the target that was typed', pinned.pinnedTarget, 0.85, 1e-9);
+    /* Asking for better odds can never ask MORE. It does not always ask less: on a market
+       liquid enough to fill at any price in the bracket, both targets solve to the same
+       ceiling, and that is the right answer rather than a missing one. The strict version
+       of this is the four-target ladder above. */
+    check('...and it never asks more for being surer of selling',
+      pinned.drop >= -1e-9, String(pinned.drop));
+    check('no other row moved by more than rounding',
+      pinned.othersMax < 0.01, String(pinned.othersMax));
+
+    await p4.check('#srcSell');
+    await p4.waitForFunction(() => state.rows.every(r => r.oddsTarget == null));
+
     const decay = await decisionRow(p4, 'Decay Widget');
     check('the p90-style patient price sits far above what the market pays now',
       decay.patientPrice > decay.exportPrice * 1.5, decay.patientPrice + ' vs ' + decay.exportPrice);

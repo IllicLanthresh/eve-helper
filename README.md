@@ -175,6 +175,9 @@ remembered.
    - **history statistic** — median / average / 10th / 90th percentile of the region's
      daily average price over the last N days. N and the statistic apply instantly, no refetch.
      This statistic is also the **patient price** the tool values as its own option.
+   - **price for X% chance** — no price is chosen at all; the tool is handed the *odds you
+     want* and solves backwards for the price that delivers them inside your patience
+     window. See [Solving for the odds](#solving-for-the-odds).
 5. Every item is valued against the actual buy book *and* against the two ways of listing
    it, and gets a plan — see [The decision layer](#the-decision-layer) for the model:
    - **INSTANT** — dumping the stack into the buy book right now is the best of the three.
@@ -279,7 +282,7 @@ columns carried is still on screen.
 | **Plan** | INSTANT / LIST / PATIENT / SPLIT | order Δ |
 | **Price** | import price | top buy → best sell · margin |
 | **Flow** | vol/day, regional | ↑ sell u/d · ↓ buy u/d · sell share |
-| **Fill** | fill % | estimated days |
+| **Fill** | fill % — *editable when pricing for a chance* | estimated days |
 | **Net ISK** | expected net | ISK per slot-day |
 
 **Warnings moved to the item name**, where the eye already is, rather than sitting past the
@@ -368,6 +371,45 @@ Every recommendation carries a plain-language **why** on hover, e.g. *"best sell
 12th percentile of the last 60 days, trend −4.1%/week (falling), the patient price 1,150,000
 was reached in 8% of past 14-day windows once those days are carried to today's price level
 (74% at the prices of the day — that gap is the decay)"*.
+
+### Solving for the odds
+
+The other two price sources name a price and let the tool report the odds. This one runs the
+same machinery backwards: you give it the **chance you want**, it hands back the price that
+delivers it.
+
+```
+price for 70% chance  →  the highest price whose fill chance is still ≥ 70% inside the
+                         patience window, at this stack size, on this market
+```
+
+It is a bisection over price, not a formula. The bracket runs from the **best buy order** —
+anything at or under it is an instant sale, not a listing — up to the **trend-adjusted
+ceiling**, the highest price the item has actually reached, carried to today. Twenty-two
+halvings put the answer inside a hundredth of a percent of the bracket, and the result is
+rounded **down** to the legal tick, so the price you get is never above the one that met your
+target.
+
+What makes bisection legitimate here is that the fill fraction is **monotone
+non-increasing in price**: ask more and the queue ahead of you can only grow, the arrival
+rate can only fall. That is a property of the fill model, not an assumption about it, and the
+suite tests it directly rather than trusting it.
+
+Two things it will not do:
+
+- **It will not invent a market.** If the item has no usable history, there is nothing to
+  solve against and no price comes back.
+- **It will not exceed the ceiling.** If even the floor price misses your target — a market
+  too thin to move your stack at any price inside the window — the row falls back to the
+  competitive price and carries a `70%?` chip saying the target was not reachable at any
+  price this market has paid. It does not quietly return the ceiling and let you think you
+  asked for something achievable.
+
+**Per row.** Under this source the *Fill* column stops being a readout and becomes an input.
+Type a number into any row and that row alone solves for it — the border turns violet to say
+it is pinned — and clearing it hands the row back to the global target. One stubborn item can
+be pushed to 95% without dragging the other two hundred down with it. Both the global target
+and every pinned row survive a reload.
 
 ### What this replaced, and why
 
@@ -764,6 +806,7 @@ Every chip is at most ten-odd characters and carries its numbers on hover.
 | `▼x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `minfee` | The flat 100 ISK per-order broker fee beats the percentage; the tooltip gives the effective and nominal rates. |
 | `L=sell` / `L=hist` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `70%?` | Pricing for a chance, and no price in the bracket reaches that one — the market is too thin to move this stack inside the window at any price it has paid. The competitive price was used instead. The number is the target that failed. |
 | `>best` | The list price `L` sits above the current best sell. |
 | `no buy` / `no sell` | That side of the book is empty at this hub. |
 | `dup×N` | You already have N open sell orders for this item at this market (from *My orders*' last pull). A second order competes with your own; the tooltip gives the price. |
