@@ -135,9 +135,9 @@
   .seg span:hover{color:var(--text);background:#1b2434}
   .seg input:checked + span{background:#14344a;color:#cfeefb;box-shadow:inset 0 -2px 0 var(--cyan)}
   .seg input:focus-visible + span{outline:1px solid var(--cyan)}
-  #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
-  #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
-  #fetchFill.ind{width:30%;animation:ind 1.1s linear infinite}
+  #fetchBar,#trkBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
+  #fetchFill,#trkFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
+  #fetchFill.ind,#trkFill.ind{width:30%;animation:ind 1.1s linear infinite}
   @keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
   ul.plain{column-width:340px;column-gap:26px}
   ul.plain{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:13px}
@@ -261,7 +261,24 @@
       </div>
       <div class="hint" id="patNote" style="margin-top:4px"></div>
     </fieldset>
+    <fieldset class="grp">
+      <legend>traded volume</legend>
+      <div class="grow">
+        <button id="btnTrk" type="button" title="download traded volume from Adam4EVE (no login)">Refresh volume</button>
+        <label for="trkDays" style="margin:0">window</label>
+        <select id="trkDays" style="width:70px" title="how much history to hold&#10;more days: a steadier rate&#10;first run: every missing week is downloaded">
+          <option value="30">30d</option>
+          <option value="90" selected>90d</option>
+          <option value="180">180d</option>
+          <option value="365">365d</option>
+        </select>
+        <span id="trkStatus"></span>
+      </div>
+      <div class="hint" style="margin-top:4px" title="fed by this data:&#10;Sell u/d · Buy u/d · Sell share&#10;first run: a few minutes of downloading">feeds: Sell u/d · Buy u/d · Sell share
+        <span id="trkAge" style="color:var(--amber)"></span></div>
+    </fieldset>
   </div>
+  <div id="trkBar" hidden><div id="trkFill"></div></div>
   <p class="hint" style="margin:8px 0 0">net instant <code>price × (1 − tax)</code> on real depth · net listed
     <code>qty × price × (1 − tax) − max(100 ISK, broker% × qty × price)</code><details class="help"><summary>?</summary><span
     class="helpbody">The broker fee is charged when the order <b>goes up</b>, not when it fills: a listing that never
@@ -303,6 +320,15 @@
           history statistic: green above, red below.</li>
       <li><b>History</b> is per <b>region</b> (ESI publishes none per station), on each day's average price.
           Day range and statistic are applied locally — changing them needs no refetch.</li>
+      <li><b>Sell u/d</b>, <b>Buy u/d</b> and <b>Sell share</b> come from the Adam4EVE market order
+          tracker, which samples the five hub order books every 10-15 minutes and differences them:
+          units bought <i>from sell orders</i> are counted apart from units sold <i>to buy orders</i>, per
+          station, per day. Only the first kind fills a sell order you leave up. It is an estimate — good
+          on slow markets, weaker on fast ones — and it covers the five NPC hubs only. <b>Refresh volume</b>
+          downloads it into your browser (no login); the line beside the button says how much history is
+          held and how old it is. A first run over 90 days moves a few hundred thousand rows and takes a
+          couple of minutes; closing the tab keeps every day already stored. Nothing is fetched until you
+          ask for it, and with no cache the page falls back to the regional <b>Vol/day</b> above.</li>
       <li>Flags, hover any for its numbers: <span class="flag warn">▼x%/wk</span> falling trend ·
           <span class="flag warn">suspect</span> top buy above best sell (thin/odd market) ·
           <span class="flag warn">≫hist</span>/<span class="flag warn">≪hist</span> best sell far from the
@@ -347,6 +373,7 @@
     <span class="hint" id="fltCount"></span>
     <span class="hint">· cell → copy · spark → chart</span>
   </div>
+  <div class="hint" id="volSrc" style="margin-top:2px"></div>
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
@@ -361,6 +388,9 @@
         <th data-key="hist" class="num" title="chosen statistic over the region's daily averages">Hist ISK/u</th>
         <th data-key="sellVsHist" class="num" title="(sell − hist) ÷ hist&#10;green: above history · red: below&#10;dip or decay: the Plan column decides">Sell/Hist %</th>
         <th data-key="volDay" class="num" title="units traded/day over the history window&#10;over CALENDAR days — a day with no trades counts as zero&#10;regional, both sides (no API splits traded volume)">Vol/day</th>
+        <th data-key="volSell" class="num" title="units bought from sell orders per day&#10;this station only, not the region&#10;Adam4EVE order tracker — an estimate">Sell u/d</th>
+        <th data-key="volBuy" class="num" title="units sold to buy orders per day&#10;this station only, not the region&#10;does not fill a sell order">Buy u/d</th>
+        <th data-key="capture" class="num" title="share of traded units that hit sell orders&#10;22%: most volume is dumping into buy orders&#10;measured at this station over the held window">Sell share</th>
         <th data-key="buyDepth" class="num" title="units wanted by buy orders covering the hub">Buy depth</th>
         <th data-key="sellDepth" class="num" title="units offered by sell orders at the hub">Sell depth</th>
         <th data-key="strategy" title="recommended disposal · hover a badge for its numbers">Plan</th>
@@ -451,6 +481,10 @@
     <button id="relistReset" type="button" title="back to the computed value">reset</button>
     <span class="hint" id="relistSrc" style="flex:1 1 300px"></span>
   </div>
+  <div class="rowline">
+    <button id="btnOrdTrk" type="button" title="download traded volume from Adam4EVE (no login)">Refresh volume</button>
+    <span class="hint" id="ordTrkAge" style="flex:1 1 300px"></span>
+  </div>
   <div class="tablewrap">
     <table id="ordTbl">
       <thead><tr>
@@ -466,6 +500,8 @@
         <th data-key="queueAhead" class="num" title="units listed at or below your price here&#10;your own units taken back out — the line you actually stand behind">Queue ahead</th>
         <th data-key="aboveBestPct" class="num" title="your price vs the best competing sell here&#10;your own orders excluded, so cheapest reads 0%">vs best %</th>
         <th data-key="daysToFill" class="num" title="queue ahead ÷ Vol/day&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
+        <th data-key="volSell" class="num" title="units bought from sell orders per day&#10;this station only, not the region&#10;Adam4EVE order tracker — an estimate">Sell u/d</th>
+        <th data-key="capture" class="num" title="share of traded units that hit sell orders&#10;22%: most volume is dumping into buy orders&#10;measured at this station over the held window">Sell share</th>
         <th data-key="trendPctWk" class="num" title="Theil–Sen slope, %/week&#10;same trend the Sell mode ranks with">Trend %/wk</th>
         <th data-key="chance" class="num" title="chance of filling at your price before expiry&#10;= share of past windows whose daily high reached it&#10;carried to today by the trend, tempered by the queue">Chance %</th>
         <th data-key="stalledIsk" title="stalled: odds under the floor, or the queue outlasts the order, or above best sell on a sliding market&#10;sorts by ISK frozen in stalled orders">Stalled?</th>
@@ -851,7 +887,528 @@ const state = {
   orders: { list: [], chars: [], names: {}, locs: {}, diag: {}, fetched: null, running: false },
   ordSortKey: 'stalledIsk', ordSortDir: -1,   // ISK frozen in stalled orders, worst first
   ordShowBuy: false, ordFilter: '', ordFilterVerdict: 'all',
+  // --- the Adam4EVE traded-volume cache (the block below) ---
+  trkRunning: false,
+  trkToken: 0,             // bumped to cancel an in-flight refresh
+  trkDisabled: false,      // IndexedDB unavailable: every read is null, every write a no-op
+  trk: null,               // { days, byKey: 'hub|type' -> series|null, cov, held, on }
 };
+
+/* ================= TRADED VOLUME, FROM THE ADAM4EVE ORDER TRACKER ====================
+
+   ESI publishes units traded, not which side was the aggressor, and only a BUYER-
+   initiated trade fills a resting sell order. Adam4EVE samples the top hubs' order books
+   every 10-15 minutes and differences them, then publishes per station and per day the
+   units bought FROM sell orders separately from the units sold TO buy orders. That split
+   is the number this page has been missing.
+
+   It is a DIFFERENCED SAMPLE, not a trade log: good on slow markets, weaker on fast ones,
+   and only at the five hub stations. Every place it reaches the screen says so.
+
+   The data is fetched BY THE BROWSER, cached in IndexedDB and refreshed by a button.
+   Nothing is baked into this file and nothing is generated at deploy time, so the page
+   can tell you how old its numbers are and you can make them newer. With no cache and no
+   network the page behaves exactly as it did before any of this existed. */
+const TRK_BASE = 'https://static.adam4eve.eu/MarketOrdersTrades';
+const TRK_DB = 'eveHelperTracker';      // its own database: eveHelperIndustry belongs to another tool
+const TRACKER_SCHEMA = 1;               // guards the VALUE shape; the IDB version guards the stores
+// the tool's five hubs are exactly the five stations the tracker covers
+const TRACKED_HUBS = new Set([60003760, 60008494, 60011866, 60005686, 60004588]);
+/* A4E retires daily files at about 16 days (measured 2026-08-21: 2026-08-06 was the
+   oldest still served, 2026-08-05 answered 404). 14 leaves two days of margin, and past
+   it the weekly file is the only thing left to ask for anyway. */
+const TRK_DAILY_WINDOW_D = 14;
+/* Yesterday's file lands at 03:32-03:38 UTC (six consecutive days measured). Before the
+   cutoff a 404 on yesterday is the publishing schedule, not a fault. */
+const TRK_PUBLISH_CUTOFF_UTC_H = 4.5;
+/* Two days, for the same reason: between midnight and ~03:35 UTC the newest publishable
+   day is the day before yesterday, so a one-day threshold would shout "stale" for three
+   and a half hours every night with nothing to fetch. */
+const TRK_STALE_D = 2;
+// 27 MB measured for 13 weeks of five-hub data in this Chromium, times three for real
+// entropy — checked BEFORE a backfill, because a quota failure mid-run is a wasted run
+const TRK_BYTES_PER_DAY = 1.5e6;
+const TRK_STORE_BATCH = 400;            // packed records per IndexedDB transaction
+
+const isoDayUTC = t => new Date(t).toISOString().slice(0, 10);
+const trkDayShift = (d, n) => isoDayUTC(Date.parse(d + 'T00:00:00Z') + n * 86400e3);
+const trkPad2 = n => (n < 10 ? '0' : '') + n;
+
+/* ISO-8601 week: the Thursday of the same week decides BOTH the year and the number, so
+   2025-12-29 belongs to week 1 of week-year 2026 and lives in the /2026/ directory. */
+function isoWeek(d){
+  const t = new Date(d + 'T00:00:00Z');
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  const y = t.getUTCFullYear();
+  return { y, w: Math.ceil(((t - Date.UTC(y, 0, 1)) / 86400e3 + 1) / 7) };
+}
+// the CACHE key pads the week so keys sort chronologically; the URL below does NOT
+const trkWeekKey = d => { const { y, w } = isoWeek(d); return y + '-' + trkPad2(w); };
+const trkDailyUrl = d => `${TRK_BASE}/${d.slice(0, 4)}/marketOrderTrades_daily_${d}.csv`;
+// VERIFIED: weekly_2026-1.csv is served, weekly_2026-01.csv is a 404. No padding here.
+const trkWeeklyUrl = (y, w) => `${TRK_BASE}/${y}/marketOrderTrades_weekly_${y}-${w}.csv`;
+
+/* ---------- the cache ---------------------------------------------------------------
+   Hundreds of megabytes of rows, which is two orders of magnitude past localStorage.
+   Records are PACKED one per (hub, type, week) — measured 22x faster to write than one
+   record per row — but nothing is aggregated: every day, every side and every published
+   column survives, so the model can change later without re-downloading anything. */
+const trkDb = (() => {
+  let dbP = null;
+  const openRaw = () => new Promise((res, rej) => {
+    const rq = indexedDB.open(TRK_DB, 1);
+    rq.onupgradeneeded = () => {
+      const db = rq.result;
+      if (!db.objectStoreNames.contains('rows')) db.createObjectStore('rows');
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+    };
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error || new Error('indexedDB refused'));
+    rq.onblocked = () => rej(new Error('indexedDB blocked'));
+  });
+  const wipe = () => new Promise(res => {
+    const rq = indexedDB.deleteDatabase(TRK_DB);
+    rq.onsuccess = rq.onerror = rq.onblocked = () => res();
+  });
+  const tx1 = (db, store, mode, fn) => new Promise((res, rej) => {
+    const tx = db.transaction(store, mode);
+    const rq = fn(tx.objectStore(store));
+    tx.oncomplete = () => res(rq ? rq.result : undefined);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error || new Error('transaction aborted'));
+  });
+  const open = () => dbP || (dbP = (async () => {
+    if (typeof indexedDB === 'undefined' || !indexedDB) throw new Error('no indexedDB');
+    let db = await openRaw();
+    const v = await tx1(db, 'meta', 'readonly', st => st.get('schema'));
+    // a value written to an older shape must never be read back as if it were this one
+    if (!v || v.v !== TRACKER_SCHEMA){
+      db.close();
+      await wipe();
+      db = await openRaw();
+      await tx1(db, 'meta', 'readwrite', st => st.put({ v: TRACKER_SCHEMA }, 'schema'));
+    }
+    return db;
+  })().catch(e => { state.trkDisabled = true; throw e; }));
+  const op = (store, mode, fn) => open().then(db => tx1(db, store, mode, fn));
+  return {
+    meta: k => op('meta', 'readonly', st => st.get(k)),
+    setMeta: (k, v) => op('meta', 'readwrite', st => st.put(v, k)),
+    // the key prefix IS the index: `|` sits above every digit, so type 34 never matches 340
+    rowsFor: (hub, tid) => op('rows', 'readonly', st =>
+      st.getAll(IDBKeyRange.bound(hub + '|' + tid + '|', hub + '|' + tid + '|￿'))),
+    count: () => op('rows', 'readonly', st => st.count()),
+    /* Merge, never overwrite: a weekly file re-covers days a daily already stored, so a
+       record's rows are keyed by (day, side) and the incoming copy wins. */
+    merge: recs => op('rows', 'readwrite', st => {
+      for (const rec of recs){
+        const key = rec.h + '|' + rec.t + '|' + rec.w;
+        const rq = st.get(key);
+        rq.onsuccess = () => {
+          const cur = rq.result;
+          if (!cur || !cur.r){ st.put(rec, key); return; }
+          const fresh = new Set(rec.r.map(x => x.d + '|' + x.b));
+          const merged = cur.r.filter(x => !fresh.has(x.d + '|' + x.b)).concat(rec.r);
+          merged.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.b - b.b));
+          st.put({ h: rec.h, t: rec.t, w: rec.w, r: merged }, key);
+        };
+      }
+      return null;
+    }),
+  };
+})();
+
+/* ---------- parse ----------------------------------------------------------------
+   Semicolon separated, one header line:
+     location_id;region_id;type_id;is_buy_order;has_gone;scanDate;amount;high;low;avg;orderNum;iskValue
+
+   THE `avg` COLUMN IS NOT USED. Measured over week 2026-33 it is BELOW `low` on 49,562 of
+   78,977 Jita rows (62.8%), which would put negative mass in dayReach's lower segment on
+   the majority of real rows. `iskValue / amount` is a genuine volume-weighted price and
+   lands inside [low, high] on 98.0% of Jita rows; the residual is the size of the two-
+   decimal rounding on low and high, so it is clamped and the clamps are counted and
+   shown. `avg` is still STORED, verbatim — nothing published is dropped, it is just not
+   read.
+
+   `has_gone` is stored too. Every dump published today carries only has_gone=0 rows; if a
+   has_gone=1 dump ever appears it must not merge silently with these. */
+function trkParse(text){
+  const packs = new Map();          // 'hub|type|YYYY-WW' -> packed record
+  const days = new Map();           // 'YYYY-MM-DD' -> { hub: rowCount }
+  let kept = 0, clamped = 0;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++){
+    let line = lines[i];
+    if (!line) continue;
+    if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);
+    if (!line || line.charCodeAt(0) < 48 || line.charCodeAt(0) > 57) continue;   // header
+    const f = line.split(';');
+    if (f.length < 12) continue;
+    const h = +f[0];
+    if (!TRACKED_HUBS.has(h)) continue;
+    const t = +f[2], b = +f[3] ? 1 : 0, g = +f[4] ? 1 : 0, d = f[5];
+    const a = +f[6], hi = +f[7], lo = +f[8], av = +f[9], n = +f[10], k = +f[11];
+    if (!(t > 0) || !d) continue;
+    const raw = a > 0 ? k / a : 0;
+    const vw = Math.min(Math.max(raw, lo > 0 ? lo : raw), hi > 0 ? hi : raw);
+    const cl = raw !== vw ? 1 : 0;
+    if (cl) clamped++;
+    const key = h + '|' + t + '|' + trkWeekKey(d);
+    let rec = packs.get(key);
+    if (!rec){ rec = { h, t, w: key.slice(key.lastIndexOf('|') + 1), r: [] }; packs.set(key, rec); }
+    rec.r.push({ d, b, g, a, hi, lo, av, n, k, vw, cl });
+    kept++;
+    let dh = days.get(d);
+    if (!dh){ dh = {}; days.set(d, dh); }
+    dh[h] = (dh[h] || 0) + 1;
+  }
+  return { packs, days, kept, clamped };
+}
+
+/* ---------- transport --------------------------------------------------------------
+   esiFetch's retry shape with the ESI-specific parts removed: this host sends none of
+   ESI's error-limit headers, and a 404 is RETURNED rather than thrown because only the
+   caller knows whether an absent day is the publishing schedule or a fault.
+   No User-Agent and no Accept-Encoding header — both are forbidden names in `fetch`, so
+   writing them would silently do nothing (the browser negotiates gzip on its own). */
+async function a4eFetch(url){
+  for (let attempt = 0; attempt < 3; attempt++){
+    let res;
+    try{ res = await fetch(url); }
+    catch(e){ if (attempt === 2) throw e; await sleep(1500 * (attempt + 1)); continue; }
+    if (res.status === 404 || res.ok) return res;
+    if (res.status >= 500 && attempt < 2){ await sleep(1500 * (attempt + 1)); continue; }
+    throw new Error('tracker HTTP ' + res.status);
+  }
+  throw new Error('tracker retries exhausted');
+}
+
+const trkWindowDays = () => {
+  const v = parseInt($('trkDays') ? $('trkDays').value : '90', 10);
+  return Number.isFinite(v) && v > 0 ? v : 90;
+};
+
+function trkExpected404(day, now){
+  const today = isoDayUTC(now);
+  if (day >= today) return true;                       // never published
+  const h = now.getUTCHours() + now.getUTCMinutes() / 60;
+  return day === trkDayShift(today, -1) && h < TRK_PUBLISH_CUTOFF_UTC_H;
+}
+
+/* What to ask for. A day is missing when it is inside the window, is not already in the
+   coverage manifest, and is not known-gone. Coverage is written only AFTER a day's rows
+   have committed, so a run killed halfway re-fetches only what did not land. */
+function trkPlanJobs(cov, absent, windowDays, now){
+  const today = isoDayUTC(now);
+  const missing = [];
+  for (let i = 1; i <= windowDays; i++){
+    const d = trkDayShift(today, -i);
+    if (cov.days[d]) continue;
+    if (absent[d] === 'retired') continue;             // 'pending' is retried, that is the point
+    missing.push(d);
+  }
+  const byWeek = new Map();
+  for (const d of missing){
+    const wk = trkWeekKey(d);
+    if (!byWeek.has(wk)) byWeek.set(wk, []);
+    byWeek.get(wk).push(d);
+  }
+  const cutoff = trkDayShift(today, -TRK_DAILY_WINDOW_D);
+  const jobs = [];
+  for (const [wk, ds] of byWeek){
+    ds.sort();
+    /* One weekly is 4.76 MB against 0.629 MB a daily (measured), so up to seven dailies
+       are cheaper on the wire — and seven missing days in a week is exactly one weekly.
+       Past the retention window there is no daily left to ask for at any price. */
+    if (ds.length <= 6 && ds.every(d => d >= cutoff))
+      for (const d of ds) jobs.push({ kind: 'daily', day: d, week: wk, days: [d] });
+    else {
+      const y = +wk.slice(0, 4), w = +wk.slice(5);
+      jobs.push({ kind: 'weekly', week: wk, y, w, days: ds });
+    }
+  }
+  jobs.sort((a, b) => (a.days[0] < b.days[0] ? -1 : a.days[0] > b.days[0] ? 1 : 0));
+  return jobs;
+}
+
+/* ---------- the refresh ------------------------------------------------------------
+   Sequential, one file at a time: the parse and the database write dominate the wall
+   clock anyway, so parallel fetching would buy nothing and hammer a volunteer host.
+   Storage happens in slices with a yield between them, so the progress bar keeps
+   painting and the cancel token is re-read between every transaction. */
+async function runTracker(){
+  if (state.trkRunning) return;
+  const btns = [$('btnTrk'), $('btnOrdTrk')].filter(Boolean);
+  const status = $('trkStatus'), bar = $('trkBar'), fill = $('trkFill');
+  state.trkRunning = true;
+  const token = ++state.trkToken;
+  const alive = () => token === state.trkToken;
+  for (const b of btns) b.disabled = true;
+  status.className = ''; status.title = '';
+  const windowDays = trkWindowDays();
+  const t0 = Date.now();
+  let failed = 0, storedRows = 0, clamped = 0;
+  try{
+    status.textContent = 'planning…';
+    bar.hidden = false; fill.classList.remove('ind'); fill.style.width = '0%';
+    fill.classList.add('ind');
+    const cov = (await trkDb.meta('coverage')) || { v: 1, days: {} };
+    const absent = (await trkDb.meta('absent')) || {};
+    if (!alive()) return;
+    const jobs = trkPlanJobs(cov, absent, windowDays, new Date());
+    if (!jobs.length){
+      status.textContent = 'up to date';
+      status.className = 'ok';
+      return;
+    }
+    // refuse a run that cannot fit rather than truncating the window behind the user's back
+    const est = await (navigator.storage && navigator.storage.estimate
+      ? navigator.storage.estimate().catch(() => null) : Promise.resolve(null));
+    const need = jobs.reduce((n, j) => n + j.days.length, 0) * TRK_BYTES_PER_DAY;
+    if (est && est.quota != null && est.quota - (est.usage || 0) < need){
+      status.textContent = 'not enough room · pick a shorter window';
+      status.className = 'err';
+      status.title = `free: ${Math.round((est.quota - (est.usage || 0)) / 1e6)} MB`
+        + `\nneeds: about ${Math.round(need / 1e6)} MB for ${windowDays}d`
+        + '\nfix: choose a shorter window, or clear other site data';
+      return;
+    }
+    fill.classList.remove('ind');
+    let done = 0;
+    for (const job of jobs){
+      if (!alive()) return;
+      status.textContent = job.kind === 'weekly'
+        ? `week ${done + 1}/${jobs.length} · ${job.week}`
+        : `day ${done + 1}/${jobs.length} · ${job.day}`;
+      fill.style.width = Math.round(done / jobs.length * 100) + '%';
+      const url = job.kind === 'weekly' ? trkWeeklyUrl(job.y, job.w) : trkDailyUrl(job.day);
+      let res = null;
+      try{ res = await a4eFetch(url); }
+      catch(_e){ failed++; done++; continue; }
+      if (!alive()) return;
+      if (res.status === 404){
+        /* Three different 404s. Not published yet is the schedule; past the daily
+           retention it is permanent and the week is promoted to its weekly file next
+           run; anything else is a real fault and gets counted. */
+        const stamp = {};
+        let real = 0;
+        const retiredAt = trkDayShift(isoDayUTC(Date.now()), -TRK_DAILY_WINDOW_D);
+        for (const d of job.days){
+          if (job.kind === 'weekly') stamp[d] = 'retired';         // nothing else to ask for
+          else if (trkExpected404(d, new Date())) stamp[d] = 'pending';
+          else if (d < retiredAt) stamp[d] = 'retired';            // the week takes over next run
+          else real++;
+        }
+        /* A weekly is the last resort for the days it covers, and mid-week the file
+           exists with the days published so far — so a 404 on one is a real gap, counted
+           and shown, not silently absorbed. */
+        if (job.kind === 'weekly') real++;
+        Object.assign(absent, stamp);
+        await trkDb.setMeta('absent', absent).catch(() => null);
+        if (real) failed++;
+        done++;
+        continue;
+      }
+      let text;
+      try{ text = await res.text(); }
+      catch(_e){ failed++; done++; continue; }
+      if (!alive()) return;
+      status.textContent = `parsing ${job.kind === 'weekly' ? job.week : job.day}…`;
+      fill.classList.add('ind');
+      const parsed = trkParse(text);
+      clamped += parsed.clamped;
+      fill.classList.remove('ind');
+      const recs = [...parsed.packs.values()];
+      for (let i = 0; i < recs.length; i += TRK_STORE_BATCH){
+        if (!alive()) return;
+        await trkDb.merge(recs.slice(i, i + TRK_STORE_BATCH));
+        status.textContent = `storing ${Math.min(i + TRK_STORE_BATCH, recs.length)}/${recs.length}`;
+        await sleep(0);                    // let the bar paint between transactions
+      }
+      // coverage is written only now, so a run killed mid-file re-fetches that file only
+      for (const [d, hubs] of parsed.days){
+        cov.days[d] = { at: Date.now(), src: (job.kind === 'weekly' ? 'w' : 'd') + job.week, hubs };
+        delete absent[d];
+      }
+      await trkDb.setMeta('coverage', cov).catch(() => null);
+      await trkDb.setMeta('absent', absent).catch(() => null);
+      storedRows += parsed.kept;
+      done++;
+      fill.style.width = Math.round(done / jobs.length * 100) + '%';
+    }
+    if (!alive()) return;
+    const held = Object.keys(cov.days).sort();
+    status.textContent = `${held.length}d · ${fmt.format(storedRows)} rows · ${new Date().toLocaleTimeString()}`
+      + (failed ? ` · ${failed} failed` : '');
+    status.className = failed ? 'err' : 'ok';
+    status.title = 'source: Adam4EVE market order tracker'
+      + `\ndays: ${held.length} held, ${held[0]} to ${held[held.length - 1]}`
+      + '\nhubs: Jita, Amarr, Dodixie, Hek, Rens'
+      + `\ntook: ${Math.round((Date.now() - t0) / 1000)}s`
+      + (clamped ? `\nclamped: ${fmt.format(clamped)} rows to the day band` : '');
+  }catch(e){
+    if (alive()){
+      status.textContent = state.trkDisabled ? 'storage unavailable' : 'tracker error: ' + e.message;
+      status.className = 'err';
+    }
+  }finally{
+    /* Settle BEFORE handing the button back, so "not running" means the numbers on screen
+       are the numbers in the cache. The teardown itself is unconditional either way. */
+    if (token === state.trkToken){
+      try{ await loadTrackerMemo(); rebuild(); ordRecompute(); }
+      catch(_e){ /* the memo has its own fallbacks; the bar must still come down */ }
+    }
+    state.trkRunning = false;
+    for (const b of btns) b.disabled = false;
+    bar.hidden = true;
+    fill.classList.remove('ind'); fill.style.width = '0%';
+  }
+}
+
+/* ---------- the in-memory view the model reads ------------------------------------
+   rebuild() is synchronous and IndexedDB is not, so the rows for the types on screen are
+   pulled into memory first and rebuild() reads only the map. A getAll over one key prefix
+   measures 0.52 ms, so a 250-item hangar costs well under a fifth of a second. */
+const trkHistRow = r => ({
+  // A4E's sell-side rows in the shape ESI history uses, so reachOf, tailOf, histTrend and
+  // histVolOf read them unchanged. `average` is the volume-weighted price, NOT the
+  // published avg column — see trkParse.
+  date: r.d, average: r.vw, highest: r.hi, lowest: r.lo, volume: r.a, orders: r.n,
+});
+
+function trkSeries(recs, days){
+  if (!recs || !recs.length) return null;
+  const cutoff = Date.now() - days * 86400e3;
+  const sell = [], buy = [];
+  let clamped = 0;
+  for (const rec of recs) for (const r of (rec.r || [])){
+    if (Date.parse(r.d) < cutoff) continue;
+    (r.b ? buy : sell).push(trkHistRow(r));
+    if (r.cl) clamped++;
+  }
+  if (!sell.length && !buy.length) return null;
+  const byDate = (a, b) => Date.parse(a.date) - Date.parse(b.date);
+  sell.sort(byDate); buy.sort(byDate);
+  const sellUnitsDay = histVolOf(sell, days) || 0;
+  const buyUnitsDay = histVolOf(buy, days) || 0;
+  const tot = sellUnitsDay + buyUnitsDay;
+  return {
+    sell, buy, sellUnitsDay, buyUnitsDay,
+    capture: tot > 0 ? sellUnitsDay / tot : null,
+    rows: sell.length + buy.length, clamped,
+  };
+}
+
+/* Two of these can be in flight at once — a debounced reload racing a refresh's own —
+   and IndexedDB does not promise they finish in the order they started. The later CALL
+   wins, so a mid-run snapshot can never overwrite the finished one. */
+let trkMemoSeq = 0;
+async function loadTrackerMemo(){
+  const seq = ++trkMemoSeq;
+  const days = trkWindowDays();
+  const cov = await trkDb.meta('coverage').catch(() => null);
+  if (seq !== trkMemoSeq) return;
+  const byKey = new Map();
+  const want = new Map();
+  const h = hub();
+  // a player structure has no tracker coverage: it takes the ESI path, like any type the
+  // tracker does not carry
+  if (h.station && TRACKED_HUBS.has(h.station))
+    for (const e of state.esi.values())
+      if (e && e.typeId != null) want.set(h.station + '|' + e.typeId, [h.station, e.typeId]);
+  for (const o of ((state.orders && state.orders.list) || []))
+    if (TRACKED_HUBS.has(o.locationId) && o.typeId != null)
+      want.set(o.locationId + '|' + o.typeId, [o.locationId, o.typeId]);
+  for (const [k, [station, tid]] of want){
+    const recs = await trkDb.rowsFor(station, tid).catch(() => null);
+    if (seq !== trkMemoSeq) return;
+    byKey.set(k, trkSeries(recs, days));
+  }
+  const held = cov && cov.days ? Object.keys(cov.days) : [];
+  state.trk = { days, byKey, cov, held: held.length, on: held.length > 0 };
+  renderTrackerAge();
+}
+
+// null both when nothing is cached and when this hub/type carries no tracker row — the
+// two are told apart by state.trk.on, and they read differently on screen
+function trkSeriesFor(station, typeId){
+  if (!state.trk || !station || typeId == null) return null;
+  return state.trk.byKey.get(station + '|' + typeId) || null;
+}
+
+/* ---------- the staleness line ---------------------------------------------------- */
+function trkAgeState(){
+  if (state.trkDisabled) return { text: 'storage unavailable', warn: true,
+    title: 'indexedDB: blocked or unavailable in this browser'
+      + '\neffect: volume falls back to ESI regional, both sides' };
+  const cov = state.trk && state.trk.cov;
+  const days = cov && cov.days ? Object.keys(cov.days).sort() : [];
+  // a new user has never fetched anything, and that is not an error
+  if (!days.length) return { text: 'never fetched', warn: false,
+    title: 'source: Adam4EVE market order tracker'
+      + '\nstart: the Refresh volume button'
+      + '\nfirst run: a few minutes' };
+  const win = state.trk.days;
+  const today = isoDayUTC(Date.now());
+  const floor = trkDayShift(today, -win);
+  const held = days.filter(d => d >= floor);
+  const newest = days[days.length - 1];
+  const oldest = held.length ? held[0] : days[0];
+  const span = Math.round((Date.parse(trkDayShift(today, -1)) - Date.parse(oldest)) / 86400e3) + 1;
+  const gaps = Math.max(0, span - held.length);
+  const ageD = Math.round((Date.parse(today) - Date.parse(newest)) / 86400e3);
+  const stale = ageD > TRK_STALE_D;
+  const base = `${held.length}d through ${newest.slice(5)}`;
+  return {
+    // a gap in the middle is a coverage fact, not staleness — it never carries the warning
+    text: base + (stale ? ' · stale' : gaps ? ` · ${gaps} gaps` : ''),
+    warn: stale,
+    title: 'source: Adam4EVE market order tracker'
+      + `\ndays held: ${held.length} of ${win} · ${oldest} to ${newest}`
+      + `\nfetched: ${new Date(cov.days[newest].at).toISOString().slice(0, 16).replace('T', ' ')}`
+      + (gaps ? `\ngaps: ${gaps} days inside the window` : '')
+      + '\nmethod: order books sampled every 10-15 minutes, differenced — an estimate'
+      + '\ncovers: the five hub stations only',
+  };
+}
+
+function renderTrackerAge(){
+  const s = trkAgeState();
+  for (const id of ['trkAge', 'ordTrkAge']){
+    const el = $(id);
+    if (!el) continue;
+    el.textContent = s.text;
+    el.title = s.title;
+    el.style.color = s.warn ? 'var(--red)' : 'var(--amber)';
+  }
+  renderVolSrc();
+}
+
+/* Where the volume numbers came from, in the shape #feeSrc and #relistSrc already use.
+   The ⚑ prefix marks a data source; ⚡ is reserved for the logged-in character. */
+function renderVolSrc(){
+  const box = $('volSrc');
+  if (!box) return;
+  const t = state.trk;
+  const h = hub();
+  const covered = t && t.on && h.station && TRACKED_HUBS.has(h.station);
+  if (covered){
+    const days = Object.keys(t.cov.days).sort();
+    box.textContent = `⚑ volume — Adam4EVE · ${t.days}d through ${days[days.length - 1].slice(5)}`;
+    box.title = 'source: Adam4EVE market order tracker (static.adam4eve.eu)'
+      + '\nmethod: order books sampled every 10-15 minutes, differenced'
+      + '\ncovers: the five hub stations, sell side split from buy side'
+      + '\nprice: volume-weighted from iskValue and amount, clamped to the day band'
+      + '\nrefresh: the Refresh volume button';
+  } else {
+    box.textContent = '⚑ volume — ESI regional · both sides · upper bound';
+    box.title = 'source: ESI market history for this region'
+      + '\nsides: not split — ESI publishes no aggressor side'
+      + '\nstation: not split — the figure pools every station in the region'
+      + (h.station ? '\nfix: Refresh volume to measure the sell side here'
+                   : '\nstructure: the tracker covers the five NPC hubs only');
+  }
+}
 
 function rowFilter(r){
   if (state.filterType !== 'all' && r.strategy !== state.filterType) return false;
@@ -1269,31 +1826,39 @@ function lnGamma(z){
         units is Gamma(j/kappa, lambda(P)/kappa) and the odds of getting there inside what
         is left of the window are a regularized incomplete gamma.
 
-   `lambda(x) = capture x share x volPerDay x reach(x)` — units a day bought at or above x
-   AT MY STATION. Three of those four are measured; `capture` is not, and cannot be from
-   ESI. ESI publishes units traded, not which side was the aggressor, and only a
-   BUYER-initiated trade fills a resting sell order. So capture is the share of volume
-   that was buyer-initiated, it is left at 1, and every number that comes out of here is
-   therefore an UPPER bound, flagged as one and rendered with a "<=". An upper bound is
-   still a decision: an order whose BEST case is under your patience floor is dead, and
-   that is the call this tool exists to make.
+   `lambda(x) = sellUnitsPerDay x reach(x)` — units a day bought FROM sell orders at or
+   above x, AT MY STATION. With a tracker series for this (hub, type) both terms are
+   measured: Adam4EVE differences the order books every 10-15 minutes and publishes, per
+   station and per day, the units bought from sell orders separately from the units sold
+   to buy orders, and only the first kind fills a resting sell order. So the old `capture`
+   guess — the share of volume that was buyer-initiated, left at 1 because ESI does not
+   publish the aggressor side — is gone, and with it the `share` guess for the regional/
+   station split: the tracker is already per station. Those rows produce an ESTIMATE.
 
-   `share` is likewise 1 until the regional/station split is measured, for the same
-   reason and with the same flag. */
-const FILL_CAPTURE = 1;          // unmeasured -> upper bound (see above)
+   Without one, the input is still the ESI regional history, both sides mixed and every
+   station pooled, and the result is still an UPPER bound, flagged as one and rendered
+   with a "<=". An upper bound is still a decision: an order whose BEST case is under your
+   patience floor is dead, and that is the call this tool exists to make. The two are
+   never mixed inside one number and never look alike on screen. */
 const KAPPA_MAX = 1e6;           // a transaction cannot be bigger than the market
 const EU_EXACT_MAX = 32;         // above this, expected units is quadratured, not summed
 
 function fillOutlook(e, comp, price, qty, windowDays, opts){
   opts = opts || {};
   if (!e || !(price > 0) || !(qty > 0) || !(windowDays > 0)) return null;
-  const reach = reachOf(e, price);
-  const volDay = histVolOf(e.hist, opts.histDays || HIT_DAYS);
+  /* The tracker's sell-side rows carry date / average / high / low / volume / orders,
+     which is exactly what tailOf, histTrend, histVolOf and reachOf read, so this is a
+     SHAPE ADAPTER rather than a second implementation of any of them — and the memo
+     fields those helpers cache land on the adapter, not on the ESI entry. */
+  const trk = (opts.tracker && opts.tracker.sell && opts.tracker.sell.length) ? opts.tracker : null;
+  if (trk && !trk._e) trk._e = { hist: trk.sell, typeId: e.typeId };
+  const src = trk ? trk._e : e;
+  const reach = reachOf(src, price);
+  const volDay = trk ? trk.sellUnitsDay : histVolOf(e.hist, opts.histDays || HIT_DAYS);
   if (!reach || !(volDay > 0)) return null;
-  const share = opts.share != null ? opts.share : 1;
-  const scale = FILL_CAPTURE * share * volDay;
+  const scale = volDay;             // no capture constant, no station-share guess
   const lambdaAt = x => {
-    const r = x === price ? reach.R : (reachOf(e, x) || { R: 0 }).R;
+    const r = x === price ? reach.R : (reachOf(src, x) || { R: 0 }).R;
     return scale * r;
   };
   const lambdaP = scale * reach.R;
@@ -1311,15 +1876,35 @@ function fillOutlook(e, comp, price, qty, windowDays, opts){
   if (ceilingBlocked || stuck || T1 >= windowDays){
     return { fillFrac: 0, pAny: 0, pFull: 0, expUnits: 0, expDays: Infinity,
              queue, T1: stuck ? Infinity : T1, lambdaP, reach, volDay,
-             bound: 'upper', capped: ceilingBlocked ? 'ceiling' : 'queue' };
+             bound: trk ? 'estimate' : 'upper', reachSrc: trk ? 'tracker' : 'esi',
+             capture: trk ? trk.capture : null,
+             capped: ceilingBlocked ? 'ceiling' : 'queue' };
   }
 
-  // typical units per transaction, from the order_count ESI already returns
-  let kappa = 1;
+  /* Typical units per transaction, from the order_count ESI already returns.
+
+     MEASURED, and this is why the tracker does NOT get to supply it: A4E's `orderNum`
+     counts observed order-book changes, not transactions. Its maximum over all 279,349
+     rows of week 2026-33 is 155, and liquid items pin at 92-101 — the number of
+     15-minute scans in a day. Tritanium at Jita on 2026-08-10 reports 3,250,944,708 / 95
+     = 34.2 M units per "trade" where ESI's own order_count for The Forge that week gives
+     1.5-6.1 M. So orderNum is a FLOOR on trades and amount/orderNum a CEILING on kappa,
+     and too large a kappa makes the arrival model lumpier and understates partial fills —
+     the opposite of what this work is for. ESI stays primary; the tracker figure is the
+     fallback when there is no ESI history at all, and it is labelled as a ceiling. */
+  let kappa = 1, kappaSrc = 'flat';
   const withN = tailOf(e, HIT_DAYS).filter(h => h.volume > 0 && h.orders > 0);
   if (withN.length){
     const per = withN.map(h => h.volume / h.orders).sort((a, b) => a - b);
     kappa = Math.min(KAPPA_MAX, Math.max(1, per[Math.floor(per.length / 2)]));
+    kappaSrc = 'esi';
+  } else if (trk){
+    const tn = trk.sell.filter(h => h.volume > 0 && h.orders > 0);
+    if (tn.length){
+      const per = tn.map(h => h.volume / h.orders).sort((a, b) => a - b);
+      kappa = Math.min(KAPPA_MAX, Math.max(1, per[Math.floor(per.length / 2)]));
+      kappaSrc = 'tracker-upper';
+    }
   }
   const left = windowDays - T1;
   const rate = lambdaP / kappa;                    // transactions per day paying >= P
@@ -1340,8 +1925,10 @@ function fillOutlook(e, comp, price, qty, windowDays, opts){
     fillFrac: Math.max(0, Math.min(1, expUnits / qty)),
     pAny: pj(1), pFull: pj(qty), expUnits,
     expDays: T1 + qty / lambdaP,
-    queue, T1, lambdaP, kappa, reach, volDay,
-    bound: 'upper', capped: null,
+    queue, T1, lambdaP, kappa, kappaSrc, reach, volDay,
+    bound: trk ? 'estimate' : 'upper', reachSrc: trk ? 'tracker' : 'esi',
+    capture: trk ? trk.capture : null,
+    capped: null,
   };
 }
 
@@ -1480,6 +2067,8 @@ function rebuild(keepChecks = true){
   const histDays = currentHistDays();
   state.patience = $('patRush').checked ? 'rush' : $('patPatient').checked ? 'patient' : 'balanced';
   const pat = PATIENCE[state.patience];
+  // the tracker is per STATION; a player structure has none and takes the ESI path
+  const hubStation = hub().station || null;
 
   const rows = [], unpriced = [];
 
@@ -1502,6 +2091,12 @@ function rebuild(keepChecks = true){
     const bestSell = e.bestSell;
     const hist = histStatOf(e.hist, histDays, histMode);
     const volDay = histVolOf(e.hist, histDays);
+    // measured at THIS station, sell side split from buy side. null when nothing is
+    // cached and when the tracker carries no row here — the two read differently below.
+    const trk = trkSeriesFor(hubStation, e.typeId);
+    const volSell = trk ? trk.sellUnitsDay : null;
+    const volBuy  = trk ? trk.buyUnitsDay : null;
+    const capture = trk ? trk.capture : null;
     const buyDepth = levels.reduce((s, lv) => s + lv.v, 0);
     const sellDepth = e.sellDepth ?? null;
     const margin = (bestBuy != null && bestBuy > 0 && bestSell != null)
@@ -1689,6 +2284,7 @@ function rebuild(keepChecks = true){
     const row = {
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit, typeId: e.typeId ?? null,
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
+      volSell, volBuy, capture, volSrc: trk ? 'tracker' : 'esi',
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
       fillDays, fillChance, perSlot, trendPctWk, dir, pctRank, brokerEffPct,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
@@ -1757,6 +2353,24 @@ function syncControls(){
 const PLAN_LABEL = { imm: 'INSTANT', ord: 'LIST', pat: 'LIST-PATIENT', split: 'SPLIT' };
 const PLAN_CLASS = { imm: 'imm', ord: 'ord', pat: 'pat', split: 'split' };
 const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+/* THREE states the volume columns must never blur into one another:
+     nothing cached      -> `—`, tooltip points at the button
+     cached, no row here -> `—`, tooltip says the tracker does not carry this pair
+     a measured zero     -> `0`, which is a checkable statement about the data
+   `—` for a missing value and a digit for a measured one is the same rule fmtIsk uses. */
+function volTip(r, side){
+  if (r.volSell == null)
+    return (state.trk && state.trk.on) ? 'no tracker row at this hub'
+                                       : 'no tracker data — Refresh volume';
+  const days = state.trk.days;
+  const u = side === 'sell' ? r.volSell : r.volBuy;
+  return `${side} side: ${fmt.format(Math.round(u * days))} u over ${days}d`
+    + `\nstation: ${hub().label}`;
+}
+const captureTip = r => r.capture == null
+  ? ((state.trk && state.trk.on) ? 'no tracker row at this hub' : 'no tracker data — Refresh volume')
+  : `sell side: ${Math.round(r.capture * 100)}% of units traded`
+    + `\nbuy side: ${100 - Math.round(r.capture * 100)}% — no help to a sell order`;
 const fmtIsk = n => n == null ? '—' : fmt.format(Math.round(n * 100) / 100);
 function fmtExport(n){
   let s = n.toFixed(2).replace(/\.?0+$/, '');
@@ -2183,6 +2797,12 @@ function render(){
       ['num' + signCls(r.sellVsHist), r.sellVsHist == null ? '—' : (r.sellVsHist > 0 ? '+' : '') + r.sellVsHist.toFixed(1) + '%', r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2)],
       ['num', r.volDay == null ? '—' : fmt.format(r.volDay),
        r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100)],
+      ['num', r.volSell == null ? '—' : fmt.format(r.volSell),
+       r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), volTip(r, 'sell')],
+      ['num', r.volBuy == null ? '—' : fmt.format(r.volBuy),
+       r.volBuy == null ? '' : String(Math.round(r.volBuy * 100) / 100), volTip(r, 'buy')],
+      ['num', r.capture == null ? '—' : Math.round(r.capture * 100) + '%',
+       r.capture == null ? '' : r.capture.toFixed(4), captureTip(r)],
       ['num', r.buyDepth == null ? '—' : fmt.format(r.buyDepth), r.buyDepth == null ? '' : String(r.buyDepth)],
       ['num', r.sellDepth == null ? '—' : fmt.format(r.sellDepth), r.sellDepth == null ? '' : String(r.sellDepth)],
     ]){
@@ -2389,7 +3009,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Buy depth','Sell depth','Plan','Import price ISK/u','Fill est. days','Chance %','ISK/slot-day','Net instant ISK','Net listing plan ISK','Expected net ISK','Order Δ ISK','Trend %/wk','Pct rank 60d','Undercut %/day','Broker at risk ISK','Instant leg qty','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Sell u/d','Buy u/d','Sell share','Vol source','Buy depth','Sell depth','Plan','Import price ISK/u','Fill est. days','Chance %','ISK/slot-day','Net instant ISK','Net listing plan ISK','Expected net ISK','Order Δ ISK','Trend %/wk','Pct rank 60d','Undercut %/day','Broker at risk ISK','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of rowsForExport()){
     lines.push([
@@ -2398,7 +3018,9 @@ function fullTsv(){
       r.margin != null ? r.margin.toFixed(2) : '',
       r.hist != null ? r.hist.toFixed(2) : '',
       r.sellVsHist != null ? r.sellVsHist.toFixed(2) : '',
-      r.volDay ?? '', r.buyDepth ?? '', r.sellDepth ?? '',
+      r.volDay ?? '', r.volSell ?? '', r.volBuy ?? '',
+      r.capture != null ? r.capture.toFixed(4) : '', r.volSrc || '',
+      r.buyDepth ?? '', r.sellDepth ?? '',
       PLAN_LABEL[r.strategy],
       r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
       r.fillDays != null ? r.fillDays.toFixed(2) : '',
@@ -2418,7 +3040,7 @@ function fullTsv(){
     ].join('\t'));
   }
   for (const u of state.unpriced)
-    lines.push([u.name, u.qty].concat(new Array(8).fill(''), ['UNPRICED'], new Array(13).fill(''), [u.reason, 'no']).join('\t'));
+    lines.push([u.name, u.qty].concat(new Array(12).fill(''), ['UNPRICED'], new Array(13).fill(''), [u.reason, 'no']).join('\t'));
   return lines.join('\n');
 }
 
@@ -2753,6 +3375,7 @@ async function runEsi(){
     await Promise.all(workers);
     if (token !== state.esiToken) return;
     state.fetchedHist = withHist;
+    await loadTrackerMemo();   // new type ids on the page: pull their tracker rows in
     status.textContent = `${h.label} · ${total} items · ${new Date().toLocaleTimeString()}` +
       (failed ? ` · ${failed} failed` : '') +
       (structCapped ? ' · book cut at 100 pages' : '') +
@@ -2943,6 +3566,7 @@ async function runOrders(){
     persistOrders();
     await resolveAdvBroker();
     resolveOrderSkills();
+    await loadTrackerMemo();   // rebuild()/computeDiag() are synchronous; IndexedDB is not
     await diagnoseOrders();
     const failed = report.filter(r => r.error).length;
     const stalled = Object.values(state.orders.diag).filter(x => x && x.stalled).length;
@@ -3510,6 +4134,11 @@ function diagnoseOne(o, cfg){
   d.trendPctWk = e ? histTrend(e) : null;
   d.dir = trendClass(d.trendPctWk);
   d.volDay = e ? histVolOf(e.hist, cfg.histDays) : null;
+  // measured at THIS station, both sides kept apart. Reported, not yet ranked with.
+  const trk = trkSeriesFor(TRACKED_HUBS.has(o.locationId) ? o.locationId : null, o.typeId);
+  d.volSell = trk ? trk.sellUnitsDay : null;
+  d.volBuy  = trk ? trk.buyUnitsDay : null;
+  d.capture = trk ? trk.capture : null;
   const book = state.ordBooks ? state.ordBooks.get(o.locationId + ':' + o.typeId) : null;
   if (!book){
     d.why = d.note
@@ -3645,10 +4274,22 @@ function ordRecompute(){
 const VERDICT_LABEL = { hold: 'HOLD', reprice: 'REPRICE', dump: 'CANCEL & DUMP' };
 const VERDICT_CLASS = { hold: 'hold', reprice: 'reprice', dump: 'dump' };
 
+function ordVolTip(r, side){
+  if (r.volSell == null)
+    return !TRACKED_HUBS.has(r.locationId) ? 'tracker: the five NPC hubs only'
+      : (state.trk && state.trk.on) ? 'no tracker row at this hub'
+      : 'no tracker data — Refresh volume';
+  const days = state.trk.days;
+  if (side === 'share') return `sell side: ${Math.round(r.capture * 100)}% of units traded`
+    + `\nbuy side: ${100 - Math.round(r.capture * 100)}% — no help to a sell order`;
+  return `sell side: ${fmt.format(Math.round(r.volSell * days))} u over ${days}d`
+    + `\nbuy side: ${fmt.format(Math.round(r.volBuy * days))} u over ${days}d`;
+}
+
 function ordDiagCells(tr, r, cell){
   if (r.isBuy){
     const t = 'buy order: not triaged — the sell-side arithmetic does not apply';
-    for (let i = 0; i < 5; i++) cell('num', '—', '', t);
+    for (let i = 0; i < 7; i++) cell('num', '—', '', t);
     cell('', '—', '', t);
     cell('', '—', '', t);
     return;
@@ -3665,6 +4306,10 @@ function ordDiagCells(tr, r, cell){
     r.daysToFill == null ? 'no queue, or no traded volume to divide by'
       : `queue: ${fmt.format(Math.round(r.queueAhead))} u ahead`
         + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)`);
+  cell('num', r.volSell == null ? '—' : fmt.format(r.volSell),
+    r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), ordVolTip(r, 'sell'));
+  cell('num', r.capture == null ? '—' : Math.round(r.capture * 100) + '%',
+    r.capture == null ? '' : r.capture.toFixed(4), ordVolTip(r, 'share'));
   cell('num' + (r.trendPctWk > 0 ? ' pos' : r.trendPctWk < 0 ? ' neg' : ''),
     r.trendPctWk == null ? '—' : pctSigned(r.trendPctWk),
     r.trendPctWk == null ? '' : r.trendPctWk.toFixed(2),
@@ -3807,7 +4452,7 @@ function renderOrdTriageStats(box, sells, mk){
 function ordTsv(){
   const head = ['Character','Item','Type id','Your price','Qty left','Qty total','Location','Location id',
     'Age d','Days left','ISK tied up','Queue ahead','vs best %','Best competing sell','Fill est. d',
-    'Vol/day','Trend %/wk','Chance %','Window d','Stalled','Stalled reasons','Verdict',
+    'Vol/day','Sell u/d','Buy u/d','Sell share','Trend %/wk','Chance %','Window d','Stalled','Stalled reasons','Verdict',
     'Hold ISK','Reprice ISK','Dump ISK','Reprice price','Relist fee ISK','Side'];
   const num = (v, dp) => v == null ? '' : Number(v).toFixed(dp);
   const lines = [head.join('\t')];
@@ -3822,7 +4467,9 @@ function ordTsv(){
       num(r.ageDays, 2), num(r.daysLeft, 2), num(r.iskTied, 2),
       r.queueAhead == null ? '' : Math.round(r.queueAhead),
       num(r.aboveBestPct, 2), num(r.bestOther, 2), num(r.daysToFill, 2),
-      r.volDay == null ? '' : r.volDay, num(r.trendPctWk, 2),
+      r.volDay == null ? '' : r.volDay,
+      r.volSell == null ? '' : r.volSell, r.volBuy == null ? '' : r.volBuy,
+      num(r.capture, 4), num(r.trendPctWk, 2),
       r.chance == null ? '' : (r.chance * 100).toFixed(1),
       r.window == null ? '' : r.window,
       r.isBuy ? '' : (r.stalled ? 'yes' : 'no'),
@@ -3915,7 +4562,7 @@ function persist(){
       undercut: $('undercut').checked, decSep: $('decSep').value, topN: $('topN').value,
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcHist').checked ? 'hist' : 'sell', histMode: $('histMode').value, histDays: $('histDays').value,
-      patience: state.patience,
+      patience: state.patience, trkDays: $('trkDays').value,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
       ticked,
@@ -3966,6 +4613,8 @@ function restore(){
     state.ordFilterVerdict = saved.ordFilterVerdict;
     $('ordFltVerdict').value = state.ordFilterVerdict;
   }
+  if (saved.trkDays && [...$('trkDays').options].some(o => o.value === String(saved.trkDays)))
+    $('trkDays').value = String(saved.trkDays);
   if (PATIENCE[saved.patience]) state.patience = saved.patience;
   $('pat' + state.patience[0].toUpperCase() + state.patience.slice(1)).checked = true;
   state.savedTicked = new Set(saved.ticked || []);
@@ -3974,6 +4623,18 @@ function restore(){
 }
 
 /* ---------- wiring ---------- */
+/* rebuild() is synchronous and IndexedDB is not, so anything that changes WHICH (hub,
+   type) pairs are on screen reloads the memo first and rebuilds after. Debounced because
+   the inventory box fires this on every keystroke. */
+let trkMemoTimer = null;
+function trkMemoSoon(){
+  clearTimeout(trkMemoTimer);
+  trkMemoTimer = setTimeout(async () => {
+    await loadTrackerMemo();
+    rebuild();
+    ordRecompute();
+  }, 250);
+}
 renderMarketOptions();   // also draws the fee-source line for the selected market
 
 // write the owner-set broker rate onto the structure's central record the moment it is
@@ -4016,7 +4677,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
   } else renderFeeSrc();
 });
 
-$('inv').addEventListener('input', () => rebuild());
+$('inv').addEventListener('input', () => { rebuild(); trkMemoSoon(); });
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'histMode', 'histDays',
                   'patRush', 'patBalanced', 'patPatient'])
   // patience, fees and the history window re-rank BOTH modes locally, with no refetch
@@ -4036,6 +4697,7 @@ $('market').addEventListener('change', () => {
   $('esiStatus').textContent = 'market changed — fetch prices again';
   $('esiStatus').className = '';
   rebuild();
+  trkMemoSoon();          // same cache, different station — no refetch, just a re-point
 });
 $('histOn').addEventListener('change', () => { syncControls(); persist(); });
 $('srcHistEcho').addEventListener('click', () => $('histMode').focus());
@@ -4048,10 +4710,22 @@ $('btnClear').addEventListener('click', () => {
   $('inv').value = '';
   state.esi.clear();
   state.esiToken++;               // cancel any in-flight fetch
+  state.trkToken++;               // ...including a traded-volume refresh
   $('esiStatus').textContent = '';
   rebuild(false);
 });
 $('btnEsi').addEventListener('click', runEsi);
+$('btnTrk').addEventListener('click', runTracker);
+$('btnOrdTrk').addEventListener('click', runTracker);
+/* Shrinking the window does NOT delete rows: they cost nothing to keep and re-downloading
+   them is the expensive part, so it only narrows what the model reads. Growing it makes
+   the extra weeks missing on the next refresh. */
+$('trkDays').addEventListener('change', async () => {
+  persist();
+  await loadTrackerMemo();
+  rebuild();
+  ordRecompute();
+});
 
 /* The three selection buttons obey one rule: a bulk button SETS the import list, it never
    adds to it. Whatever it does not tick it unticks — everywhere, including rows a filter
@@ -4167,6 +4841,10 @@ if (state.orders.fetched){
 if (!restore()) rebuild(false);   // renders the empty state and syncs controls on first run
 applyMode();
 renderOrders();
+/* The tracker line is drawn from `never fetched` before the database answers, so a new
+   user with no cache and no network sees the page it has always been. */
+renderTrackerAge();
+loadTrackerMemo().then(() => { rebuild(); ordRecompute(); }).catch(() => renderTrackerAge());
 // the relist % needs Advanced Broker Relations, and the box is shown before any fetch
 if (window.EveAuth) EveAuth.ready.then(() => { resolveAdvBroker(); resolveOrderSkills(); }).catch(() => {});
 

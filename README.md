@@ -381,6 +381,86 @@ so instead of drawing an empty box.
   someone undercutting you by 0.01 ISK five minutes after you list.
 - Price history is per **region**; ESI has none per station or per structure.
 
+## Traded volume, split by side (Adam4EVE)
+
+ESI publishes how many units changed hands. It does not publish which side was the
+aggressor — and only a trade that hits a **sell** order fills a sell order you left up.
+That gap was the biggest guess in the fill model: `lambda` used to be
+`capture × share × regional volume × reach(price)` with `capture` and `share` both pinned
+at 1, so every probability that came out of it was an upper bound, rendered as such.
+
+[Adam4EVE](https://adam4eve.eu) samples the five hub order books every 10–15 minutes and
+differences them, then publishes one CSV per day (and one per ISO week) with, **per
+station and per day**, the units bought *from sell orders* separately from the units sold
+*to buy orders*.
+
+**It is fetched by your browser, not baked into this page.** Press **Refresh volume**;
+files come from `static.adam4eve.eu` (public, no login, permissive CORS) one at a time,
+are parsed locally and stored in IndexedDB under `eveHelperTracker`. Backfill uses weekly
+files, catch-up uses daily ones — the host retires dailies at about 16 days, so anything
+older only exists as a week. Nothing is ever downloaded twice: a coverage manifest records
+each day *after* its rows have committed, so a run you kill halfway costs only the file it
+was on.
+
+| Column | What it is |
+| --- | --- |
+| **Vol/day** | ESI, regional, both sides pooled — unchanged, still the Fill est. denominator |
+| **Sell u/d** | units a day bought **from sell orders** at this station |
+| **Buy u/d** | units a day sold **to buy orders** at this station |
+| **Sell share** | `Sell u/d ÷ (Sell u/d + Buy u/d)` |
+
+Sell share is the number this exists to produce, and it is why a single constant could
+never have worked. Measured over week 2026-33 at Jita, across 2,325 items that moved more
+than 1,000 units: p5 0.00 · p25 0.25 · **median 0.65** · p75 0.85 · p95 0.99. Tritanium is
+0.83; type 62516 is 0.23. On that last one four fifths of the "volume" is people selling
+into buy orders and is no help whatsoever to an order you leave up.
+
+Three states, and they deliberately do not look alike:
+
+| On screen | Means |
+| --- | --- |
+| `—`, tooltip *no tracker data* | nothing cached — press the button |
+| `—`, tooltip *no tracker row at this hub* | cached, and this item does not trade here |
+| `0` | measured, and nothing hit a sell order all window |
+
+**Honest about what it is.** A differenced sample is not a trade log: it is good on slow
+markets, weaker on fast ones, and it covers the five NPC hubs only. A player structure has
+no coverage at all and keeps the ESI numbers. Every place the figure reaches the screen —
+column tooltips, the `⚑ volume` provenance line, the staleness line — says so.
+
+Two details worth knowing, both measured rather than assumed:
+
+- **The published `avg` column is not used.** Over week 2026-33 it sits *below* that day's
+  `low` on 62.8% of Jita rows, which would put negative mass in the price density the fill
+  model integrates. `iskValue ÷ amount` is a real volume-weighted price and lands inside
+  `[low, high]` on 98% of rows; the residual is the size of the 2-decimal rounding on the
+  band, so it is clamped there and the clamps are counted on the provenance tooltip. The
+  `avg` column is still stored verbatim — nothing published is thrown away.
+- **`orderNum` is not a trade count.** Its maximum across all 279,349 rows of week 2026-33
+  is 155, and liquid items pin at 92–101 — the number of 15-minute scans in a day. So it
+  is a floor on trades, and `amount ÷ orderNum` a ceiling on units-per-trade (Tritanium at
+  Jita reads 34.2 M u/trade against ESI's 1.5–6.1 M). ESI's `order_count` therefore stays
+  the primary source for that figure; the tracker's is the fallback when there is no ESI
+  history at all, and it is labelled as the ceiling it is.
+
+**Staleness.** The line beside the button reads `never fetched` until you press it, then
+`90d through 08-20`, plus ` · n gaps` for holes inside the window and ` · stale` when the
+newest day held is more than two days old. Two days, not one: A4E publishes yesterday's
+file at 03:32–03:38 UTC, so a one-day threshold would cry stale for three and a half hours
+every night with nothing to fetch. A 404 before that cutoff is the schedule and is not
+reported as a fault; a 404 on a published, still-retained day is, and lands in the status
+line as ` · n failed`.
+
+**Storage.** Rows are packed one record per (hub, type, ISO week) — measured 22× faster to
+write than one record per row — but nothing is aggregated: every day, every side and every
+published column survives, so the model can change later without re-downloading anything.
+Budget about 1.5 MB per day held; the run checks `navigator.storage.estimate()` first and
+refuses rather than truncating your window behind your back. Shrinking the window does not
+delete anything, it only narrows what the model reads.
+
+With no cache and no network the page is exactly the page it was before any of this
+existed: the ESI regional figure, both sides pooled, and fill odds flagged as upper bounds.
+
 ## Player structure markets
 
 Sell where your alliance actually trades: the market selector's **+ add structure…**

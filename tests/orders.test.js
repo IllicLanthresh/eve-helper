@@ -835,7 +835,13 @@ H.run('orders', async () => {
       shown: document.querySelectorAll('#ordBody tr[data-order-id]').length,
       count: document.getElementById('ordCount').textContent,
       lines: ordTsv().split('\n').length - 1,
-      names: ordTsv().split('\n').slice(1).map(l => l.split('\t')[21]),
+      // by header NAME: a hard-coded column index silently reads the wrong field the
+      // moment a column is inserted anywhere to its left
+      names: (() => {
+        const rows = ordTsv().split('\n');
+        const at = rows[0].split('\t').indexOf('Verdict');
+        return rows.slice(1).map(l => l.split('\t')[at]);
+      })(),
     }));
     check('the verdict filter really narrowed the table',
       filteredTsv.shown > 0 && /\d+\/\d+ orders/.test(filteredTsv.count), filteredTsv.count);
