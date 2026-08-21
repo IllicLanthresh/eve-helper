@@ -150,9 +150,7 @@
   .badge.reprice{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
   .badge.dump{background:#3a1a1e;color:var(--red);border:1px solid #6b2f36}
   .badge.buy{background:#12303c;color:var(--cyan);border:1px solid #23566b}
-  tbody tr.stalled td:first-child{box-shadow:inset 3px 0 0 var(--red)}
-  #ordTbl td.stalledcell{max-width:300px;white-space:normal}
-  #ordTbl td.stalledcell .flag{line-height:1.5;margin-top:2px}
+  tbody tr.dumpv td:first-child{box-shadow:inset 3px 0 0 var(--red)}
   tbody tr.buyrow td{background:#0f1620}
   /* patience: a segmented control, because it gets flipped constantly */
   .seg{display:inline-flex;border:1px solid #2e3b52;border-radius:8px;overflow:hidden;background:var(--panel2)}
@@ -208,7 +206,7 @@
   <div class="subhead orders-only">open orders per character · queue · fill odds · trend → HOLD / REPRICE / CANCEL &amp; DUMP<details
     class="help"><summary>?</summary><span class="helpbody">Every logged-in character's open orders from ESI, judged with the Sell mode's
     numbers: units queued ahead of you at your price, days for that queue to clear, the item's trend, and the odds of
-    filling. Stalled orders get a verdict; the arithmetic is on the badge's tooltip. Long-form reference: README.</span></details></div>
+    filling. Every order gets a verdict; the arithmetic is on the badge's tooltip. Long-form reference: README.</span></details></div>
   <div class="rowline" id="modeRow">
     <span class="seg" role="group" aria-label="page mode">
       <button id="modeSell" type="button" aria-pressed="true"
@@ -476,9 +474,8 @@
   <h2>2 · Triage</h2>
   <div class="rowline" style="margin-top:0">
     <input id="ordFilter" type="text" placeholder="item, location or character…" style="width:280px">
-    <select id="ordFltVerdict" style="width:180px" title="narrow the table to one verdict, or to everything the triage flagged">
+    <select id="ordFltVerdict" style="width:180px" title="narrow the table to one verdict">
       <option value="all">all orders</option>
-      <option value="stalled">stalled only</option>
       <option value="reprice">REPRICE only</option>
       <option value="dump">CANCEL &amp; DUMP only</option>
       <option value="hold">HOLD only</option>
@@ -528,7 +525,6 @@
         <th data-key="capture" class="num" title="share of traded units that hit sell orders&#10;22%: most volume is dumping into buy orders&#10;measured at this station over the days held">Sell share</th>
         <th data-key="trendPctWk" class="num" title="Theil–Sen slope, %/week&#10;same trend the Sell mode ranks with">Trend %/wk</th>
         <th data-key="chance" class="num" title="share of the units left on this order expected to sell before expiry&#10;the queue ahead drains first, then buyers paying your price arrive&#10;≤ marks an upper bound: ESI regional volume, both sides pooled">Fill %</th>
-        <th data-key="stalledIsk" title="stalled: odds under the floor, or the queue outlasts the order, or above best sell on a sliding market&#10;sorts by ISK frozen in stalled orders">Stalled?</th>
         <th data-key="verdict" title="hold / reprice / cancel &amp; dump · hover a badge for the arithmetic">Verdict</th>
         <th title="open the item's market window in the client that owns the order&#10;reprice rows also put the new price on the clipboard&#10;needs: esi-ui.open_window.v1">↗</th>
       </tr></thead>
@@ -557,9 +553,9 @@
       <li><b>Chance %</b> — the Sell mode's trend-adjusted hit rate: share of past windows whose daily high
           reached your price, each past day carried to today's level at the item's own trend, then tempered
           by the queue. Window = your patience or the days left on the order, whichever is shorter.</li>
-      <li><b>Stalled</b> fires on any of: chance under the patience floor · the queue at your price cannot
+      <li><b>What is working against an order</b> shows as a chip on its name, on any of: chance under the patience floor · the queue at your price cannot
           clear before expiry · you sit above the best sell on a falling market, where the gap only widens.
-          The Stalled cell's chips say which; hover one for its numbers.</li>
+          Hover a chip for its numbers. It is evidence, not a second verdict.</li>
       <li><b>Verdicts</b> — three futures over the days left, all net of sales tax. <b>HOLD</b> =
           <code>chance × (units × your price) + (1 − chance) × (dump at the end, carried by the trend)</code> ·
           <b>REPRICE</b> = the same at the competitive price, minus the relist fee · <b>CANCEL &amp; DUMP</b> =
@@ -910,7 +906,7 @@ const state = {
   // --- "My orders" mode (the block near the bottom of this script) ---
   mode: 'sell',            // sell | orders — a pure view swap over this same state
   orders: { list: [], chars: [], names: {}, locs: {}, diag: {}, fetched: null, running: false },
-  ordSortKey: 'stalledIsk', ordSortDir: -1,   // ISK frozen in stalled orders, worst first
+  ordSortKey: 'iskTied', ordSortDir: -1,      // most ISK on the market first
   ordShowBuy: false, ordFilter: '', ordFilterVerdict: 'all',
   // --- the Adam4EVE traded-volume cache (the block below) ---
   trkRunning: false,
@@ -2506,7 +2502,7 @@ function rebuild(keepChecks = true){
       ttl:`list price: ${fmtIsk(L)}\nbest sell: ${fmtIsk(bestSell)}`});
     if (bestBuy == null) flags.push({t:'no buy', cls:'info', ttl:'buy book: empty at this hub'});
     if (bestSell == null) flags.push({t:'no sell', cls:'info', ttl:'sell book: empty at this hub'});
-    /* PREVENTION — the other half of the stalled-order problem. Listing a second order
+    /* PREVENTION — the other half of the dead-order problem. Listing a second order
        for something you already have up at this very market means competing with
        yourself: the two orders sit in one queue, the older one is usually the one in
        front, and you pay a second broker fee for the privilege. The "My orders" mode's
@@ -3959,11 +3955,12 @@ async function runOrders(){
     await loadTrackerMemo();   // rebuild()/computeDiag() are synchronous; the row reads are not
     await diagnoseOrders();
     const failed = report.filter(r => r.error).length;
-    const stalled = Object.values(state.orders.diag).filter(x => x && x.stalled).length;
-    status.textContent = `${rows.length} orders · ${stalled} stalled · ${new Date().toLocaleTimeString()}`
+    const acting = Object.values(state.orders.diag)
+      .filter(x => x && (x.verdict === 'reprice' || x.verdict === 'dump')).length;
+    status.textContent = `${rows.length} orders · ${acting} to act on · ${new Date().toLocaleTimeString()}`
       + (failed ? ` · ${failed} char${failed > 1 ? 's' : ''} failed` : '')
       + (state.ordFailedBooks ? ` · ${state.ordFailedBooks} book${state.ordFailedBooks > 1 ? 's' : ''} missing` : '');
-    status.title = `open orders: ${rows.length}\nstalled: ${stalled}`
+    status.title = `open orders: ${rows.length}\nverdict is reprice or cancel: ${acting}`
       + (failed ? `\ncharacters that failed: ${failed}` : '')
       + (state.ordFailedBooks ? `\norder books unavailable: ${state.ordFailedBooks}` : '');
     status.className = failed ? 'err' : 'ok';
@@ -3994,7 +3991,6 @@ function ordRows(){
       locKind: (loc && loc.kind) || null,
       ageDays, daysLeft,
       iskTied: o.price * o.volumeRemain,
-      stalledIsk: (d && d.stalled) ? o.price * o.volumeRemain : 0,
     });
   });
 }
@@ -4003,7 +3999,7 @@ function ordFilterMatch(r){
   const v = state.ordFilterVerdict;
   // a buy order is never triaged, so a verdict filter has nothing to say about one and
   // hides it rather than pretending it passed
-  if (v !== 'all' && (r.isBuy || (v === 'stalled' ? !r.stalled : r.verdict !== v))) return false;
+  if (v !== 'all' && (r.isBuy || r.verdict !== v)) return false;
   const q = state.ordFilter;
   if (!q) return true;
   return [r.name, r.locName, r.charName, String(r.locationId), String(r.typeId)]
@@ -4166,7 +4162,7 @@ function ordRowEl(r){
   const tr = document.createElement('tr');
   tr.dataset.orderId = String(r.orderId);
   if (r.isBuy) tr.classList.add('buyrow');
-  if (r.stalled) tr.classList.add('stalled');
+  if (r.verdict === 'dump') tr.classList.add('dumpv');
   const cell = (cls, text, copy, title) => {
     const td = document.createElement('td');
     td.className = cls; td.textContent = text;
@@ -4179,6 +4175,18 @@ function ordRowEl(r){
   const nameTd = cell('name', r.name || ('type ' + r.typeId), r.name || '',
     r.name ? '' : 'ESI did not resolve this type id');
   prependTypeIcon(nameTd, r.typeId, r.name);
+  /* What is working against this order — the odds under the floor, a queue that
+     outlives the order, a widening gap to the best sell. These used to be a
+     second verdict column of their own, which put a red "yes" next to a HOLD and
+     left the tool arguing with itself. They are evidence, so they sit on the
+     name with the other warnings, exactly as they do in Sell mode. */
+  for (const rs of r.reasons || []){
+    const chip = document.createElement('span');
+    chip.className = 'flag warn';
+    chip.textContent = rs.t;
+    chip.title = rs.ttl;
+    nameTd.appendChild(chip);
+  }
   if (r.isBuy){
     const b = document.createElement('span');
     b.className = 'badge buy'; b.style.marginLeft = '6px'; b.textContent = 'BUY';
@@ -4365,7 +4373,7 @@ function syncOrdPatience(){
     b.setAttribute('aria-pressed', String(b.dataset.pat === state.patience));
   $('ordPatNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
   $('ordPatNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
-    + '\nunder the floor: the order counts as stalled';
+    + '\nunder the floor: that option is not offered';
 }
 
 /* ---------- the diagnosis: fetch phase ---------------------------------------------
@@ -4452,7 +4460,7 @@ async function diagnoseOrders(){
 }
 
 /* ---------- the diagnosis: compute phase (no network, so it re-runs on any control) --- */
-// a listing this likely to fill is not "stalled" whatever the trend is doing
+// a listing this likely to fill needs no warning, whatever the trend is doing
 const ORD_COMFORT_CHANCE = 0.9;
 
 // the pseudo-entry the decision-layer helpers memoize on (_asc/_trend/_hit live here)
@@ -4627,13 +4635,12 @@ function diagnoseOne(o, cfg){
     d.reasons.push({ t: `+${d.aboveBestPct.toFixed(1)}%▼`,
       ttl: `above best sell: +${d.aboveBestPct.toFixed(1)}%`
         + `\ntrend: ${pctSigned(d.trendPctWk)}/wk\nthe gap only widens` });
-  d.stalled = d.reasons.length > 0;
 
   /* THE FLOOR IS A GATE, not a decoration. The Sell mode has always refused to recommend
      a listing whose expected fill is under the patience mode's floor — the fee is spent
      up front on the whole listing, and under the floor it buys a fraction of a sale. An
      order already up is the same bet with the fee already sunk, so the same refusal
-     applies: an order flagged stalled for its odds cannot also be told to sit there. The
+     applies: an order whose odds are under the floor cannot also be told to sit there. The
      give-up branch is what made that possible — with a zero fill, holding is worth the
      stack dumped at the END of the window, and on any market drifting up that is more
      ISK than dumping today. Score alone keeps a dead order up forever.
@@ -4694,7 +4701,7 @@ function verdictWhy(o, d, cfg){
     + (d.kappaCapped ? ' · trade size clamped to the window' : ''));
   if (d.floored && d.floored.length)
     out.push(`floor: ${d.floored.join(' · ')} under ${pc(cfg.pat.minFill)} ("${cfg.pat.label}") · not offered`);
-  if (d.stalled) out.push('stalled: ' + d.reasons.map(r => r.t).join(' · '));
+  if (d.reasons.length) out.push('against it: ' + d.reasons.map(r => r.t).join(' · '));
   return out.join('\n');
 }
 
@@ -4726,8 +4733,7 @@ function ordDiagCells(tr, r, cell){
     const t = 'buy order: not triaged — the sell-side arithmetic does not apply';
     // queue · vs best · fill est. · sell u/d · buy u/d · sell share · trend · chance
     for (let i = 0; i < 8; i++) cell('num', '—', '', t);
-    cell('', '—', '', t);
-    cell('', '—', '', t);
+    cell('', '—', '', t);          // verdict
     return;
   }
   cell('num', r.queueAhead == null ? '—' : fmt.format(Math.round(r.queueAhead)),
@@ -4758,25 +4764,6 @@ function ordDiagCells(tr, r, cell){
       : `Theil–Sen slope over 30d\ndirection: ${r.dir}`);
   cell('num', pcBound(r.chance, r.bound),
     r.chance == null ? '' : (r.chance * 100).toFixed(1), r.why || '');
-  const st = cell('stalledcell', r.chance == null && !r.stalled ? '—' : (r.stalled ? 'yes' : 'no'),
-    '', r.stalled ? '' : (r.why || ''));
-  if (r.stalled){
-    st.textContent = '';
-    const b = document.createElement('b');
-    b.style.color = 'var(--red)';
-    b.textContent = 'yes';
-    const s = document.createElement('span');
-    s.style.display = 'block';
-    // one chip per reason: the code on screen, its numbers on hover
-    for (const rs of r.reasons){
-      const chip = document.createElement('span');
-      chip.className = 'flag warn';
-      chip.textContent = rs.t;
-      chip.title = rs.ttl;
-      s.appendChild(chip);
-    }
-    st.append(b, s);
-  }
   const vd = cell('', '', '', r.why || '');
   if (r.verdict){
     const badge = document.createElement('span');
@@ -4875,14 +4862,18 @@ function ordSparkCell(r){
 }
 
 function renderOrdTriageStats(box, sells, mk){
-  const stalled = sells.filter(r => r.stalled);
-  if (!stalled.length && !sells.some(r => r.verdict)) return;
-  const frozen = stalled.reduce((t, r) => t + r.iskTied, 0);
-  const recover = stalled.reduce((t, r) => t + (r.dumpNow || 0), 0);
-  mk('stalled', `${stalled.length} order${stalled.length === 1 ? '' : 's'} · ${fmtCompact(frozen)} ISK frozen`,
-    `frozen: ${fmtIsk(frozen)} ISK\nstalled: odds under the floor · queue outlasts the order · above best sell on a sliding market`);
+  /* Counted off the VERDICT, which is the only thing here that decides anything.
+     There used to be a second reading beside it — a "stalled" badge with its own
+     rules — and a red "stalled" next to a HOLD is the tool arguing with itself. */
+  const acting = sells.filter(r => r.verdict === 'reprice' || r.verdict === 'dump');
+  if (!acting.length && !sells.some(r => r.verdict)) return;
+  const tied = acting.reduce((t, r) => t + r.iskTied, 0);
+  const recover = sells.filter(r => r.verdict === 'dump').reduce((t, r) => t + (r.dumpNow || 0), 0);
+  mk('to act on', `${acting.length} order${acting.length === 1 ? '' : 's'} · ${fmtCompact(tied)} ISK`,
+    `${fmtIsk(tied)} ISK sits in orders the triage wants repriced or cancelled`
+    + '\nhover a verdict badge for the arithmetic behind it');
   mk('recoverable', fmtCompact(recover) + ' ISK by dumping',
-    `recoverable: ${fmtIsk(recover)} ISK\n= what the buy book pays today, walked depth-first, after tax`
+    `recoverable: ${fmtIsk(recover)} ISK\n= what the buy book pays today for the CANCEL & DUMP rows, after tax`
     + '\nbroker fee already spent: sunk, not counted against this');
 }
 
@@ -4893,7 +4884,7 @@ function renderOrdTriageStats(box, sells, mk){
 function ordTsv(){
   const head = ['Character','Item','Type id','Your price','Qty left','Qty total','Location','Location id',
     'Age d','Days left','ISK tied up','Queue ahead','vs best %','Best competing sell','Fill est. d',
-    'Vol/day','Sell u/d','Buy u/d','Sell share','Vol days held','Trend %/wk','Fill %','Fill bound','Window d','Stalled','Stalled reasons','Verdict',
+    'Vol/day','Sell u/d','Buy u/d','Sell share','Vol days held','Trend %/wk','Fill %','Fill bound','Window d','Against it','Verdict',
     'Hold ISK','Reprice ISK','Dump ISK','Reprice price','Relist fee ISK','Side'];
   const num = (v, dp) => v == null ? '' : Number(v).toFixed(dp);
   const lines = [head.join('\t')];
@@ -4914,7 +4905,6 @@ function ordTsv(){
       r.chance == null ? '' : (r.chance * 100).toFixed(1),
       r.bound || '',
       r.window == null ? '' : r.window,
-      r.isBuy ? '' : (r.stalled ? 'yes' : 'no'),
       (r.reasons || []).map(x => x.t).join('; '),
       r.verdict ? VERDICT_LABEL[r.verdict] : '',
       num(r.valueHold, 2), num(r.valueReprice, 2), num(r.valueDump, 2),

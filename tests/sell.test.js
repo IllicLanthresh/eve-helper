@@ -290,6 +290,24 @@ H.run('sell', async () => {
     eq('undercutting 5.55 takes one 0.01 tick', ticks.u4, 5.54);
     eq('undercutting 0.02 takes one 0.01 tick', ticks.u5, 0.01);
 
+    /* An undercut that rounds to NEAREST can land back on — or above — the order
+       it is meant to beat. Ten thousand prices across nine orders of magnitude,
+       every one of which must come out strictly below and on a legal tick. */
+    const sweep = await page.evaluate(() => {
+      let notBelow = 0, offTick = 0, worst = null;
+      for (let i = 0; i < 10000; i++){
+        const p = Math.round(Math.pow(10, (i % 900) / 100) * 1000) / 100;
+        if (!(p > 0.01)) continue;
+        const u = undercut(p);
+        if (!(u < p)){ notBelow++; if (!worst) worst = [p, u]; }
+        const t = Math.max(Math.pow(10, Math.floor(Math.log10(u)) - 3), 0.01);
+        if (Math.abs(u / t - Math.round(u / t)) > 1e-6) offTick++;
+      }
+      return { notBelow, offTick, worst };
+    });
+    eq('an undercut is never equal to or above the price it undercuts', sweep.notBelow, 0);
+    eq('...and always lands on a legal tick', sweep.offTick, 0);
+
     /* ---------- plan selection ---------- */
     section('plan selection against the real book');
     await fetchInventory(page, PASTE);

@@ -414,12 +414,17 @@ H.run('orders', async () => {
     const dBlind = await diagOf(page, 14);
     eq('with no history there is no volume to divide by', dBlind.daysToFill, null);
 
-    /* ---------- (g) the stalled rule ---------- */
-    section('the stalled rule, and each of its reasons');
-    eq('a 100% chance inside the window is not stalled', dHold.stalled, false);
+    /* ---------- (g) what works against an order ---------- */
+    /* These three used to drive a "Stalled?" column of their own, a second verdict
+       sitting beside the real one — a red "yes" next to a HOLD. The column is gone;
+       the three facts remain, as chips on the item's name, and the rules that produce
+       them are unchanged, which is what the block below still pins. */
+    section('what works against an order, and each of its reasons');
+    eq('a 100% chance inside the window has nothing against it', dHold.reasons.length, 0);
     eq('...and the trend is flat on that item', dHold.trendPctWk, 0);
     const dDump = await diagOf(page, 12);
-    eq('an order the market never reaches is stalled', dDump.stalled, true);
+    check('an order the market never reaches has something against it', dDump.reasons.length > 0,
+      JSON.stringify(dDump.reasons));
     eq('...for the odds', dDump.chance, 0);
     check('...with a chip stating the odds against the floor',
       dDump.reasons.some(r => /^\d+%<\d+%$/.test(r.t)), JSON.stringify(dDump.reasons));
@@ -435,8 +440,8 @@ H.run('orders', async () => {
     check('...and the chip stays a chip', dDump.reasons.every(r => r.t.length <= 10),
       JSON.stringify(dDump.reasons.map(r => r.t)));
     eq('the window is capped by the days left on the order', dQueue.window, 2);
-    check('a queue that cannot clear before expiry is stalled',
-      dQueue.stalled && dQueue.reasons.some(r => /^q[\d.<]+d>[\d.<]+d$/.test(r.t)),
+    check('a queue that cannot clear before expiry is called out',
+      dQueue.reasons.some(r => /^q[\d.<]+d>[\d.<]+d$/.test(r.t)),
       JSON.stringify(dQueue.reasons));
     check('...with the units queued at or below your price on the tooltip',
       dQueue.reasons.some(r => /queue: [\d,]+ u at or below your price/.test(r.ttl)
@@ -454,8 +459,8 @@ H.run('orders', async () => {
       dSlide.chance, dSlide.expUnits / 10, 1e-12);
     eq('...an estimate off ESI regional volume, and labelled as the upper bound it is',
       dSlide.bound, 'upper');
-    check('being above the best sell on a falling market is stalled on its own',
-      dSlide.stalled && dSlide.reasons.length === 1
+    check('being above the best sell on a falling market counts on its own',
+      dSlide.reasons.length === 1
         && /^\+[\d.]+%▼$/.test(dSlide.reasons[0].t), JSON.stringify(dSlide.reasons));
     // read defensively: a suite whose earlier claim fails must still reach the ones below
     const slideTtl = (dSlide.reasons[0] || {}).ttl || '';
@@ -552,7 +557,7 @@ H.run('orders', async () => {
     eq('...and the bound is on the row, not just in the header', otsv.cells['Fill bound'], 'upper');
     check('...alongside the columns the table shows',
       ['Character', 'Item', 'Your price', 'Qty left', 'Location', 'ISK tied up', 'vs best %',
-       'Stalled', 'Verdict'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
+       'Against it', 'Verdict'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
     check('every row is as wide as the header',
       otsv.widths.every(w => w === otsv.head.length), JSON.stringify(otsv.widths));
     eq('one line per sell order', otsv.n, 9);
@@ -565,45 +570,80 @@ H.run('orders', async () => {
     check('...with hold and reprice beside it',
       Number(otsv.cells['Reprice ISK']) > Number(otsv.cells['Hold ISK']),
       otsv.cells['Reprice ISK'] + ' vs ' + otsv.cells['Hold ISK']);
-    check('the stalled reasons travel as their chips',
-      /%<\d+%/.test(otsv.cells['Stalled reasons']), otsv.cells['Stalled reasons']);
+    check('what works against a row travels as its chips',
+      /%<\d+%/.test(otsv.cells['Against it']), otsv.cells['Against it']);
+    check('...and the deleted second verdict is not a column any more',
+      !otsv.head.includes('Stalled') && !otsv.head.includes('Stalled reasons'), otsv.head.join('|'));
     await page.click('#btnOrdTsv');
     await page.waitForFunction(() => document.getElementById('copyStatusOrd').textContent !== '');
     check('the button reports what it copied',
       /copied 9 orders/.test(await page.textContent('#copyStatusOrd')),
       await page.textContent('#copyStatusOrd'));
 
-    /* ---------- (i) the totals the user asked for ---------- */
-    section('stalled totals');
-    const triage = await page.evaluate(() => {
-      const rows = ordRows().filter(r => !r.isBuy && r.stalled);
-      return { n: rows.length, frozen: rows.reduce((t, r) => t + r.iskTied, 0),
-               recover: rows.reduce((t, r) => t + (r.dumpNow || 0), 0) };
+    /* ---------- (h2) the second verdict system is gone from the screen ---------- */
+    section('one verdict, not two');
+    const cols = await page.$$eval('#ordTbl thead th', els => els.map(e => e.textContent.trim()));
+    check('there is no Stalled? column', !cols.some(c => /stalled/i.test(c)), cols.join('|'));
+    const bodyWidth = await page.$$eval('#ordBody tr[data-order-id]',
+      rows => [...new Set(rows.map(tr => tr.children.length))]);
+    eq('every row is as wide as the header', bodyWidth.join(','), String(cols.length));
+    /* the facts did not go anywhere — they sit on the name, with the other warnings,
+       the same way the Sell table carries its chips */
+    const chipRow = await page.evaluate(() => {
+      const tr = [...document.querySelectorAll('#ordBody tr[data-order-id]')]
+        .find(x => Number(x.dataset.orderId) === 12);
+      const td = tr.querySelector('td.name');
+      return { chips: [...td.querySelectorAll('.flag')].map(c => ({ t: c.textContent, ttl: c.title })),
+               text: td.textContent };
     });
-    // stalled: Dump (10,000) + Reprice (20,000) + Queue (10,000) + Slide (11,000)
-    //          + the structure order, asking 5,000 where the highs never pass 2,000 (20,000)
-    eq('five orders are stalled', triage.n, 5);
-    eq('...freezing the ISK tied up in them', Math.round(triage.frozen), 71000);
-    // recoverable: 10x900 + 10x100 + 10x800 + 10x900 + 4x2000, all net of tax
-    near('...of which this much comes back by dumping today',
-      triage.recover, net(10 * 900 + 10 * 100 + 10 * 800 + 10 * 900 + 4 * 2000), 1e-6);
+    check('the order the market never reaches carries its chip on the name',
+      chipRow.chips.some(c => /%<\d+%/.test(c.t)), JSON.stringify(chipRow.chips));
+    check('...with its numbers still on the tooltip',
+      chipRow.chips.some(c => /floor: \d+%/.test(c.ttl)), JSON.stringify(chipRow.chips.map(c => c.ttl)));
+    check('...and the item name is still there to read',
+      /Tritanium|[A-Za-z]/.test(chipRow.text), chipRow.text);
+    const cleanRow = await page.evaluate(() => {
+      const tr = [...document.querySelectorAll('#ordBody tr[data-order-id]')]
+        .find(x => Number(x.dataset.orderId) === 11);
+      return tr.querySelector('td.name').querySelectorAll('.flag').length;
+    });
+    eq('a healthy order carries no chip at all', cleanRow, 0);
+
+    /* ---------- (i) the totals, counted off the verdict ---------- */
+    /* They used to be counted off the deleted "stalled" flag, which is exactly the
+       double-reading that got it deleted: the number in the header has to be the number
+       of orders the VERDICT wants you to do something about. */
+    section('triage totals');
+    const triage = await page.evaluate(() => {
+      const rows = ordRows().filter(r => !r.isBuy && (r.verdict === 'reprice' || r.verdict === 'dump'));
+      const dumps = ordRows().filter(r => !r.isBuy && r.verdict === 'dump');
+      return { n: rows.length, tied: rows.reduce((t, r) => t + r.iskTied, 0),
+               recover: dumps.reduce((t, r) => t + (r.dumpNow || 0), 0),
+               dumpIds: dumps.map(r => r.orderId).sort((a, b) => a - b) };
+    });
+    check('the header counts the orders the triage wants acted on', triage.n > 0, JSON.stringify(triage));
     const sumText = await page.textContent('#ordSummary');
     check('the header states it in those words',
-      /5 orders/.test(sumText) && /ISK frozen/.test(sumText) && /recoverable/.test(sumText), sumText);
+      new RegExp(triage.n + ' orders?').test(sumText) && /to act on/.test(sumText)
+        && /recoverable/.test(sumText), sumText);
+    check('...and no longer speaks of a stalled list', !/stalled/i.test(sumText), sumText);
+    const dumpNow = await page.evaluate(ids => {
+      const by = new Map(ordRows().map(r => [r.orderId, r]));
+      return ids.reduce((t, id) => t + (by.get(id).dumpNow || 0), 0);
+    }, triage.dumpIds);
+    near('...with the recoverable figure summing exactly the CANCEL & DUMP rows',
+      triage.recover, dumpNow, 1e-6);
 
     /* ---------- (j) default sort ---------- */
     section('sorting');
     const order = await page.evaluate(() => {
       const ids = [...document.querySelectorAll('#ordBody tr[data-order-id]')].map(tr => Number(tr.dataset.orderId));
       const by = new Map(ordRows().map(r => [r.orderId, r]));
-      return ids.map(id => ({ id, frozen: by.get(id).stalledIsk, stalled: !!by.get(id).stalled }));
+      return ids.map(id => ({ id, tied: by.get(id).iskTied }));
     });
-    check('the default sort runs down the ISK frozen in stalled orders',
-      order.every((r, i) => i === 0 || order[i - 1].frozen >= r.frozen), JSON.stringify(order));
-    check('...so every stalled order comes before every healthy one',
-      order.findIndex(r => !r.stalled) > order.map(r => r.stalled).lastIndexOf(true) - 1
-      && order.slice(0, 5).every(r => r.stalled), JSON.stringify(order));
-    eq('...topped by the biggest pile of frozen ISK', order[0].frozen, 20000);
+    check('the default sort runs down the ISK on the market',
+      order.every((r, i) => i === 0 || order[i - 1].tied >= r.tied), JSON.stringify(order));
+    eq('...topped by the biggest order', order[0].tied, 20000);
 
     /* The indicator used to decide "is this column text?" from a hard-coded list of three
        keys while the comparator decided it from the value's own type, so Verdict — which
@@ -645,7 +685,7 @@ H.run('orders', async () => {
     }
     check('Verdict is a text column, so it is the one the old hard-coded list missed',
       (await arrowFor('verdict')).text, 'verdict holds strings');
-    await page.evaluate(() => { state.ordSortKey = 'stalledIsk'; state.ordSortDir = -1; renderOrders(); });
+    await page.evaluate(() => { state.ordSortKey = 'iskTied'; state.ordSortDir = -1; renderOrders(); });
 
     /* ---------- (k) the relist fee, derived from the skill and overridable ---------- */
     section('the relist fee');
@@ -823,9 +863,9 @@ H.run('orders', async () => {
     check('...and the extra fortnight is what carries the order over the line',
       dSlide30.chance > 0.9 && dSlide30.chance > dSlide.chance,
       dSlide30.chance + ' vs ' + dSlide.chance);
-    eq('...which takes the row off the stalled list', dSlide30.stalled, false);
+    eq('...which takes the warning off the row', dSlide30.reasons.length, 0);
     await setPatience(page, 'balanced');
-    eq('...and back', (await diagOf(page, 17)).stalled, true);
+    check('...and back', (await diagOf(page, 17)).reasons.length > 0);
 
     /* ---------- (m) the buy-order toggle ---------- */
     section('buy orders');
@@ -891,11 +931,10 @@ H.run('orders', async () => {
     const vs = await Promise.all(ids.map(verdictOf));
     check('...and nothing else', vs.every(v => v === 'reprice'), JSON.stringify(vs));
 
-    await setFlt('stalled');
-    ids = await shownIds();
-    const stalls = await page.evaluate(list => list.map(i => !!(state.orders.diag[i] || {}).stalled), ids);
-    check('stalled only shows what the triage flagged',
-      ids.length > 0 && stalls.every(Boolean), JSON.stringify(stalls));
+    /* The filter used to carry a fourth option, "stalled only", reading the deleted
+       second verdict. Three verdicts is the whole vocabulary now. */
+    const opts = await page.$$eval('#ordFltVerdict option', els => els.map(e => e.value));
+    eq('the filter offers exactly all + the three verdicts', opts.join(','), 'all,reprice,dump,hold');
 
     await page.check('#ordShowBuy');
     await setFlt('hold');
@@ -1108,7 +1147,7 @@ H.run('orders', async () => {
 
     // THE CONTROL — the liquid at-market order must not have moved
     near('at the front of a deep book the whole order still sells', liquid.chance, 1, 1e-9);
-    eq('...and it is not stalled', liquid.stalled, false);
+    eq('...and nothing works against it', liquid.reasons.length, 0);
     eq('...nor floored', liquid.floored.length, 0);
     eq('...and it is held', liquid.verdict, 'hold');
     near('...worth the full listed value, net of tax', liquid.valueHold,

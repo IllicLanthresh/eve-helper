@@ -272,8 +272,8 @@ H.run('density', async () => {
     for (const [what, txt] of [['the orders summary', ord.summary], ['the fetch status', ord.status],
       ['the relist note', ord.relist], ['the character list', ord.chars]])
       eq(what + ' is a fact string, with no connectives', forbiddenIn(txt).join(','), '');
-    check('the fetch status reads as facts: orders · stalled · time',
-      /^\d+ orders · \d+ stalled · /.test(ord.status), ord.status);
+    check('the fetch status reads as facts: orders · to act on · time',
+      /^\d+ orders · \d+ to act on · /.test(ord.status), ord.status);
 
     /* the TSV is where the long numbers went — the terse table must not be the only copy */
     const tsvHead = await o.page.evaluate(() => ordTsv().split('\n')[0].split('\t'));
