@@ -34,6 +34,7 @@ const TYPE_IDS = {
   'Blind Widget': 9009,         // no history at all
   'Spark Widget': 9010,         // a history built for the sparkline's arithmetic
   'Patience Widget': 9011,      // thin enough that the window is what decides
+  'Bait Trinket': 9012,         // a real book with one unit at 1 ISK under it
 };
 
 /* ---------- history fixtures for the decision layer ----------
@@ -81,6 +82,10 @@ const NOHIGH_HIST = series(200, t => ({ average: 1000000, volume: 50 }));
    has, comfortably inside a balanced one. This is the item the patience control decides,
    and it decides it through the arrival rate rather than through how often a year of
    daily highs happened to touch the price. */
+/* a market that has never traded anywhere near 1 ISK — the floor the outlier check
+   measures a suspect order against */
+const FLAT_45 = series(200, () => ({ average: 48, highest: 53, lowest: 44, volume: 400, order_count: 20 }));
+
 const PATIENCE_HIST = series(400, () => ({
   average: 1000000, highest: 1050000, lowest: 950000, volume: 3, order_count: 3 }));
 
@@ -130,6 +135,13 @@ const BOOKS = {
   // one unit queued ahead, so the wait is the arrival rate and almost nothing else
   'Patience Widget': { buys: [{ p: 900000, v: 1000 }], sells: [{ p: 1000000, v: 1 }],
                        hist: PATIENCE_HIST },
+  /* One unit at 1 ISK under a real book at 45-52, on a market whose daily lows never go
+     near it. Reading that as the best sell and undercutting it is the failure this book
+     exists to catch. */
+  'Bait Trinket':    { buys: [{ p: 30, v: 1000 }],
+                       sells: [{ p: 1, v: 1 }, { p: 45, v: 100 }, { p: 47, v: 100 },
+                               { p: 49, v: 100 }, { p: 50, v: 100 }, { p: 52, v: 100 }],
+                       hist: FLAT_45 },
 };
 
 const PASTE = [
@@ -1218,7 +1230,8 @@ H.run('sell', async () => {
        has to be a number this test chose. */
     await setPatience(p4, 14, 55);
     const DEC_PASTE = ['Steady Trinket\t20', 'Sliding Trinket\t20', 'Decay Widget\t20',
-                       'Nohigh Widget\t20', 'Blind Widget\t20', 'Patience Widget\t20'].join('\n');
+                       'Nohigh Widget\t20', 'Blind Widget\t20', 'Patience Widget\t20',
+                       'Bait Trinket\t50'].join('\n');
     // the user's own settings: a LEVEL statistic over a long window, which is exactly
     // what used to fire the ⏳ tag forever
     await fetchWithHistory(p4, DEC_PASTE, 'median', 120);
@@ -1324,6 +1337,79 @@ H.run('sell', async () => {
        and how many times you would do that before you stop paying. Nobody can measure
        someone else's patience for that, so both are settings now rather than a 2 and a 3
        written into the file. A falling market is what makes them bite. */
+    /* ---------- absurd sell orders ---------- */
+    /* One unit at 1 ISK used to set the whole plan: read as the best sell, undercut, and
+       the tool would tell you to dump a full stack at 0.99. Two independent signals have
+       to agree before an order is dropped — 3.5 modified z below the book's median log
+       price (Iglewicz & Hoaglin), AND below every daily low the market has printed — so a
+       market that is simply cheap keeps its book. */
+    section('absurd sell orders are read past, a cheap market is not');
+    const ABS = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      const flat = px => { const h = []; for (let t = 200; t >= 0; t--)
+        h.push({ date: day(t), average: px, highest: px * 1.1, lowest: px * 0.9, volume: 500, order_count: 20 }); return h; };
+      const book = ps => ps.map(p => ({ p, v: 10, id: p }));
+      const e = { typeId: 1, hist: flat(1000) };
+      const norm = book([980, 990, 1000, 1010, 1020, 1030]);
+      const withBait = book([1, 980, 990, 1000, 1010, 1020, 1030]);
+      const twoBait = book([1, 5, 980, 990, 1000, 1010, 1020, 1030]);
+      const highSilly = book([980, 990, 1000, 1010, 1020, 1030, 5000000]);
+      const tiny = book([1, 1000, 1010]);
+      // a market that HAS traded down there: 300 is cheap, not absurd
+      const eCheap = { typeId: 2, hist: flat(1000).map((h, i) => i < 20
+        ? { ...h, average: 300, highest: 330, lowest: 270 } : h) };
+      const cheapBook = book([300, 980, 990, 1000, 1010, 1020]);
+      const g = r => ({ n: r.levels.length, best: r.levels.length ? r.levels[0].p : null,
+                        dropped: r.dropped.map(x => x.p), floor: r.floor });
+      return {
+        norm: g(cleanSellLevels(norm, e, null, 365)),
+        bait: g(cleanSellLevels(withBait, e, null, 365)),
+        two: g(cleanSellLevels(twoBait, e, null, 365)),
+        high: g(cleanSellLevels(highSilly, e, null, 365)),
+        tiny: g(cleanSellLevels(tiny, e, null, 365)),
+        cheap: g(cleanSellLevels(cheapBook, eCheap, null, 365)),
+        noHist: g(cleanSellLevels(withBait, { typeId: 3, hist: [] }, null, 365)),
+      };
+    });
+    eq('an ordinary book loses nothing', ABS.norm.n, 6);
+    eq('...and keeps its best sell', ABS.norm.best, 980);
+    eq('one unit at 1 ISK is read past', ABS.bait.dropped.join(','), '1');
+    eq('...so the best sell is the real one', ABS.bait.best, 980);
+    eq('two of them go together', ABS.two.dropped.join(','), '1,5');
+    eq('...leaving the same six real orders', ABS.two.n, 6);
+    eq('a silly HIGH order is left alone — nobody undercuts it', ABS.high.dropped.length, 0);
+    eq('...and it is still in the book', ABS.high.n, 7);
+    /* the floor is the second signal, and it is what stops the filter eating a real
+       market: this book's 300 is under the median by miles, and the market HAS traded
+       there, so it stays */
+    eq('a genuinely cheap offer the market has printed is kept', ABS.cheap.dropped.length, 0);
+    eq('...and still sets the best sell', ABS.cheap.best, 300);
+    eq('a book too small for a median and a MAD is left entirely alone', ABS.tiny.dropped.length, 0);
+    eq('...bait and all, because three prices describe nothing', ABS.tiny.best, 1);
+    eq('no history means no floor to check against, so nothing is dropped', ABS.noHist.dropped.length, 0);
+
+    /* ...and the same thing through the whole page, because a filter that is never
+       actually wired into the plan is a function nobody calls. Bait Trinket ships with a
+       one-unit 1 ISK order under a real book at 45. */
+    const bait = await decisionRow(p4, 'Bait Trinket');
+    check('the plan does not undercut the bait', bait.exportPrice > 40,
+      String(bait.exportPrice));
+    const baitTip = await p4.evaluate(() => {
+      const r = state.rows.find(x => x.name === 'Bait Trinket');
+      const tr = [...document.querySelectorAll('#tblBody tr.b')].find(x => x.dataset.key === r.key);
+      const td = tr && tr.querySelector('[data-cell="bestSell"]');
+      return { text: td ? td.textContent : null, tip: td ? td.title : null,
+               skipped: (r.metrics.skipped || []).map(x => x.p) };
+    });
+    eq('...the 1 ISK order having been read past', baitTip.skipped.join(','), '1');
+    check('...silently: nothing on the row shouts about it',
+      !(await p4.evaluate(() => {
+        const r = state.rows.find(x => x.name === 'Bait Trinket');
+        return r.flags.some(f => /absurd|outlier|skip/i.test(f.t));
+      })));
+    check('...but the price cell says what it skipped, and at what',
+      /skipped 1 absurd sell order, cheapest 1/.test(baitTip.tip || ''), baitTip.tip);
+
     section('relist churn is set, not assumed');
     const churnAt = async (tol, max) => {
       await p4.evaluate(v => {

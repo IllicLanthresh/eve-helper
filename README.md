@@ -481,6 +481,36 @@ Every recommendation carries a plain-language **why** on hover, e.g. *"best sell
 was reached in 8% of past 14-day windows once those days are carried to today's price level
 (74% at the prices of the day — that gap is the decay)"*.
 
+### Absurd sell orders
+
+One unit listed at 1 ISK used to set the whole plan: read as the best sell, undercut, and
+the tool would tell you to dump a full stack at 0.99. Margin bait on the buy side is
+already handled by `min_volume`; there is no equivalent on the sell side, so it is
+detected.
+
+**Two independent signals have to agree** before an order is dropped, because throwing
+away a real cheap offer is worse than reading a fake one:
+
+1. **Modified z-score on log price.** `M = 0.6745 × (x − median) / MAD`, outlier at
+   `|M| > 3.5` — [Iglewicz & Hoaglin, *How to Detect and Handle Outliers*,
+   ASQC 1993](https://archive.org/details/howtodetecthandl0000igle), a published rule
+   rather than a number picked here. Median and MAD because a thin book can be half junk
+   and both survive that; log price because order books are log-normal, and a book running
+   from 1 ISK to 10M is not describable on a linear scale.
+2. **The market's own floor.** The candidate must also sit below every daily low the item
+   has actually printed over the history window — a price nobody has traded at in a year,
+   on either side of the book. Where the Adam4EVE tracker covers the station, its sell-side
+   low is used instead: prints *here* beat prints anywhere in the region.
+
+Only the **cheap tail** is dropped. A silly-high order is harmless — nobody undercuts it,
+and the queue arithmetic already prices it as unreachable. A book with fewer than five
+orders is left entirely alone, bait and all, because a median and a MAD over three prices
+describe nothing.
+
+It happens **silently**: nothing is blocked and no chip is raised. The price cell's
+tooltip names how many orders were skipped and the cheapest of them, which is where the
+rest of that cell's arithmetic already lives.
+
 ### Solving for the odds
 
 The other two price sources name a price and let the tool report the odds. This one runs the
