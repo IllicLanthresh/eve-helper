@@ -300,6 +300,16 @@
           title="how likely a listing has to be before it is worth the fee&#10;under it the listing is blocked and the row says what that cost">
         <span class="hint">%</span>
       </div>
+      <div class="grow" style="margin-top:4px">
+        <label for="relistTol" style="margin:0" title="a sliding market drags the cheap end of the book down past your order&#10;this is how far off the top you tolerate before going to reprice">reprice at</label>
+        <input id="relistTol" type="number" min="0.1" max="50" step="0.1" value="2" style="width:56px"
+          title="% off the top of the book&#10;smaller: you chase the price down harder, and pay the fee more often">
+        <span class="hint">% off top,</span>
+        <label for="relistMax" style="margin:0" title="past this many you would stop paying and let the order sit">at most</label>
+        <input id="relistMax" type="number" min="0" max="20" step="1" value="3" style="width:52px"
+          title="how many times you would reprice one order before giving up&#10;0: you never chase, and no churn is priced in">
+        <span class="hint">times</span>
+      </div>
       <div class="hint" id="patNote" style="margin-top:4px"></div>
     </fieldset>
     <fieldset class="grp">
@@ -918,6 +928,8 @@ const state = {
   oddsRow: new Map(),      // key -> the fill chance THIS row is priced for, when overridden
   patDays: 90,             // the window every fill chance is measured over
   patFloor: 35,            // %, the odds a listing must clear to be worth the fee
+  relistTol: 2,            // %, how far off the top of the book before you go reprice
+  relistMax: 3,            // ...and how many times you would do that before giving up
   sortKey: 'perSlot', sortDir: -1,
   filterType: 'all', filterText: '',
   // --- "My orders" mode (the block near the bottom of this script) ---
@@ -1721,8 +1733,23 @@ const HIT_ADJ_CAP = 4;          // ...carried to today's money, never inflated p
 const HIT_TREND_CAP_PCT = 50;   // ...and never carried at more than +-50%/week
 const VEL_DAYS   = 14;          // undercut velocity: how fast the cheap end is sliding
 const FLAT_PCT_PER_WEEK = 1.5;  // |trend| inside this band is called flat (see trendClass)
-const RELIST_TOL_PCT = 2;       // you reprice once your order is this far off the top
-const MAX_RELISTS = 3;          // ...and past this you would give up, not keep paying
+/* Relist churn: how a sliding market keeps taking broker fees off you.
+
+   Both numbers are HABITS, not facts about the game — how far off the top of the book you
+   will tolerate being before you go and reprice, and how many times you will do that
+   before you stop paying and let the order sit. Nobody can measure someone else's
+   patience for that, so they are settings, not constants. They used to be 2% and 3,
+   written into the file with no way to see or change them. */
+const RELIST_TOL_DEFAULT = 2;
+const RELIST_MAX_DEFAULT = 3;
+function churnRules(){
+  const tol = Number(state.relistTol);
+  const max = Number(state.relistMax);
+  return {
+    tolPct: Number.isFinite(tol) && tol > 0 ? tol : RELIST_TOL_DEFAULT,
+    maxRelists: Number.isFinite(max) && max >= 0 ? Math.round(max) : RELIST_MAX_DEFAULT,
+  };
+}
 
 function ascHist(e){
   if (!e) return [];
@@ -2328,7 +2355,10 @@ function rebuild(keepChecks = true){
   const histDays = currentHistDays();
   state.patDays = $('patDays').value;
   state.patFloor = $('patFloor').value;
+  state.relistTol = $('relistTol').value;
+  state.relistMax = $('relistMax').value;
   const pat = patienceOf();
+  const churn0 = churnRules();
   // the tracker is per STATION; a player structure has none and takes the ESI path
   const hubStation = hub().station || null;
 
@@ -2470,7 +2500,7 @@ function rebuild(keepChecks = true){
         : p * dFill + (1 - p) * pat.days;
       let relists = 0;
       if (p != null && velPctDay > 0 && days > 0)
-        relists = Math.min(MAX_RELISTS, Math.floor(velPctDay * days / RELIST_TOL_PCT));
+        relists = Math.min(churn0.maxRelists, Math.floor(velPctDay * days / churn0.tolPct));
       const churn = relists * brokerCharge;
       const net = p == null
         ? fill.net
@@ -5094,7 +5124,9 @@ function persist(){
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcOdds').checked ? 'odds' : $('srcHist').checked ? 'hist' : 'sell',
       histMode: $('histMode').value, histDays: $('histDays').value,
-      patDays: $('patDays').value, patFloor: $('patFloor').value, trkDays: $('trkDays').value,
+      patDays: $('patDays').value, patFloor: $('patFloor').value,
+      relistTol: $('relistTol').value, relistMax: $('relistMax').value,
+      trkDays: $('trkDays').value,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
       ticked,
@@ -5160,8 +5192,12 @@ function restore(){
   if (saved.patDays != null) state.patDays = saved.patDays;
   else if (LEGACY_PAT_DAYS[saved.patience]) state.patDays = LEGACY_PAT_DAYS[saved.patience];
   if (saved.patFloor != null) state.patFloor = saved.patFloor;
+  if (saved.relistTol != null) state.relistTol = saved.relistTol;
+  if (saved.relistMax != null) state.relistMax = saved.relistMax;
   $('patDays').value = String(state.patDays);
   $('patFloor').value = String(state.patFloor);
+  $('relistTol').value = String(state.relistTol);
+  $('relistMax').value = String(state.relistMax);
   if (saved.oddsTarget != null) $('oddsTarget').value = saved.oddsTarget;
   if (Array.isArray(saved.oddsRow)) state.oddsRow = new Map(saved.oddsRow);
   state.savedTicked = new Set(saved.ticked || []);
@@ -5226,7 +5262,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
 
 $('inv').addEventListener('input', () => { rebuild(); trkMemoSoon(); });
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'srcOdds', 'oddsTarget', 'histMode', 'histDays',
-                  'patDays', 'patFloor'])
+                  'patDays', 'patFloor', 'relistTol', 'relistMax'])
   // patience, fees and the history window re-rank BOTH modes locally, with no refetch
   $(id).addEventListener('change', () => { rebuild(); ordRecompute(); });
 $('topN').addEventListener('change', persist);

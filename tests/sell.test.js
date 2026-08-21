@@ -1320,6 +1320,40 @@ H.run('sell', async () => {
     eq('the flat item is told to list patiently', steady.strategy, 'pat');
     eq('...at the patient price', steady.exportPrice, LP);
 
+    /* Relist churn is a HABIT — how far off the top you tolerate before going to reprice,
+       and how many times you would do that before you stop paying. Nobody can measure
+       someone else's patience for that, so both are settings now rather than a 2 and a 3
+       written into the file. A falling market is what makes them bite. */
+    section('relist churn is set, not assumed');
+    const churnAt = async (tol, max) => {
+      await p4.evaluate(v => {
+        for (const [id, val] of [['relistTol', v.tol], ['relistMax', v.max]]){
+          const el = document.getElementById(id);
+          el.value = String(val);
+          el.dispatchEvent(new Event('change'));
+        }
+      }, { tol, max });
+      await p4.waitForFunction(v => Number(state.relistTol) === v.tol && Number(state.relistMax) === v.max,
+        { tol, max });
+      const r = await decisionRow(p4, 'Sliding Trinket');
+      return { relists: r.comp.relists, churn: r.comp.churn, broker: r.comp.broker };
+    };
+    const cDefault = await churnAt(2, 3);
+    check('a sliding market prices in some repricing', cDefault.relists > 0, JSON.stringify(cDefault));
+    near('...charged as one broker fee each', cDefault.churn, cDefault.relists * cDefault.broker, 1e-9);
+    const cTight = await churnAt(1, 3);
+    check('chasing the price harder costs more relists',
+      cTight.relists >= cDefault.relists, cTight.relists + ' vs ' + cDefault.relists);
+    const cLoose = await churnAt(8, 3);
+    check('...and tolerating a wider gap costs fewer',
+      cLoose.relists <= cDefault.relists, cLoose.relists + ' vs ' + cDefault.relists);
+    const cCapped = await churnAt(0.5, 1);
+    eq('the cap is a cap: one relist means one, however fast the book slides', cCapped.relists, 1);
+    const cNever = await churnAt(2, 0);
+    eq('...and someone who never chases pays no churn at all', cNever.relists, 0);
+    eq('...none', cNever.churn, 0);
+    await churnAt(2, 3);
+
     section('ISK per slot-day is the ranking objective');
     /* REWRITTEN: the days term used to blend the queue-over-volume divide with the whole
        window. It now blends the MODEL's own clearing time — the queue walked level by

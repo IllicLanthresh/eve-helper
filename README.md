@@ -406,6 +406,14 @@ today's buy-book price **carried forward by the trend** over the patience window
 itself. `churn` prices the relisting a sliding market forces on you: each modification pays
 the broker fee again.
 
+**Churn is two settings, because it is a habit, not a fact about the game.** *Reprice at
+N% off top* is how far behind the cheap end of the book you will tolerate being before you
+go and move your price; *at most N times* is how many times you will do that before you
+stop paying and let the order sit. A faster-sliding market crosses your tolerance more
+often, so it costs more relists — up to your cap. Set the cap to 0 and no churn is priced
+in at all. Defaults 2% and 3, which is what used to be written into the file with no way
+to see or change it.
+
 The metrics behind it, all computed from data already fetched (the daily history and the
 live book — no extra ESI endpoint), all recomputed locally when you change a control:
 
