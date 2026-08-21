@@ -1343,6 +1343,54 @@ H.run('sell', async () => {
        to agree before an order is dropped — 3.5 modified z below the book's median log
        price (Iglewicz & Hoaglin), AND below every daily low the market has printed — so a
        market that is simply cheap keeps its book. */
+    /* ---------- mean reversion ---------- */
+    /* Falling INTO the bottom of its own range is not the same as falling FROM the top,
+       and both used to earn one ▼ and the same discount. A 90-day carry at -7%/week took
+       an item already sitting at its floor down to a price the market has never paid, and
+       the plan then valued holding it at that fiction. The carry stops at the range the
+       market has actually traded in — which is measured, and which also retired the 0.2
+       and 3 multipliers that used to bound it. */
+    section('the trend carry stops at the range the market has traded in');
+    const REV = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      const mk = f => { const h = []; for (let t = 200; t >= 0; t--)
+        h.push({ date: day(t), average: f(t), highest: f(t) * 1.05, lowest: f(t) * 0.95,
+                 volume: 500, order_count: 20 }); return h; };
+      /* Falling FROM the top: cheap long ago, ran up, now coming off the peak — today is
+         still well clear of the window's floor, so the carry has room. */
+      const fromTop = { typeId: 1, hist: mk(t => t > 120 ? 900
+        : t > 30 ? 900 + (120 - t) * 20 : 2700 - (30 - t) * 20) };
+      /* Falling INTO the bottom: a steady slide whose last print IS the cheapest this
+         market has been. Same direction, nowhere left to go. */
+      const atFloor = { typeId: 2, hist: mk(t => 1000 + t * 5) };
+      const rate = e => histTrend(e);
+      return {
+        topShort: decayOf(fromTop, rate(fromTop), 7),
+        topLong: decayOf(fromTop, rate(fromTop), 90),
+        floorShort: decayOf(atFloor, rate(atFloor), 7),
+        floorLong: decayOf(atFloor, rate(atFloor), 90),
+        flat: decayOf({ typeId: 3, hist: mk(() => 1000) }, 0, 90),
+        noTrend: decayOf(fromTop, null, 90),
+      };
+    });
+    check('an item falling from the top is carried down, unclamped, over a week',
+      REV.topShort.f < 1 && REV.topShort.at === null, JSON.stringify(REV.topShort));
+    check('...and further over three months', REV.topLong.f < REV.topShort.f,
+      REV.topLong.f + ' vs ' + REV.topShort.f);
+    check('an item sitting at its own floor is falling too', REV.floorLong.raw < 1,
+      String(REV.floorLong.raw));
+    eq('...but the carry is clamped there rather than projected below it',
+      REV.floorLong.at, 'floor');
+    check('...at exactly the ratio of the floor to today',
+      Math.abs(REV.floorLong.f - REV.floorLong.lo / 1000) < 1e-9,
+      REV.floorLong.f + ' vs ' + REV.floorLong.lo / 1000);
+    check('...so the same trend costs it far less than it costs the one with room to fall',
+      REV.floorLong.f > REV.topLong.f, REV.floorLong.f + ' vs ' + REV.topLong.f);
+    check('...which is the whole point: one ▼ used to serve for both',
+      REV.floorLong.raw < REV.floorLong.f, REV.floorLong.raw + ' -> ' + REV.floorLong.f);
+    eq('a flat market is carried nowhere', REV.flat.f, 1);
+    eq('...and no trend at all means no carry', REV.noTrend.f, 1);
+
     section('absurd sell orders are read past, a cheap market is not');
     const ABS = await p4.evaluate(() => {
       const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);

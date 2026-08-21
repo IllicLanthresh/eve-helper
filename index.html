@@ -1809,6 +1809,44 @@ function cleanSellLevels(sellLevels, e, trk, days){
   return { levels: kept, dropped, floor };
 }
 
+/* ---------- the give-up branch, and mean reversion --------------------------------
+
+   If a listing does not sell, you dump the remainder at the END of the window, not today.
+   What it is worth then is today's price carried forward by the fitted trend:
+   today x (1 + weekly/100) ^ (window/7). That is what makes a decaying item punish itself,
+   and it is the whole reason the give-up branch exists.
+
+   But the carry has to stop somewhere, and it used to stop at hard multipliers of 0.2 and
+   3 — numbers with nothing behind them. It stops at the MARKET'S OWN RANGE now: the
+   lowest and highest daily average this item has actually printed over the history window.
+   Below the low, or above the high, the projection is extrapolating past every piece of
+   evidence there is.
+
+   That bound is also the answer to a real modelling error. FALLING INTO THE BOTTOM OF ITS
+   OWN RANGE IS NOT THE SAME AS FALLING FROM THE TOP. Both used to earn one ▼ and the same
+   discount; a 90-day carry at -7%/week took an item already sitting at its floor down to a
+   price the market has never paid, and the plan then valued holding it at that fiction.
+   An item at its floor cannot be carried lower, so it is not — and the row says so, which
+   is a different sentence from "this is decaying". */
+function decayOf(e, trendPctWk, days){
+  if (trendPctWk == null) return { f: 1, at: null, lo: null, hi: null, raw: 1 };
+  const raw = Math.pow(Math.max(0.01, 1 + trendPctWk / 100), days / 7);
+  const rows = tailOf(e, HIT_DAYS);
+  let lo = null, hi = null, last = null;
+  for (const h of rows){
+    const a = h.average;
+    if (!(a > 0)) continue;
+    if (lo == null || a < lo) lo = a;
+    if (hi == null || a > hi) hi = a;
+    last = a;
+  }
+  if (!(lo > 0) || !(hi > 0) || !(last > 0)) return { f: raw, at: null, lo, hi, raw };
+  const loR = lo / last, hiR = hi / last;
+  if (raw < loR) return { f: loR, at: 'floor', lo, hi, raw };
+  if (raw > hiR) return { f: hiR, at: 'ceiling', lo, hi, raw };
+  return { f: raw, at: null, lo, hi, raw };
+}
+
 const RELIST_TOL_DEFAULT = 2;
 const RELIST_MAX_DEFAULT = 3;
 function churnRules(){
@@ -2522,11 +2560,9 @@ function rebuild(keepChecks = true){
     const dir        = trendClass(trendPctWk);
     const velPctDay  = undercutVelocity(e);
     const pctRank    = histPctRank(e, bestSell);
-    // What an unsold remainder is worth at the END of the window if the trend keeps doing
-    // what it has been doing: today's price x (1 + weekly/100)^(window/7). A decaying item
-    // punishes itself here, which is the whole point of valuing the give-up branch.
-    const decay = trendPctWk == null ? 1
-      : Math.max(0.2, Math.min(3, Math.pow(Math.max(0.01, 1 + trendPctWk / 100), pat.days / 7)));
+    // the trend carry, bounded by the range this market has actually traded in
+    const decayInfo = decayOf(e, trendPctWk, pat.days);
+    const decay = decayInfo.f;
 
     /* Value ONE listing at `price`, net of the real fee model and honest about the odds.
 
@@ -2653,6 +2689,21 @@ function rebuild(keepChecks = true){
     const perSlot = chosen ? chosen.perSlot : null;
     if (dir === 'falling') flags.push({t:`▼${Math.abs(trendPctWk).toFixed(1)}%/wk`, cls:'warn',
       ttl:`trend: ${pctSigned(trendPctWk)}/wk (falling)`});
+    /* Falling INTO the bottom of its own range is a different sentence from falling FROM
+       the top, and the ▼ alone says neither. When the carry is clamped at the floor the
+       row says so: the item is already as cheap as this market has been, and the give-up
+       branch is not allowed to project it cheaper. */
+    if (decayInfo.at === 'floor') flags.push({ t: 'at floor', cls: 'info',
+      ttl: `range low: ${fmtIsk(decayInfo.lo)} over ${HIT_DAYS}d`
+        + `\ntrend alone: ${fmtIsk(decayInfo.lo / decayInfo.f * decayInfo.raw)} in ${pat.days}d`
+        + '\nnever traded: not at that price, not once'
+        + '\ncase: falling into the bottom, not from the top'
+        + '\ngive-up value: stops at the floor' });
+    if (decayInfo.at === 'ceiling') flags.push({ t: 'at ceiling', cls: 'info',
+      ttl: `range high: ${fmtIsk(decayInfo.hi)} over ${HIT_DAYS}d`
+        + `\ntrend alone: ${fmtIsk(decayInfo.hi / decayInfo.f * decayInfo.raw)} in ${pat.days}d`
+        + '\nnever traded: not at that price, not once'
+        + '\ngive-up value: stops at the ceiling' });
     /* The floor blocked something that was worth more. Say so on the row, with the number,
        because the alternative is a plan that silently leaves ISK on the table and never
        mentions it. Raising the floor field is how you disagree. */
@@ -2719,7 +2770,7 @@ function rebuild(keepChecks = true){
       histRows: e.hist || null,
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
                  floorCost, floorBest,
-                 skipped: clean.dropped, skipFloor: clean.floor,
+                 skipped: clean.dropped, skipFloor: clean.floor, decayInfo,
                  window: pat.days, minFill: pat.minFill, label: pat.label },
       flags, unsellable, dupOrders,
       // latent tick state — survives strategy flips; instants are excluded from the

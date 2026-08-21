@@ -403,7 +403,8 @@ with the broker fee subtracted in **both** branches, `legNet` the part of the st
 fills instantly against buy orders above the list price, and the give-up branch valued at
 today's buy-book price **carried forward by the trend** over the patience window
 (`today × (1 + weekly%/100) ^ (window/7)`), which is what makes a decaying item punish
-itself. `churn` prices the relisting a sliding market forces on you: each modification pays
+itself — **bounded by the range this market has actually traded in**. See
+[Falling from the top vs falling into the bottom](#falling-from-the-top-vs-falling-into-the-bottom). `churn` prices the relisting a sliding market forces on you: each modification pays
 the broker fee again.
 
 **Churn is two settings, because it is a habit, not a fact about the game.** *Reprice at
@@ -480,6 +481,25 @@ Every recommendation carries a plain-language **why** on hover, e.g. *"best sell
 12th percentile of the last 60 days, trend −4.1%/week (falling), the patient price 1,150,000
 was reached in 8% of past 14-day windows once those days are carried to today's price level
 (74% at the prices of the day — that gap is the decay)"*.
+
+### Falling from the top vs falling into the bottom
+
+Both used to earn one `▼` and the same discount, and they are not the same case.
+
+The give-up branch carries today's price forward by the fitted trend. That carry used to
+stop at hard multipliers of **0.2 and 3** — numbers with nothing behind them. It stops at
+the **lowest and highest daily average this item has actually printed** over the history
+window now. Below the low, or above the high, the projection is extrapolating past every
+piece of evidence there is.
+
+That bound is also the fix for a real modelling error. A 90-day carry at −7%/week took an
+item *already sitting at its own floor* down to a price the market has never paid, and the
+plan then valued holding it at that fiction. An item at its floor cannot be carried lower,
+so it is not. The row carries an **`at floor`** chip saying exactly that: the range low, the
+price the trend alone would have reached, and the sentence that separates the two cases.
+An item falling from the top has room below it and is discounted for all of it.
+
+Two invented constants left with this.
 
 ### Absurd sell orders
 
@@ -945,6 +965,8 @@ Every chip is at most ten-odd characters and carries its numbers on hover.
 | `▼x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `minfee` | The flat 100 ISK per-order broker fee beats the percentage; the tooltip gives the effective and nominal rates. |
 | `L=sell` / `L=hist` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `at floor` | The item is at the bottom of the range this market has traded in over the history window, so the give-up branch is not allowed to project it any cheaper. Falling *into* the bottom, not *from* the top. |
+| `at ceiling` | The same the other way up: at the top of its own range, and the carry stops there. |
 | `floor 618k` | The fill floor blocked a listing that was worth **more** than the plan taken instead, and this is the difference. The tooltip gives the price, the odds, the floor they missed, and the fee that was at risk. Lower the floor to take the bet. |
 | `70%?` | Pricing for a chance, and no price in the bracket reaches that one — the market is too thin to move this stack inside the window at any price it has paid. The competitive price was used instead. The number is the target that failed. |
 | `>best` | The list price `L` sits above the current best sell. |
