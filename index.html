@@ -1780,8 +1780,46 @@ function patienceOf(){
 const TREND_DAYS = 30;          // direction is a 30-day question — shorter is noise
 const RANK_DAYS  = 60;          // where today's price sits over two months
 const HIT_DAYS   = 365;         // ~12 months of rolling windows for the fill probability
-const HIT_ADJ_CAP = 4;          // ...carried to today's money, never inflated past 4x
-const HIT_TREND_CAP_PCT = 50;   // ...and never carried at more than +-50%/week
+/* Carrying an old print to today's money.
+
+   A price from eight months ago is not evidence about this week at the number it was
+   printed at, so it is carried forward by the fitted trend before being compared with a
+   price today. On a fast-moving item that carry runs away with itself: at -12%/week over
+   250 days it multiplies by 1/2000, and at +12%/week by 2000.
+
+   It used to be bounded by a 4x cap and a ±50%/week clamp, both invented. It is bounded
+   by THE RANGE THIS MARKET HAS TRADED IN — the lowest and highest daily average over the
+   same window. A print carried outside that range is being placed at a price the market
+   has never been at, which is extrapolation, not evidence. Same rule as the give-up
+   branch's carry, for the same reason, and it needs no number of its own.
+
+   The bound is per-row, because it is the CARRIED price that has to stay in range, not
+   the multiplier. */
+/* The range this market has TRADED in: the lowest daily low and the highest daily high,
+   falling back to the average on days ESI gave no band. Lows and highs rather than
+   averages because the claim being made is "nobody has paid that", and a daily average is
+   an aggregate — the extremes are where the actual trades are. Bounding by averages was
+   also too tight at the recent end: on a falling market today's own average is the window
+   minimum, which forbade carrying today's print forward by even a few hours. */
+function rangeOf(rows){
+  let lo = null, hi = null;
+  for (const h of rows){
+    const a = h.average;
+    if (!(a > 0)) continue;
+    const l = Number.isFinite(h.lowest) && h.lowest > 0 ? h.lowest : a;
+    const g = Number.isFinite(h.highest) && h.highest > 0 ? h.highest : a;
+    if (lo == null || l < lo) lo = l;
+    if (hi == null || g > hi) hi = g;
+  }
+  return (lo > 0 && hi > 0 && hi >= lo) ? { lo, hi } : null;
+}
+/* the trend carry for one row, kept inside the market's own range */
+function carryOf(v, weekly, ageDays, range){
+  if (weekly == null || !(v > 0)) return 1;
+  const f = Math.pow(Math.max(0.01, 1 + weekly / 100), ageDays / 7);
+  if (!range) return f;
+  return Math.max(range.lo / v, Math.min(range.hi / v, f));
+}
 const VEL_DAYS   = 14;          // undercut velocity: how fast the cheap end is sliding
 const FLAT_PCT_PER_WEEK = 1.5;  // |trend| inside this band is called flat (see trendClass)
 /* Relist churn: how a sliding market keeps taking broker fees off you.
@@ -1883,15 +1921,11 @@ function decayOf(e, trendPctWk, days){
   if (trendPctWk == null) return { f: 1, at: null, lo: null, hi: null, raw: 1 };
   const raw = Math.pow(Math.max(0.01, 1 + trendPctWk / 100), days / 7);
   const rows = tailOf(e, HIT_DAYS);
-  let lo = null, hi = null, last = null;
-  for (const h of rows){
-    const a = h.average;
-    if (!(a > 0)) continue;
-    if (lo == null || a < lo) lo = a;
-    if (hi == null || a > hi) hi = a;
-    last = a;
-  }
-  if (!(lo > 0) || !(hi > 0) || !(last > 0)) return { f: raw, at: null, lo, hi, raw };
+  const range = rangeOf(rows);          // the same range the print carry is bounded by
+  let last = null;
+  for (const h of rows) if (h.average > 0) last = h.average;
+  if (!range || !(last > 0)) return { f: raw, at: null, lo: null, hi: null, raw };
+  const lo = range.lo, hi = range.hi;
   const loR = lo / last, hiR = hi / last;
   if (raw < loR) return { f: loR, at: 'floor', lo, hi, raw };
   if (raw > hiR) return { f: hiR, at: 'ceiling', lo, hi, raw };
@@ -2052,8 +2086,8 @@ function reachHalfLife(rows, windowDays){
 }
 
 /* The weighted share of traded units that cleared at or above `price`, with every past
-   day first carried to today's money at the fitted trend — the same carry, and the same
-   two caps, `hitRateOf` uses, for the same reason: on a sliding market last spring's
+   day first carried to today's money at the fitted trend — the same carry `hitRateOf`
+   uses, bounded the same way, for the same reason: on a sliding market last spring's
    prints are not evidence about this week's.
 
    Also returns the trend-adjusted CEILING: the most the market has paid over the window,
@@ -2065,6 +2099,7 @@ function reachOf(e, price, windowDays){
   if (!rows.length) return null;
   const halfLife = reachHalfLife(rows, windowDays);
   const weekly = histTrend(e);
+  const range = rangeOf(rows);
   const now = Date.now();
   let num = 0, numRaw = 0, den = 0, ceiling = 0, withBand = 0;
   for (const h of rows){
@@ -2072,11 +2107,7 @@ function reachOf(e, price, windowDays){
     if (!(avg > 0)) continue;
     const vol = h.volume > 0 ? h.volume : 0;
     const age = Math.max(0, (now - Date.parse(h.date)) / 86400e3);
-    let f = 1;
-    if (weekly != null){
-      const w = Math.max(-HIT_TREND_CAP_PCT, Math.min(HIT_TREND_CAP_PCT, weekly));
-      f = Math.min(HIT_ADJ_CAP, Math.pow(Math.max(0.01, 1 + w / 100), age / 7));
-    }
+    const f = carryOf(avg, weekly, age, range);
     const band = Number.isFinite(h.highest) && h.highest > 0
               && Number.isFinite(h.lowest) && h.lowest > 0 && h.highest > h.lowest;
     if (band) withBand++;
@@ -2315,6 +2346,7 @@ function hitRateOf(e, price, windowDays){
   const rows = tailOf(e, HIT_DAYS);
   if (rows.length < windowDays) return null;
   const weekly = histTrend(e);
+  const range = rangeOf(rows);
   const now = Date.now();
   let withHigh = 0;
   const highs = [], adj = [];
@@ -2326,9 +2358,8 @@ function hitRateOf(e, price, windowDays){
     if (weekly == null) adj.push(v);
     else {
       const age = Math.max(0, (now - Date.parse(h.date)) / 86400e3);
-      const w = Math.max(-HIT_TREND_CAP_PCT, Math.min(HIT_TREND_CAP_PCT, weekly));
-      const f = Math.pow(Math.max(0.01, 1 + w / 100), age / 7);
-      adj.push(v * Math.min(HIT_ADJ_CAP, f));
+      // the DAY's own average is what has to stay inside the range; the high rides with it
+      adj.push(v * carryOf(h.average > 0 ? h.average : v, weekly, age, range));
     }
   }
   const basis = withHigh === rows.length ? 'daily high'

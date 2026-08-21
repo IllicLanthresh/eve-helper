@@ -483,24 +483,34 @@ Every recommendation carries a plain-language **why** on hover, e.g. *"best sell
 was reached in 8% of past 14-day windows once those days are carried to today's price level
 (74% at the prices of the day — that gap is the decay)"*.
 
+### One rule for every trend carry
+
+Prices get carried by the fitted trend in three places: an eight-month-old print is brought
+to today's money before it is compared with a price now; the same for the window-hit rate;
+and today's price is projected forward to value the give-up branch. Each of those used to
+be bounded by its own invented number — a **4×** inflation cap, a **±50%/week** clamp, and
+**0.2 / 3** multipliers.
+
+They are bounded by one measured rule now:
+
+> A price carried by the trend may not leave the range this market has **traded** in —
+> lowest daily low to highest daily high, over the history window.
+
+Beyond that, the price is one nobody has paid, which is extrapolation rather than evidence.
+Lows and highs rather than averages, because "nobody has paid that" is a claim about actual
+trades and a daily average is an aggregate. Four invented constants left with this.
+
 ### Falling from the top vs falling into the bottom
 
-Both used to earn one `▼` and the same discount, and they are not the same case.
+That same bound is what separates two cases the tool used to treat identically. Both earned
+one `▼` and the same discount, and they are not the same thing.
 
-The give-up branch carries today's price forward by the fitted trend. That carry used to
-stop at hard multipliers of **0.2 and 3** — numbers with nothing behind them. It stops at
-the **lowest and highest daily average this item has actually printed** over the history
-window now. Below the low, or above the high, the projection is extrapolating past every
-piece of evidence there is.
-
-That bound is also the fix for a real modelling error. A 90-day carry at −7%/week took an
-item *already sitting at its own floor* down to a price the market has never paid, and the
-plan then valued holding it at that fiction. An item at its floor cannot be carried lower,
-so it is not. The row carries an **`at floor`** chip saying exactly that: the range low, the
-price the trend alone would have reached, and the sentence that separates the two cases.
-An item falling from the top has room below it and is discounted for all of it.
-
-Two invented constants left with this.
+A 90-day carry at −7%/week took an item *already sitting at its own floor* down to a price
+the market has never paid, and the plan then valued holding it at that fiction. An item at
+its floor cannot be carried lower, so it is not. The row carries an **`at floor`** chip
+saying exactly that: the range low, the price the trend alone would have reached, and the
+sentence that separates the two cases. An item falling from the top has room below it and
+is discounted for all of it.
 
 ### The patient price
 

@@ -116,26 +116,61 @@ Everything above is to be built. The sequence is chosen so each step unblocks th
 3. ~~**Solve-for-odds pricing.**~~ Done. Needed the new table to land in.
 4. ~~**The SDE, client-side.**~~ Done. Independent of the rest.
 
-## Still to build
+## Built
 
-The interview settled these and they are not yet written:
+All twenty are in, with tests. Where a decision turned out to be already satisfied it was
+pinned rather than rewritten, and where one killed an invented constant on the way past,
+that is noted.
 
-adaptive half-life (3) · patience presets 7/30/90 with two typed fields (1) · the blocked-row
-cost line (2) · relist churn as settings (6) · uncapped units per transaction (7) · the
-A4E-sourced patient price (8) · mean reversion as its own case (9) · round down when
-undercutting (12) · the MAD outlier filter (13) · the ESI-ratio correction with a
-data-quality signal (14) · delete "stalled" from My orders (16) · the chart expanding on
-hover with the owner's own price and both lines (18, 19).
+| # | Landed as |
+|---|---|
+| 1 | two typed fields, `patDays` / `patFloor`, presets 7/30/90, default 90/35 |
+| 2 | the `floor 618k` chip: what the block cost, and the one control that changes it |
+| 3 | `reachHalfLife` — as far back as it takes to find one window's worth of trading days |
+| 4 | the history window is the typed one, already so |
+| 5 | unchanged |
+| 6 | `relistTol` / `relistMax` fields |
+| 7 | already done: the invented 1e6 was gone, the remaining bound is a rule and is named when it bites |
+| 8 | the patient price reads A4E sell-side prints at the hub, ESI as fallback |
+| 9 | `decayOf` bounds the carry by the range the market has traded in — **retired the 0.2 and 3 multipliers** |
+| 10 | `priceForOdds`, with a per-row target in the Fill cell |
+| 11 | unchanged |
+| 12 | already done; pinned by a ten-thousand-price sweep |
+| 13 | `cleanSellLevels` — modified z-score on log price plus the market's own floor |
+| 14 | `trkCorrected` — the item's own ESI ratio, with `vol ×N` as the quality signal |
+| 15 | unchanged |
+| 16 | the Stalled column, filter, stripe, sort key and header count are gone |
+| 17 | nine columns, two rows per item |
+| 18 | hover to open, click to pin, and the plan's own price is a marker |
+| 19 | both series, one scale, the hub line dashed |
+| 20 | `sde.js` — CCP's SDE read in the browser, kept in IndexedDB, one button to refresh |
+
+## Closed since
+
+Four of the eight open items were the same problem in different places — a number bounding
+an extrapolation with nothing behind it — and one rule closed all four:
+
+**A price carried by the trend may not leave the range this market has traded in**, lowest
+daily low to highest daily high. Beyond that it is being put at a price nobody has paid,
+which is extrapolation rather than evidence. That retired the old-print inflation cap (4×),
+the trend carry cap (±50%/week) and the give-up branch's 0.2 and 3 multipliers, and it is
+what makes mean reversion a distinct case (decision 9) rather than a special case.
+
+Units-per-trade also closed: the invented 1e6 was already gone, the bound that replaced it
+is a rule (one trade cannot be larger than everything the window trades) and the row says
+so when it binds.
 
 ## Still open
 
-ESI history window · old-print inflation cap · trend carry cap · what counts as "flat" ·
-exact-sum cutoff · which source for units-per-trade · the three measurement windows
-(trend/percentile/undercut velocity) · buy-order support.
+ESI history window · what counts as "flat" (`FLAT_PCT_PER_WEEK`) · exact-sum cutoff
+(`EU_EXACT_MAX`) · the three measurement windows (`TREND_DAYS` / `RANK_DAYS` / `VEL_DAYS`)
+· buy-order support.
 
-Several of these are pure internals the owner has already delegated ("you know what I want",
-"this one is on you"). They are open because they are unmeasured, not because they are
-undecided — each needs either a measurement or an honest label, not a preference.
+These are pure internals the owner has already delegated ("you know what I want", "this one
+is on you"). They are open because they are unmeasured, not because they are undecided —
+each needs either a measurement or an honest label, not a preference. Note that none of
+them bounds an extrapolation: they choose a window or a rendering threshold, which is a
+different kind of number.
 
 Two of the original twenty-six died with the cache: the staleness threshold and the storage
 guard.

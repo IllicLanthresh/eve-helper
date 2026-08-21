@@ -1350,6 +1350,49 @@ H.run('sell', async () => {
        the plan then valued holding it at that fiction. The carry stops at the range the
        market has actually traded in — which is measured, and which also retired the 0.2
        and 3 multipliers that used to bound it. */
+    /* ---------- carrying an old print to today ---------- */
+    /* A price from eight months ago is not evidence about this week at the number it was
+       printed at, so it is carried forward by the fitted trend first. That carry used to
+       be bounded by a 4x cap and a ±50%/week clamp, both invented. It is bounded by the
+       range the market has TRADED in — lowest daily low to highest daily high — because a
+       print carried outside that is being put at a price nobody has paid. */
+    section('the print carry is bounded by the traded range, not by a house multiplier');
+    const CARRY = await p4.evaluate(() => {
+      const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
+      const rows = [];
+      for (let t = 200; t >= 0; t--)
+        rows.push({ date: day(t), average: 1000, highest: 1200, lowest: 800, volume: 100 });
+      const rg = rangeOf(rows);
+      // a violent trend, far past the ±50%/week the old clamp allowed
+      const wild = 400;
+      return {
+        range: rg,
+        // 200 days at +400%/week is 5^28.6 — the old code capped that at 4x
+        upFar: carryOf(1000, wild, 200, rg),
+        downFar: carryOf(1000, -80, 200, rg),
+        // ...but a small carry inside the range is untouched
+        upNear: carryOf(1000, 5, 7, rg),
+        rawNear: Math.pow(1.05, 1),
+        noRange: carryOf(1000, wild, 200, null),
+        noTrend: carryOf(1000, null, 200, rg),
+      };
+    });
+    eq('the traded range is the lowest low to the highest high', 
+      CARRY.range.lo + '..' + CARRY.range.hi, '800..1200');
+    near('a runaway rise is carried to the top of that range and no further',
+      CARRY.upFar, 1200 / 1000, 1e-12);
+    near('...and a runaway fall to the bottom of it', CARRY.downFar, 800 / 1000, 1e-12);
+    check('...which is tighter than the 4x cap it replaced, in both directions',
+      CARRY.upFar < 4 && CARRY.downFar > 0.25, CARRY.upFar + ' / ' + CARRY.downFar);
+    near('a carry that lands inside the range is left exactly alone',
+      CARRY.upNear, CARRY.rawNear, 1e-12);
+    check('...and with no history to bound it, nothing is invented to stand in',
+      CARRY.noRange > 1e6, String(CARRY.noRange));
+    eq('no trend means no carry', CARRY.noTrend, 1);
+    eq('neither cap survives anywhere in the file',
+      await p4.evaluate(() => typeof HIT_ADJ_CAP + '/' + typeof HIT_TREND_CAP_PCT),
+      'undefined/undefined');
+
     section('the trend carry stops at the range the market has traded in');
     const REV = await p4.evaluate(() => {
       const day = t => new Date(Date.now() - t * 86400e3).toISOString().slice(0, 10);
