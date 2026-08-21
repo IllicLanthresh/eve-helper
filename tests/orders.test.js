@@ -34,6 +34,8 @@ const TYPE_IDS = {
   'Slide Widget': 9108,
   'Nobook Widget': 9109,
   'Ghost Widget': 9110,
+  'Ship Skin': 9111,          // the order this whole pass exists for
+  'Liquid Widget': 9112,      // at the front of a deep book — must stay healthy
   Tritanium: 34,
   'Advanced Broker Relations': 3447,
 };
@@ -110,14 +112,61 @@ const BOOKS = {
     hist: FLAT,
   },
   /* Overbid on a sliding market. The highs slide with the average, so carrying every
-     past day to today's price level lands them all back on 2,000 and the raw hit rate at
-     1,100 stays exactly 1 — the ONLY thing that makes this row stalled is the trend plus
-     sitting above the best sell. */
+     past day to today's price level lands them all back on the same band — the ONLY thing
+     that makes this row stalled is the trend plus sitting above the best sell.
+
+     RETUNED for the arrival model. The book used to queue 2,000 units below the user
+     against 100 traded a day, and the old metric handled that by multiplying a hit rate
+     of 1 by 14/20 — a queue that takes 20 days to clear reported as a 70% chance. The
+     model walks the queue at each level's own demand rate instead, and 2,000 units in
+     front of a market that clears ~9 a day at that price is not 70%, it is nothing. So
+     the queue is one unit and the arrival rate carries the window instead: 7 units a day
+     trade, 8.2% of them at or above 1,100, so ~0.57 units a day reach the user's price.
+     Ten units then need about seventeen days — inside a patient 30-day window, short of a
+     balanced 14-day one. That is the same statement the fixture always made, made in
+     units instead of in a fudge factor. */
   'Slide Widget': {
     buys: [{ p: 900, v: 1000 }],
-    sells: [{ p: 1000, v: 2000 }, { p: 1100, v: 10, id: 17 }],
+    sells: [{ p: 1000, v: 1 }, { p: 1100, v: 10, id: 17 }],
     hist: series(400, t => ({ average: 1000 * Math.pow(K, t), highest: 2000 * Math.pow(K, t),
-                              lowest: 900 * Math.pow(K, t), volume: 100 })),
+                              lowest: 900 * Math.pow(K, t), volume: 7 })),
+  },
+  /* THE ACCEPTANCE CASE, off the owner's own hangar. Five units of a ship skin listed at
+     177,600 with 178 units of other people's stock queued in front at 10,010, on a market
+     that trades two units a day and has printed a high above 177,600 on five days out of
+     365. The buy book pays 5,000.
+
+     A spike every 15 days puts a high above 177,600 in 89% of 14-day windows, and 178
+     units against 2 a day tempers that by 14/89 — so the metric this page used to decide
+     with reads about 14%, and 14% of 888,000 ISK dwarfs 24,156 of buy book. That is why
+     it said KEEP. The section below re-derives the number from the page's own hitRateOf
+     and asserts the verdict no longer follows it.
+
+     The market drifts UP 1.4%/week — inside the flat band, so nothing is classed falling,
+     but enough that the give-up branch is worth more at the end of the window than the
+     buy book is worth today. Holding therefore still SCORES higher than dumping with a
+     zero fill, and only the floor takes it off the table. That is the shape of the 27
+     stalled orders the page was still telling him to hold: not outscored, ungated.
+
+     The spikes stop 31 days back, so the 30-day trend window sees a flat market and the
+     direction reason cannot fire. */
+  'Ship Skin': {
+    buys: [{ p: 5000, v: 1000 }],
+    sells: [{ p: 10010, v: 178 }, { p: 177600, v: 5, id: 21 }],
+    hist: series(365, t => {
+      const f = Math.pow(1.002, -t);           // 0.2%/day forward = +1.41%/week
+      return (t >= 31 && t % 15 === 1)
+        ? { average: 12500 * f, highest: 200000 * f, lowest: 9800 * f, volume: 2, orders: 1 }
+        : { average: 10300 * f, highest: 11000 * f, lowest: 9800 * f, volume: 2, orders: 1 };
+    }),
+  },
+  /* The control: at the very front of the book on a market that moves a million units a
+     day. Whatever the model does to the hopeless order, it must leave this one alone. */
+  'Liquid Widget': {
+    buys: [{ p: 4.5, v: 1e7 }],
+    sells: [{ p: 5, v: 10000, id: 22 }],
+    hist: series(365, () => ({ average: 5, highest: 5.2, lowest: 4.8,
+                               volume: 1e6, orders: 5000 })),
   },
   'Nobook Widget': { buys: [{ p: 100, v: 10 }], sells: [], hist: FLAT },   // its book 404s below
   'Ghost Widget': { buys: [{ p: 100, v: 10 }], sells: [], hist: FLAT },    // at the unnameable station
@@ -144,6 +193,11 @@ const MAIN_ORDERS = [
         location_id: GHOST_STATION }),
   ord({ order_id: 20, type_id: 34, price: 4.5, volume_remain: 1000, volume_total: 1000,
         is_buy_order: true, duration: 30, issued: iso(5), escrow: 4500 }),
+];
+
+const ACCEPT_ORDERS = [
+  ord({ order_id: 21, type_id: 9111, price: 177600, volume_remain: 5, volume_total: 5 }),
+  ord({ order_id: 22, type_id: 9112, price: 5, volume_remain: 10000, volume_total: 10000 }),
 ];
 
 async function openOrders(browser, server, opts) {
@@ -369,8 +423,14 @@ H.run('orders', async () => {
     eq('...for the odds', dDump.chance, 0);
     check('...with a chip stating the odds against the floor',
       dDump.reasons.some(r => /^\d+%<\d+%$/.test(r.t)), JSON.stringify(dDump.reasons));
-    check('...whose tooltip carries the chance and the floor it missed',
-      dDump.reasons.some(r => /chance: \d+% of filling at/.test(r.ttl) && /floor: \d+% \("balanced"\)/.test(r.ttl)),
+    /* REWRITTEN: the tooltip used to quote a chance of the whole order filling. The
+       number behind it is now the share of the units expected to sell, and the floor it
+       misses no longer merely decorates the row — it takes holding out of the running,
+       which is the sentence the tooltip has to carry. */
+    check('...whose tooltip carries the units, the floor it missed, and what that costs it',
+      dDump.reasons.some(r => /fill: \d+% of [\d,]+ u sells at/.test(r.ttl)
+        && /floor: \d+% \("balanced"\)/.test(r.ttl)
+        && /verdict: holding is out of the running/.test(r.ttl)),
       JSON.stringify(dDump.reasons));
     check('...and the chip stays a chip', dDump.reasons.every(r => r.t.length <= 10),
       JSON.stringify(dDump.reasons.map(r => r.t)));
@@ -384,10 +444,16 @@ H.run('orders', async () => {
       JSON.stringify(dQueue.reasons));
     const dSlide = await diagOf(page, 17);
     near('a sliding market is measured, not guessed', dSlide.trendPctWk, TREND, 1e-9);
-    // 2,000 units ahead / 100 a day = 20 days against a 14-day window -> the queue tempers
-    // a hit rate of exactly 1 down to 14/20 = 0.7: above the 55% floor, under the 90% that
-    // would make the trend irrelevant
-    near('...the chance is the hit rate tempered by the queue', dSlide.chance, 0.7, 1e-9);
+    /* REWRITTEN: this used to assert 14/20 = 0.7, the old queue fudge — a hit rate of 1
+       scaled by window/daysToFill. The page now asks how many units actually arrive at
+       this price inside the window, and the answer is a share of the ten on the order:
+       above the 55% floor, under the 90% that would make the trend irrelevant. */
+    check('...the chance is the share of the order the arrivals cover, not a fudge factor',
+      dSlide.chance > 0.55 && dSlide.chance < 0.9, String(dSlide.chance));
+    near('...which is expected units over the ten still listed',
+      dSlide.chance, dSlide.expUnits / 10, 1e-12);
+    eq('...an estimate off ESI regional volume, and labelled as the upper bound it is',
+      dSlide.bound, 'upper');
     check('being above the best sell on a falling market is stalled on its own',
       dSlide.stalled && dSlide.reasons.length === 1
         && /^\+[\d.]+%▼$/.test(dSlide.reasons[0].t), JSON.stringify(dSlide.reasons));
@@ -398,6 +464,7 @@ H.run('orders', async () => {
     check('...even though the odds pass the floor and the queue clears in time',
       dSlide.chance > 0.55 && dSlide.daysToFill < dSlide.daysLeft,
       dSlide.chance + ' / ' + dSlide.daysToFill + ' vs ' + dSlide.daysLeft);
+    eq('...so the floor never gets to gate anything on this row', dSlide.floored.length, 0);
 
     /* ---------- (h) the three verdicts ---------- */
     section('HOLD / REPRICE / CANCEL & DUMP, hand-computed');
@@ -472,9 +539,15 @@ H.run('orders', async () => {
       return { head, cells, n: lines.length - 1,
                widths: lines.slice(1).map(l => l.split('\t').length) };
     });
+    /* REWRITTEN: 'Chance %' became 'Fill %' when the number stopped being a coin flip on
+       the whole order, and 'Fill bound' travels beside it — an upper bound off ESI
+       regional volume and an estimate off the station's own sell-side prints are not the
+       same number and must not export as one. */
     check('the diagnostic columns are all there',
-      ['Queue ahead', 'Fill est. d', 'Chance %', 'Trend %/wk', 'Hold ISK', 'Reprice ISK',
-       'Dump ISK', 'Relist fee ISK'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
+      ['Queue ahead', 'Fill est. d', 'Fill %', 'Fill bound', 'Trend %/wk', 'Hold ISK',
+       'Reprice ISK', 'Dump ISK', 'Relist fee ISK'].every(h => otsv.head.includes(h)),
+      otsv.head.join('|'));
+    eq('...and the bound is on the row, not just in the header', otsv.cells['Fill bound'], 'upper');
     check('...alongside the columns the table shows',
       ['Character', 'Item', 'Your price', 'Qty left', 'Location', 'ISK tied up', 'vs best %',
        'Stalled', 'Verdict'].every(h => otsv.head.includes(h)), otsv.head.join('|'));
@@ -742,8 +815,12 @@ H.run('orders', async () => {
     await setPatience(page, 'patient');
     const dSlide30 = await diagOf(page, 17);
     eq('the window follows the patience control', dSlide30.window, 30);
-    near('...and the queue tempers the chance over the longer window',
-      dSlide30.chance, 1, 1e-9);            // 30/20 capped at 1
+    /* REWRITTEN: the old assertion was 30/20 capped at 1 — the queue fudge again. What
+       the longer window really buys is more days of arrivals at the user's price, and ten
+       units need about seventeen of them. */
+    check('...and the extra fortnight is what carries the order over the line',
+      dSlide30.chance > 0.9 && dSlide30.chance > dSlide.chance,
+      dSlide30.chance + ' vs ' + dSlide.chance);
     eq('...which takes the row off the stalled list', dSlide30.stalled, false);
     await setPatience(page, 'balanced');
     eq('...and back', (await diagOf(page, 17)).stalled, true);
@@ -963,6 +1040,86 @@ H.run('orders', async () => {
     check('an item you have no order for is not flagged',
       other.dup === 0 && !other.flags.some(f => /^dup/.test(f)), other.flags);
     await s.close();
+
+    /* ---------- (q2) THE ACCEPTANCE CASE ---------- */
+    /* The page computed the right answer and threw it away. fillOutlook has been in the
+       file for a pass now, correctly reporting fillFrac 0 / capped "queue" for this exact
+       row, while the verdict was still made out of a window-hit rate multiplied by a
+       queue fudge. This section pins the wiring: the old number is still computable, it
+       still says ~15%, and the verdict no longer follows it. */
+    section('the order the page used to tell him to keep');
+    const sA = await openOrders(browser, server, { orders: ACCEPT_ORDERS });
+    await sA.page.click('#modeOrders');
+    await fetchOrders(sA.page);
+    const skin = await diagOf(sA.page, 21);
+    const liquid = await diagOf(sA.page, 22);
+
+    // the number that used to decide, re-derived from the page's own definition of it
+    const wasChance = await sA.page.evaluate(() => {
+      const e = ordEntry(state.orders.list.find(o => o.orderId === 21));
+      const hit = hitRateOf(e, 177600, 14);
+      const d = state.orders.diag[21];
+      // window / days for the queue to clear, capped at 1 — the old temper, verbatim
+      const qf = Math.min(1, d.window / Math.max(d.daysToFill, 0.5));
+      return { hit: hit.p, qf, chance: hit.p * qf };
+    });
+    check('the old metric reads this price as reached in most windows',
+      wasChance.hit > 0.85 && wasChance.hit < 0.95, String(wasChance.hit));
+    check('...tempered by the queue to the sort of number that reads like a real chance',
+      wasChance.chance > 0.12 && wasChance.chance < 0.16, String(wasChance.chance));
+    check('...and that much of the listed value dwarfs the buy book — why it said HOLD',
+      wasChance.chance * 5 * 177600 * (1 - TAX) > 5 * 5000 * (1 - TAX) * 4,
+      String(wasChance.chance * 5 * 177600 * (1 - TAX)));
+
+    // ...and what the model says about the very same row
+    eq('the model expects not one unit of it to sell', skin.chance, 0);
+    eq('...nor even one, on its own odds', skin.chanceAny, 0);
+    eq('...and names the queue as the reason, not the price', skin.capped, 'queue');
+    eq('...off ESI regional volume, so it is an upper bound', skin.bound, 'upper');
+    eq('178 units really are ahead of him', skin.queueAhead, 178);
+    check('...on a market that trades about two units a day',
+      skin.volDay > 1.9 && skin.volDay <= 2, String(skin.volDay));
+
+    // THE FLIP
+    eq('the verdict follows the model', skin.verdict, 'dump');
+    check('...with holding taken out of the running by the floor, not outscored by it',
+      skin.floored.includes('hold'), JSON.stringify(skin.floored));
+    check('...and repricing to the back of the same queue refused with it',
+      skin.floored.includes('reprice'), JSON.stringify(skin.floored));
+    /* THE POINT OF THE GATE. With a zero fill, holding is worth exactly the give-up
+       branch — the same stack dumped at the end of the window instead of today — and on a
+       market drifting up that is MORE ISK than dumping now. Score alone would keep the
+       order up forever. */
+    check('...even though holding still SCORES higher than dumping',
+      skin.valueHold > skin.valueDump, skin.valueHold + ' vs ' + skin.valueDump);
+    near('...being the buy book carried to day 14 by the trend', skin.valueHold,
+      skin.valueDump * skin.decay, 1e-6);
+    eq('...and the direction is not what did it: this market is not classed falling',
+      skin.dir, 'flat');
+    near('...the buy book being all this is really worth', skin.valueDump,
+      5 * 5000 * (1 - TAX), 1e-6);
+    check('the row says so on the badge', /^CANCEL & DUMP/.test(skin.why), skin.why);
+    check('...naming the floor that took the other two away',
+      /^floor: .*under \d+% \("balanced"\) · not offered$/m.test(skin.why), skin.why);
+    check('...and what kind of number the odds are',
+      /^odds: upper bound · source ESI regional, both sides/m.test(skin.why), skin.why);
+
+    // THE CONTROL — the liquid at-market order must not have moved
+    near('at the front of a deep book the whole order still sells', liquid.chance, 1, 1e-9);
+    eq('...and it is not stalled', liquid.stalled, false);
+    eq('...nor floored', liquid.floored.length, 0);
+    eq('...and it is held', liquid.verdict, 'hold');
+    near('...worth the full listed value, net of tax', liquid.valueHold,
+      10000 * 5 * (1 - TAX), 1e-6);
+    check('...which beats dumping it into the buy book',
+      liquid.valueHold > liquid.valueDump, liquid.valueHold + ' vs ' + liquid.valueDump);
+    const cellsA = await rowCells(sA.page, 21);
+    const cellsL = await rowCells(sA.page, 22);
+    check('the hopeless row reads as a bounded zero on screen',
+      cellsA.includes('≤0%'), JSON.stringify(cellsA));
+    check('...and the liquid one as a bounded certainty',
+      cellsL.includes('≤100%'), JSON.stringify(cellsL));
+    await sA.close();
 
     /* ---------- (q) a login without the structure scope ---------- */
     section('a structure with no market access');

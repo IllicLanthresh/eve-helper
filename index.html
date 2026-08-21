@@ -396,7 +396,7 @@
         <th data-key="strategy" title="recommended disposal · hover a badge for its numbers">Plan</th>
         <th data-key="exportPrice" class="num" title="price to import at">Import at ISK/u</th>
         <th data-key="fillDays" class="num" title="queue at the price ÷ Vol/day&#10;queue: units already listed at or below it, yours excluded&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
-        <th data-key="fillChance" class="num" title="chance of filling inside the patience window&#10;= share of past windows whose daily high reached the price&#10;carried to today by the trend, tempered by the queue">Chance %</th>
+        <th data-key="fillChance" class="num" title="share of the listed stack expected to sell inside the patience window&#10;the queue ahead drains first, then buyers paying your price arrive&#10;≤ marks an upper bound: ESI regional volume, both sides pooled">Fill %</th>
         <th data-key="perSlot" class="num" title="expected net ÷ expected days on the market&#10;INSTANT uses no slot — not ranked here">ISK/slot-day</th>
         <th data-key="totalNet" class="num" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given">Expected net ISK</th>
         <th data-key="advTotal" class="num" title="listing plan net − instant net&#10;negative: instant is better">Order Δ ISK</th>
@@ -503,7 +503,7 @@
         <th data-key="volSell" class="num" title="units bought from sell orders per day&#10;this station only, not the region&#10;Adam4EVE order tracker — an estimate">Sell u/d</th>
         <th data-key="capture" class="num" title="share of traded units that hit sell orders&#10;22%: most volume is dumping into buy orders&#10;measured at this station over the held window">Sell share</th>
         <th data-key="trendPctWk" class="num" title="Theil–Sen slope, %/week&#10;same trend the Sell mode ranks with">Trend %/wk</th>
-        <th data-key="chance" class="num" title="chance of filling at your price before expiry&#10;= share of past windows whose daily high reached it&#10;carried to today by the trend, tempered by the queue">Chance %</th>
+        <th data-key="chance" class="num" title="share of the units left on this order expected to sell before expiry&#10;the queue ahead drains first, then buyers paying your price arrive&#10;≤ marks an upper bound: ESI regional volume, both sides pooled">Fill %</th>
         <th data-key="stalledIsk" title="stalled: odds under the floor, or the queue outlasts the order, or above best sell on a sliding market&#10;sorts by ISK frozen in stalled orders">Stalled?</th>
         <th data-key="verdict" title="hold / reprice / cancel &amp; dump · hover a badge for the arithmetic">Verdict</th>
         <th title="open the item's market window in the client that owns the order&#10;reprice rows also put the new price on the clipboard&#10;needs: esi-ui.open_window.v1">↗</th>
@@ -1772,6 +1772,17 @@ function reachOf(e, price){
   };
 }
 
+/* Phase 1 of the queue walk asks for the reach at EVERY level below the price, once per
+   candidate listing and once per order triaged, and the history it reads does not change
+   between fetches. Memoised on the entry the same way hitRateCached is, and on the
+   tracker adapter rather than the ESI entry when the model is reading tracker prints. */
+function reachCached(e, price){
+  if (!e) return null;
+  if (!e._reach) e._reach = new Map();
+  if (!e._reach.has(price)) e._reach.set(price, reachOf(e, price));
+  return e._reach.get(price);
+}
+
 /* Regularized lower incomplete gamma P(a,x) = P(Gamma(shape a, rate 1) <= x). Series
    below the transition, Lentz's continued fraction above it — the standard split, because
    the series converges slowly exactly where the fraction converges fast. Used for "what
@@ -1853,12 +1864,12 @@ function fillOutlook(e, comp, price, qty, windowDays, opts){
   const trk = (opts.tracker && opts.tracker.sell && opts.tracker.sell.length) ? opts.tracker : null;
   if (trk && !trk._e) trk._e = { hist: trk.sell, typeId: e.typeId };
   const src = trk ? trk._e : e;
-  const reach = reachOf(src, price);
+  const reach = reachCached(src, price);
   const volDay = trk ? trk.sellUnitsDay : histVolOf(e.hist, opts.histDays || HIT_DAYS);
   if (!reach || !(volDay > 0)) return null;
   const scale = volDay;             // no capture constant, no station-share guess
   const lambdaAt = x => {
-    const r = x === price ? reach.R : (reachOf(src, x) || { R: 0 }).R;
+    const r = x === price ? reach.R : (reachCached(src, x) || { R: 0 }).R;
     return scale * r;
   };
   const lambdaP = scale * reach.R;
@@ -2009,6 +2020,52 @@ function hitRateCached(e, price, windowDays){
   return e._hit.get(k);
 }
 
+/* The outlook for ONE listing at one price, in the shape both the Sell plan and the
+   order triage read.
+
+   `frac` is the share of the listed stack expected to sell inside the window — an
+   expectation over UNITS, not a coin flip on the whole stack. The page used to multiply
+   an all-or-nothing probability by the whole listing value, which tells one of two
+   stories the market never tells: everything sold, or nothing did. A stack whose queue
+   drains halfway is now worth half a fill, and the broker fee is charged against it
+   either way.
+
+   fillOutlook is the model. Where it has nothing to work with — no history, no traded
+   volume, no price — it returns null and this falls back to the empirical window hit
+   rate tempered by the queue, which is exactly what the page computed before the model
+   existed. That fallback keeps the all-or-nothing shape on purpose: with no arrival rate
+   there is nothing to spread a partial fill over, and inventing one would be the guess
+   this whole pass exists to remove. It is an upper bound and says so.
+
+   `bound` travels with every number out of here: 'estimate' where the sell-side prints
+   at this station fed it, 'upper' where the input was ESI's regional history with both
+   sides of the book pooled across every station in the region. */
+function listingOutlook(e, comp, price, qty, windowDays, opts){
+  opts = opts || {};
+  const o = fillOutlook(e, comp, price, qty, windowDays, opts);
+  if (o) return {
+    frac: o.fillFrac, pAny: o.pAny, pFull: o.pFull, expUnits: o.expUnits,
+    // Infinity is the model saying "never inside this window"; the callers want a number
+    // or nothing, and the fraction already carries the verdict
+    expDays: Number.isFinite(o.expDays) ? o.expDays : null,
+    bound: o.bound, src: o.reachSrc, capped: o.capped, queue: o.queue,
+    kappa: o.kappa, kappaSrc: o.kappaSrc, model: o, hit: null, queueFactor: null,
+  };
+  const hit = hitRateCached(e, price, windowDays);
+  if (!hit) return null;
+  const fillDays = daysToFillAt(comp, price, opts.volDay);
+  const queueFactor = fillDays != null ? Math.min(1, windowDays / Math.max(fillDays, 0.5)) : 1;
+  const p = hit.p * queueFactor;
+  return { frac: p, pAny: p, pFull: p, expUnits: p * qty, expDays: fillDays,
+           bound: 'upper', src: 'esi', capped: null, queue: null,
+           kappa: null, kappaSrc: null, model: null, hit, queueFactor };
+}
+
+// an upper bound is not an estimate, and the two never get to look alike on screen
+const pcBound = (p, bound) => p == null ? '—'
+  : (bound === 'upper' ? '≤' : '') + Math.round(p * 100) + '%';
+const boundWord = bound => bound === 'estimate' ? 'estimate' : 'upper bound';
+
 /* Days to work through the queue at `price`: units already listed at or below it on the
    hub's sell side, divided by the daily traded volume. BOTH halves are approximations and
    the column tooltip says so — the regional volume mixes buy and sell sides and every
@@ -2147,11 +2204,15 @@ function rebuild(keepChecks = true){
          broker    max(100 ISK, broker% x listQty x price), SPENT WHEN THE ORDER GOES UP
                    and never refunded, so it is charged in both branches below
          churn     relists x broker, when the cheap end of the book is sliding
-         p         chance of filling inside the patience window = the empirical hit rate
-                   at that price, tempered by how long the queue at it already is
-         net       legNet - broker - churn + p x (it fills) + (1 - p) x (you give up at the
+         p         the SHARE of the listed stack expected to sell inside the patience
+                   window: the queue ahead drains at each level's own demand rate, then
+                   buyers paying at least this price arrive and take units. Not a coin
+                   flip on the whole stack — a listing that moves a third of its units is
+                   worth a third of a fill, and pays the fee on all of it
+         net       legNet - broker - churn + p x (it sells) + (1 - p) x (you give up at the
                    end of the window and dump the remainder then, carried by the trend)
-         days      p x (queue estimate, capped at the window) + (1 - p) x the whole window
+         days      p x (the model's own time to clear, capped at the window) + (1 - p) x
+                   the whole window
          perSlot   net / max(days, 1) — ISK per market-slot-day, the ranking objective
 
        With no history to reason from there is no p and no trend: the value falls back to
@@ -2163,14 +2224,17 @@ function rebuild(keepChecks = true){
       const legNet = fill.proceeds * (1 - tax);
       const listValue = listQty * price;
       const brokerCharge = brokerOn(listValue, broker);
-      const hit = listQty > 0 ? hitRateCached(e, price, pat.days) : null;
+      const out = listQty > 0
+        ? listingOutlook(e, sellLevels, price, listQty, pat.days,
+                         { histDays, tracker: trk, volDay })
+        : null;
+      const p = out ? out.frac : null;
+      // the Fill est. column stays the plain queue-over-volume divide it has always been;
+      // the value below uses the model's own clearing time, which prices the queue level
+      // by level instead of dividing by one pooled rate
       const fillDays = listQty > 0 ? daysToFillAt(sellLevels, price, volDay) : null;
-      // the queue tempers the price evidence: history says the price gets reached, the
-      // live book says how long the line at that price already is
-      const queueFactor = (hit && fillDays != null)
-        ? Math.min(1, pat.days / Math.max(fillDays, 0.5)) : 1;
-      const p = hit ? hit.p * queueFactor : null;
-      const dFill = fillDays != null ? Math.min(Math.max(fillDays, 0.5), pat.days) : pat.days / 2;
+      const dFill = out && out.expDays != null ? Math.min(Math.max(out.expDays, 0.5), pat.days)
+        : fillDays != null ? Math.min(Math.max(fillDays, 0.5), pat.days) : pat.days / 2;
       const days = listQty <= 0 ? 0
         : p == null ? (fillDays != null ? Math.max(fillDays, 0.5) : null)
         : p * dFill + (1 - p) * pat.days;
@@ -2184,7 +2248,9 @@ function rebuild(keepChecks = true){
           + p * listValue * (1 - tax)
           + (1 - p) * Math.max(0, netInstant - legNet) * decay;
       return { kind, price, fill, legQty, listQty, legNet, listValue, brokerCharge, churn,
-               relists, hit, p, queueFactor, fillDays, days, net,
+               relists, out, hit: out ? out.hit : null, p,
+               bound: out ? out.bound : null, pAny: out ? out.pAny : null,
+               queueFactor: out ? out.queueFactor : null, fillDays, days, net,
                perSlot: days != null ? net / Math.max(days, 1) : null };
     };
 
@@ -2204,8 +2270,9 @@ function rebuild(keepChecks = true){
       unpriced.push({ name: i.name, qty: i.qty, reason: 'no buy book, no list price', unsellable });
       continue;
     }
-    // THE FEE GUARD: a listing whose fill chance is under the patience mode's floor spends
-    // the broker fee for nothing more often than not, so it is not recommended at all.
+    // THE FEE GUARD: a listing whose EXPECTED SHARE of the stack sold is under the
+    // patience mode's floor spends the broker fee on the whole listing to move a fraction
+    // of it, so it is not recommended at all.
     const guarded = cands.filter(o => o.p != null && o.p < pat.minFill);
     let pool = cands.filter(o => o.p == null || o.p >= pat.minFill);
     // ...unless there is no buy book to dump into: then a poor listing still beats no sale
@@ -2234,6 +2301,8 @@ function rebuild(keepChecks = true){
     const advTotal = (netOrder != null) ? netOrder - netInstant : null;
     const fillDays = chosen ? chosen.fillDays : null;
     const fillChance = chosen ? chosen.p : null;
+    const fillBound = chosen ? chosen.bound : null;
+    const fillPAny = chosen ? chosen.pAny : null;
     const perSlot = chosen ? chosen.perSlot : null;
     if (dir === 'falling') flags.push({t:`▼${Math.abs(trendPctWk).toFixed(1)}%/wk`, cls:'warn',
       ttl:`trend: ${pctSigned(trendPctWk)}/wk (falling)`});
@@ -2286,7 +2355,7 @@ function rebuild(keepChecks = true){
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
       volSell, volBuy, capture, volSrc: trk ? 'tracker' : 'esi',
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
-      fillDays, fillChance, perSlot, trendPctWk, dir, pctRank, brokerEffPct,
+      fillDays, fillChance, fillBound, fillPAny, perSlot, trendPctWk, dir, pctRank, brokerEffPct,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       histRows: e.hist || null,
@@ -2429,11 +2498,19 @@ function whyText(r){
     out.push(`LIST ${fmtIsk(c.price)} (${c.kind === 'patient' ? 'patient' : 'comp'}) · `
       + `${fmtIsk(r.totalNet)} ISK net`
       + (c.days != null ? ` · ${fmtDays(c.days)}d` : '')
-      + (r.fillChance != null ? ` · ${pc(r.fillChance)} in ${m.window}d` : '')
+      + (r.fillChance != null ? ` · ${pcBound(r.fillChance, r.fillBound)} in ${m.window}d` : '')
       + (r.perSlot != null ? ` · ${fmtIsk(r.perSlot)} ISK/slot-day` : ''));
     if (r.splitFill > 0) out.push(`leg: ${fmt.format(r.splitFill)} u fill instantly on buy orders above it`);
     out.push(`now: ${fmtIsk(r.netInstant)} ISK`);
   }
+  const c2 = c && c.out;
+  if (c2 && r.fillChance != null)
+    out.push(`odds: ${pcBound(r.fillChance, r.fillBound)} of ${fmt.format(c.listQty)} u sells`
+      + ` · any unit ${pc(c.pAny)}`
+      + ` · ${boundWord(r.fillBound)}`
+      + ` · source ${c2.src === 'tracker' ? 'Adam4EVE sell side' : 'ESI regional, both sides'}`
+      + (c2.capped === 'queue' ? ` · queue ${fmt.format(Math.round(c2.queue))} u never clears` : '')
+      + (c2.capped === 'ceiling' ? ' · above every price the market has paid' : ''));
   const ev = [];
   if (r.pctRank != null && r.bestSell != null) ev.push(`rank: p${Math.round(r.pctRank)} of ${RANK_DAYS}d`);
   if (r.trendPctWk != null) ev.push(`trend: ${pctSigned(r.trendPctWk)}/wk (${r.dir})`);
@@ -2447,9 +2524,11 @@ function whyText(r){
     out.push(`patient ${fmtIsk(m.patientPrice)}: below your ask — nothing to wait for`);
   for (const g of (m.guarded || []))
     out.push(`skip ${fmtIsk(g.price)}: ${pc(g.p)} < ${pc(m.minFill)} floor (${m.label})`
-      + ` · hit ${pc(g.hit ? g.hit.p : 0)} of ${m.window}d windows`
-      + (g.hit && Math.abs(g.hit.raw - g.hit.p) > 0.05 ? ` (raw ${pc(g.hit.raw)})` : '')
-      + (g.queueFactor < 0.99 ? ` · queue ${fmtDays(g.fillDays)}d` : '')
+      + ` · ${fmt.format(Math.round(g.out ? g.out.expUnits : 0))} of ${fmt.format(g.listQty)} u sells`
+      + (g.out && g.out.capped === 'queue'
+        ? ` · queue ${fmt.format(Math.round(g.out.queue))} u never clears` : '')
+      + (g.out && g.out.capped === 'ceiling' ? ' · above every price the market has paid' : '')
+      + (g.hit ? ` · hit ${pc(g.hit.p)} of ${m.window}d windows` : '')
       + ` · fee ${fmtIsk(g.brokerCharge)} ISK spent either way`);
   if (m.velPctDay > 0.2)
     out.push(`sliding ${m.velPctDay.toFixed(2)}%/day → repricing`
@@ -2666,7 +2745,7 @@ function buildDetailChart(r){
   mk('plan', PLAN_LABEL[r.strategy]);
   mk('net ISK', fmtIsk(r.totalNet));
   mk('fill est. d', r.fillDays == null ? '—' : fmtDays(r.fillDays));
-  mk('chance', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%');
+  mk('fill', pcBound(r.fillChance, r.fillBound));
   mk('ISK/slot-day', r.perSlot == null ? '— no slot' : fmtIsk(r.perSlot));
   box.appendChild(nums);
   const why = document.createElement('p');
@@ -2854,7 +2933,7 @@ function render(){
           : r.fillDays == null ? 'no sell book, or no traded volume to divide by'
           : `queue: ${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} u at or below ${fmtIsk(r.exportPrice)}`
             + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)`],
-      ['num', r.fillChance == null ? '—' : Math.round(r.fillChance * 100) + '%',
+      ['num', pcBound(r.fillChance, r.fillBound),
         r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
         r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why],
       ['num', r.perSlot == null ? '—' : fmtIsk(r.perSlot), r.perSlot == null ? '' : priceCopy(r.perSlot),
@@ -3009,7 +3088,7 @@ async function copyText(text, status, fallbackTa, statusMsg){
 }
 
 function fullTsv(){
-  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Sell u/d','Buy u/d','Sell share','Vol source','Buy depth','Sell depth','Plan','Import price ISK/u','Fill est. days','Chance %','ISK/slot-day','Net instant ISK','Net listing plan ISK','Expected net ISK','Order Δ ISK','Trend %/wk','Pct rank 60d','Undercut %/day','Broker at risk ISK','Instant leg qty','Flags','In import list'];
+  const head = ['Item','Qty','Top buy ISK/u','Best sell ISK/u','Margin %','Hist ISK/u','Sell vs hist %','Vol/day','Sell u/d','Buy u/d','Sell share','Vol source','Buy depth','Sell depth','Plan','Import price ISK/u','Fill est. days','Fill %','Fill bound','ISK/slot-day','Net instant ISK','Net listing plan ISK','Expected net ISK','Order Δ ISK','Trend %/wk','Pct rank 60d','Undercut %/day','Broker at risk ISK','Instant leg qty','Flags','In import list'];
   const lines = [head.join('\t')];
   for (const r of rowsForExport()){
     lines.push([
@@ -3025,6 +3104,7 @@ function fullTsv(){
       r.exportPrice != null ? r.exportPrice.toFixed(2) : '',
       r.fillDays != null ? r.fillDays.toFixed(2) : '',
       r.fillChance != null ? (r.fillChance * 100).toFixed(1) : '',
+      r.fillBound || '',
       r.perSlot != null ? r.perSlot.toFixed(2) : '',
       r.netInstant.toFixed(2),
       r.netOrder != null ? r.netOrder.toFixed(2) : '',
@@ -4162,13 +4242,22 @@ function diagnoseOne(o, cfg){
   // whichever runs out first — waiting 30 days on an order that expires in 4 is fiction
   d.window = Math.max(1, Math.round(daysLeft == null ? cfg.pat.days
     : Math.min(cfg.pat.days, Math.max(daysLeft, 1))));
-  const hit = e ? hitRateCached(e, o.price, d.window) : null;
-  d.queueFactor = (hit && d.daysToFill != null) ? Math.min(1, d.window / Math.max(d.daysToFill, 0.5)) : 1;
-  d.chance = hit ? hit.p * d.queueFactor : null;
-  d.hitRaw = hit ? hit.raw : null;
-  d.hitBasis = hit ? hit.basis : null;
-
   const q = o.volumeRemain, tax = cfg.tax;
+  /* d.chance is the SHARE of the units still on this order expected to sell before the
+     window runs out — the same quantity the Sell plan ranks listings by, off the same
+     model, so the two screens cannot disagree about one order. */
+  const out = e ? listingOutlook(e, comp, o.price, q, d.window,
+    { histDays: cfg.histDays, tracker: trk, volDay: d.volDay }) : null;
+  d.chance = out ? out.frac : null;
+  d.chanceAny = out ? out.pAny : null;
+  d.expUnits = out ? out.expUnits : null;
+  d.bound = out ? out.bound : null;
+  d.chanceSrc = out ? out.src : null;
+  d.capped = out ? out.capped : null;
+  d.queueFactor = out ? out.queueFactor : null;
+  d.hitRaw = out && out.hit ? out.hit.raw : null;
+  d.hitBasis = out ? (out.model ? out.model.reach.basis : out.hit.basis) : null;
+
   const dumpWalk = walkBook(book.buyLevels, q, null);
   d.dumpFilled = dumpWalk.filled;
   d.dumpNow = dumpWalk.proceeds * (1 - tax);
@@ -4188,6 +4277,8 @@ function diagnoseOne(o, cfg){
      already paid for this listing"), and it is exactly backwards — a sunk cost cannot
      be recovered by waiting. The only fee anywhere below is the RELIST fee, because
      that one is a payment you have not made yet. */
+  // the units expected to sell are paid for at your price; whatever is left over is the
+  // give-up branch, which is the same stack dumped at the end of the window
   d.valueHold = d.chance * q * o.price * (1 - tax) + (1 - d.chance) * d.giveUp;
   d.valueDump = d.dumpNow;
 
@@ -4196,10 +4287,10 @@ function diagnoseOne(o, cfg){
   if (d.repricePrice != null){
     d.queueAtReprice = queueAtOrBelow(comp, d.repricePrice);
     d.daysToFillReprice = daysToFillAt(comp, d.repricePrice, d.volDay);
-    const hitX = hitRateCached(e, d.repricePrice, d.window);
-    const qfX = (hitX && d.daysToFillReprice != null)
-      ? Math.min(1, d.window / Math.max(d.daysToFillReprice, 0.5)) : 1;
-    d.chanceReprice = hitX ? hitX.p * qfX : null;
+    const outX = listingOutlook(e, comp, d.repricePrice, q, d.window,
+      { histDays: cfg.histDays, tracker: trk, volDay: d.volDay });
+    d.chanceReprice = outX ? outX.frac : null;
+    d.boundReprice = outX ? outX.bound : null;
     d.relistFee = modifyFeeOn(q * d.repricePrice, q * o.price, cfg.relistFrac, cfg.brokerFrac);
     d.valueReprice = d.chanceReprice == null ? null
       : d.chanceReprice * q * d.repricePrice * (1 - tax) + (1 - d.chanceReprice) * d.giveUp - d.relistFee;
@@ -4207,8 +4298,9 @@ function diagnoseOne(o, cfg){
 
   if (d.chance < cfg.pat.minFill)
     d.reasons.push({ t: `${pc(d.chance)}<${pc(cfg.pat.minFill)}`,
-      ttl: `chance: ${pc(d.chance)} of filling at ${fmtIsk(o.price)} in ${d.window}d`
-        + `\nfloor: ${pc(cfg.pat.minFill)} ("${cfg.pat.label}")` });
+      ttl: `fill: ${pc(d.chance)} of ${fmt.format(q)} u sells at ${fmtIsk(o.price)} in ${d.window}d`
+        + `\nfloor: ${pc(cfg.pat.minFill)} ("${cfg.pat.label}")`
+        + '\nverdict: holding is out of the running' });
   if (d.daysToFill != null && daysLeft != null && d.daysToFill > daysLeft)
     d.reasons.push({ t: `q${fmtDays(d.daysToFill)}d>${fmtDays(daysLeft)}d`,
       ttl: `queue: ${fmt.format(Math.round(d.queueAhead))} u at or below your price`
@@ -4226,9 +4318,22 @@ function diagnoseOne(o, cfg){
      has to be strictly better, not merely equal: with a 0% chance and a flat market,
      holding and dumping are worth the same ISK, and the one that hands you the slot back
      is the better deal. */
+  /* THE FLOOR IS A GATE, not a decoration. The Sell mode has always refused to recommend
+     a listing whose expected fill is under the patience mode's floor — the fee is spent
+     up front on the whole listing, and under the floor it buys a fraction of a sale. An
+     order already up is the same bet with the fee already sunk, so the same refusal
+     applies: an order flagged stalled for its odds cannot also be told to sit there.
+
+     The escape is the Sell path's own, mirrored: with nothing in the buy book to dump
+     into there is no alternative to compare against, and a poor listing still beats no
+     sale, so hold goes back in the pool. */
   const FREES_SLOT_FIRST = { dump: 0, hold: 1, reprice: 2 };
-  const opts = [{ k: 'hold', v: d.valueHold }, { k: 'dump', v: d.valueDump }];
-  if (d.valueReprice != null) opts.push({ k: 'reprice', v: d.valueReprice });
+  const all = [{ k: 'hold', v: d.valueHold, p: d.chance },
+               { k: 'dump', v: d.valueDump, p: null }];
+  if (d.valueReprice != null) all.push({ k: 'reprice', v: d.valueReprice, p: d.chanceReprice });
+  d.floored = all.filter(x => x.p != null && x.p < cfg.pat.minFill).map(x => x.k);
+  let opts = all.filter(x => x.p == null || x.p >= cfg.pat.minFill);
+  if (opts.length === 1 && d.dumpFilled === 0){ opts = all; d.floored = []; }
   opts.sort((a, b) => (b.v - a.v) || (FREES_SLOT_FIRST[a.k] - FREES_SLOT_FIRST[b.k]));
   d.verdict = opts[0].k;
   d.verdictValue = opts[0].v;
@@ -4242,14 +4347,14 @@ function verdictWhy(o, d, cfg){
   out.push(d.verdict === 'hold' ? 'HOLD'
     : d.verdict === 'reprice' ? `REPRICE → ${fmtIsk(d.repricePrice)}`
     : 'CANCEL & DUMP');
-  out.push(`hold: ${fmtIsk(d.valueHold)} ISK · ${pc(d.chance)} × ${fmt.format(q)} × ${fmtIsk(o.price)} `
+  out.push(`hold: ${fmtIsk(d.valueHold)} ISK · ${pc(d.chance)} of ${fmt.format(q)} u × ${fmtIsk(o.price)} `
     + `−${(tax * 100).toFixed(2)}% tax = ${fmtIsk(d.chance * q * o.price * (1 - tax))} · + `
     + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} give-up at day ${d.window}`
     + (Math.abs(d.decay - 1) > 0.005
       ? ` (${fmtIsk(d.dumpNow)} today, carried ${pctSigned((d.decay - 1) * 100)} by the trend)` : ''));
   if (d.valueReprice != null)
-    out.push(`reprice ${fmtIsk(d.repricePrice)}: ${fmtIsk(d.valueReprice)} ISK · ${pc(d.chanceReprice)} × `
-      + `${fmt.format(q)} × ${fmtIsk(d.repricePrice)} −tax = ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} · + `
+    out.push(`reprice ${fmtIsk(d.repricePrice)}: ${fmtIsk(d.valueReprice)} ISK · ${pc(d.chanceReprice)} of `
+      + `${fmt.format(q)} u × ${fmtIsk(d.repricePrice)} −tax = ${fmtIsk(d.chanceReprice * q * d.repricePrice * (1 - tax))} · + `
       + `${pc(1 - d.chanceReprice)} × ${fmtIsk(d.giveUp)} · − ${fmtIsk(d.relistFee)} ISK relist fee `
       + `(${relistPctEffective().toFixed(3)}%)`);
   else if (d.bestOther == null)
@@ -4260,6 +4365,14 @@ function verdictWhy(o, d, cfg){
     + `${fmt.format(d.dumpFilled)}${d.dumpFilled < q ? '/' + fmt.format(q) : ''} u now, after tax`);
   out.push('sunk: the broker fee that put this order up — charged against none of the three, '
     + 'least of all against cancelling');
+  // where a probability is shown, what kind of number it is gets shown beside it
+  out.push(`odds: ${boundWord(d.bound)}`
+    + ` · source ${d.chanceSrc === 'tracker' ? 'Adam4EVE sell side, this station' : 'ESI regional, both sides'}`
+    + (d.chanceAny != null ? ` · any unit ${pc(d.chanceAny)}` : '')
+    + (d.capped === 'queue' ? ` · queue ${fmt.format(Math.round(d.queueAhead))} u never clears` : '')
+    + (d.capped === 'ceiling' ? ' · above every price the market has paid' : ''));
+  if (d.floored && d.floored.length)
+    out.push(`floor: ${d.floored.join(' · ')} under ${pc(cfg.pat.minFill)} ("${cfg.pat.label}") · not offered`);
   if (d.stalled) out.push('stalled: ' + d.reasons.map(r => r.t).join(' · '));
   return out.join('\n');
 }
@@ -4315,7 +4428,7 @@ function ordDiagCells(tr, r, cell){
     r.trendPctWk == null ? '' : r.trendPctWk.toFixed(2),
     r.trendPctWk == null ? 'no price history for this item'
       : `Theil–Sen slope over 30d\ndirection: ${r.dir}`);
-  cell('num', r.chance == null ? '—' : Math.round(r.chance * 100) + '%',
+  cell('num', pcBound(r.chance, r.bound),
     r.chance == null ? '' : (r.chance * 100).toFixed(1), r.why || '');
   const st = cell('stalledcell', r.chance == null && !r.stalled ? '—' : (r.stalled ? 'yes' : 'no'),
     '', r.stalled ? '' : (r.why || ''));
@@ -4452,7 +4565,7 @@ function renderOrdTriageStats(box, sells, mk){
 function ordTsv(){
   const head = ['Character','Item','Type id','Your price','Qty left','Qty total','Location','Location id',
     'Age d','Days left','ISK tied up','Queue ahead','vs best %','Best competing sell','Fill est. d',
-    'Vol/day','Sell u/d','Buy u/d','Sell share','Trend %/wk','Chance %','Window d','Stalled','Stalled reasons','Verdict',
+    'Vol/day','Sell u/d','Buy u/d','Sell share','Trend %/wk','Fill %','Fill bound','Window d','Stalled','Stalled reasons','Verdict',
     'Hold ISK','Reprice ISK','Dump ISK','Reprice price','Relist fee ISK','Side'];
   const num = (v, dp) => v == null ? '' : Number(v).toFixed(dp);
   const lines = [head.join('\t')];
@@ -4471,6 +4584,7 @@ function ordTsv(){
       r.volSell == null ? '' : r.volSell, r.volBuy == null ? '' : r.volBuy,
       num(r.capture, 4), num(r.trendPctWk, 2),
       r.chance == null ? '' : (r.chance * 100).toFixed(1),
+      r.bound || '',
       r.window == null ? '' : r.window,
       r.isBuy ? '' : (r.stalled ? 'yes' : 'no'),
       (r.reasons || []).map(x => x.t).join('; '),
