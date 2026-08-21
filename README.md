@@ -249,8 +249,8 @@ remembered.
 3. **Fetch prices** — pulls the live order book per item (optionally plus ~13 months
    of daily price history) for the chosen hub.
 4. Check your **broker fee** and **sales tax** (defaults 2.1% / 7.5%), set your **patience**
-   (*in a rush* / *balanced* / *patient*), and choose where the competitive list price `L`
-   comes from:
+   — two numbers you type, **days** and a **fill floor %**, with 7 / 30 / 90 buttons that
+   fill in the days — and choose where the competitive list price `L` comes from:
    - **current best sell** (optionally one tick under), or
    - **history statistic** — median / average / 10th / 90th percentile of the region's
      daily average price over the last N days. N and the statistic apply instantly, no refetch.
@@ -443,18 +443,30 @@ live book — no extra ESI endpoint), all recomputed locally when you change a c
   through to expected net — the header tooltip counts the rows that have no rate yet
   rather than letting the ▼ imply a ranking that is not happening.
 
-**The fee guard.** A listing whose fill chance is under the patience mode's floor is never
-recommended, whatever it would be worth if it filled:
+**Patience is two numbers, both yours.** **Days** is how long you will leave an order up
+before giving up on it — which is also the window every fill chance is measured over, and
+the yardstick the recency half-life is derived from. **Fill floor %** is how likely a
+listing has to be before it is worth paying the broker fee for. The **7 / 30 / 90** buttons
+fill in the days field and nothing else; the floor is a preference and stays where you put
+it. Default: **90 days, 35%**.
 
-| Patience | Window | Fill-chance floor |
-| --- | --- | --- |
-| in a rush | 7 days | 75% |
-| balanced (default) | 14 days | 55% |
-| patient | 30 days | 35% |
+This replaced three fixed modes — 7/75%, 14/55%, 30/35% — where the second number could not
+be chosen without moving the first, and neither could be chosen at all. Saved state from
+that era keeps the window its mode stood for; the floor it carried is dropped, because the
+floor is yours now.
 
-Below the floor the tool recommends the competitive listing or INSTANT instead and says so
-in the row's tooltip, naming the fee that would have been spent for nothing. The patience
-control re-ranks the whole table instantly — it changes no request, only the arithmetic.
+**The fee guard.** A listing whose fill chance is under your floor is never recommended,
+whatever it would be worth if it filled — the fee is spent up front on the whole listing,
+so a miss loses all of it.
+
+**And a block is never silent.** When the floor refuses a listing that was worth more than
+the plan taken instead, the row carries a **`floor 618k`** chip: blocked, and this is what
+blocking it cost. The tooltip gives the price, the odds, the floor they missed, the fee
+that was at risk, and the one thing that changes the answer — lower the floor. A tool that
+quietly leaves ISK on the table and never mentions it is making the decision for you.
+
+The patience fields re-rank the whole table instantly — they change no request, only the
+arithmetic.
 
 Every recommendation carries a plain-language **why** on hover, e.g. *"best sell sits at the
 12th percentile of the last 60 days, trend −4.1%/week (falling), the patient price 1,150,000
@@ -747,7 +759,7 @@ reason; the chip's tooltip carries the numbers:
 
 | Chip | Reason |
 | --- | --- |
-| `8%<55%` | The **chance** of filling at your price is under your patience mode's floor (75 / 55 / 35%). |
+| `8%<55%` | The **chance** of filling at your price is under the fill floor you typed. |
 | `q52d>12d` | The **queue** at your price cannot clear before the order expires (fill est. > days left). |
 | `+4.1%▼` | You sit **above the best sell on a falling market**, where the gap only widens. This one needs the chance under 90% as well — an order that is going to fill anyway is not stalled whatever the trend does. |
 
@@ -895,6 +907,7 @@ Every chip is at most ten-odd characters and carries its numbers on hover.
 | `▼x.x%/wk` | The daily average has been falling at that rate for the last 30 days — a decaying market, not a dip. |
 | `minfee` | The flat 100 ISK per-order broker fee beats the percentage; the tooltip gives the effective and nominal rates. |
 | `L=sell` / `L=hist` | The chosen list-price source wasn't available for this item; the other one was used. |
+| `floor 618k` | The fill floor blocked a listing that was worth **more** than the plan taken instead, and this is the difference. The tooltip gives the price, the odds, the floor they missed, and the fee that was at risk. Lower the floor to take the bet. |
 | `70%?` | Pricing for a chance, and no price in the bracket reaches that one — the market is too thin to move this stack inside the window at any price it has paid. The competitive price was used instead. The number is the target that failed. |
 | `>best` | The list price `L` sits above the current best sell. |
 | `no buy` / `no sell` | That side of the book is empty at this hub. |

@@ -285,11 +285,20 @@
     <fieldset class="grp" id="patienceBox">
       <legend>patience</legend>
       <div class="grow">
-        <span class="seg" role="radiogroup" aria-label="how long you are willing to wait">
-          <label title="window: 7d&#10;floor: 75% chance"><input type="radio" name="patience" id="patRush" value="rush"><span>in a rush</span></label>
-          <label title="window: 14d&#10;floor: 55% chance&#10;default"><input type="radio" name="patience" id="patBalanced" value="balanced" checked><span>balanced</span></label>
-          <label title="window: 30d&#10;floor: 35% chance"><input type="radio" name="patience" id="patPatient" value="patient"><span>patient</span></label>
+        <label for="patDays" style="margin:0">days</label>
+        <input id="patDays" type="number" min="1" max="365" step="1" value="90" style="width:64px"
+          title="how long you will leave an order up before giving up on it&#10;also the window every fill chance is measured over">
+        <span class="seg" role="group" aria-label="window presets">
+          <label title="one week"><input type="radio" name="patPreset" value="7"><span>7</span></label>
+          <label title="one month"><input type="radio" name="patPreset" value="30"><span>30</span></label>
+          <label title="three months"><input type="radio" name="patPreset" value="90" checked><span>90</span></label>
         </span>
+      </div>
+      <div class="grow" style="margin-top:4px">
+        <label for="patFloor" style="margin:0">fill floor</label>
+        <input id="patFloor" type="number" min="0" max="99" step="1" value="35" style="width:56px"
+          title="how likely a listing has to be before it is worth the fee&#10;under it the listing is blocked and the row says what that cost">
+        <span class="hint">%</span>
       </div>
       <div class="hint" id="patNote" style="margin-top:4px"></div>
     </fieldset>
@@ -487,11 +496,18 @@
     <span class="hint">· cell → copy</span>
   </div>
   <div class="rowline">
-    <span class="seg" role="group" aria-label="how long you are willing to wait">
-      <button id="ordPatRush" type="button" data-pat="rush" title="window: 7d&#10;floor: 75% chance">in a rush</button>
-      <button id="ordPatBalanced" type="button" data-pat="balanced" title="window: 14d&#10;floor: 55% chance">balanced</button>
-      <button id="ordPatPatient" type="button" data-pat="patient" title="window: 30d&#10;floor: 35% chance">patient</button>
+    <label for="ordPatDays" style="margin:0">patience days</label>
+    <input id="ordPatDays" type="number" min="1" max="365" step="1" style="width:64px"
+      title="how long you will leave an order up&#10;capped per order by the life it has left">
+    <span class="seg" role="group" aria-label="window presets">
+      <button id="ordPat7" type="button" data-days="7" title="one week">7</button>
+      <button id="ordPat30" type="button" data-days="30" title="one month">30</button>
+      <button id="ordPat90" type="button" data-days="90" title="three months">90</button>
     </span>
+    <label for="ordPatFloor" style="margin:0">fill floor</label>
+    <input id="ordPatFloor" type="number" min="0" max="99" step="1" style="width:56px"
+      title="under it, that option is not offered">
+    <span class="hint">%</span>
     <span class="hint" id="ordPatNote"></span>
   </div>
   <div class="rowline">
@@ -900,7 +916,8 @@ const state = {
   fetchedHist: false,  // whether the last fetch included history
   savedTicked: new Set(),  // ticks restored from storage, applied when rows (re)appear
   oddsRow: new Map(),      // key -> the fill chance THIS row is priced for, when overridden
-  patience: 'balanced',    // rush / balanced / patient — drives every probability below
+  patDays: 90,             // the window every fill chance is measured over
+  patFloor: 35,            // %, the odds a listing must clear to be worth the fee
   sortKey: 'perSlot', sortDir: -1,
   filterType: 'all', filterText: '',
   // --- "My orders" mode (the block near the bottom of this script) ---
@@ -1675,18 +1692,28 @@ function histVolOf(hist, days){
    So every listing here is valued with its broker fee subtracted in BOTH branches of the
    expectation, and a listing whose fill chance is under the patience mode's floor is not
    recommended at all. */
-const PATIENCE = {
-  // days   = how long you are willing to leave an order up before giving up on it, which
-  //          is also the window the fill probability is measured over;
-  // minFill= the fill chance below which listing is a bad bet. The fee is spent up front,
-  //          so the expected loss from a miss is the whole broker charge: in a rush you
-  //          want near-certainty, balanced takes a coin flip with a margin, and patient
-  //          will take a one-in-three shot because dumping into the buy book is exactly
-  //          what it is trying to avoid.
-  rush:     { days: 7,  minFill: 0.75, label: 'in a rush' },
-  balanced: { days: 14, minFill: 0.55, label: 'balanced' },
-  patient:  { days: 30, minFill: 0.35, label: 'patient' },
-};
+/* Patience is two numbers, both typed, both the owner's:
+
+   days    — how long you will leave an order up before giving up on it, which is also the
+             window every fill chance is measured over, and the yardstick the recency
+             half-life is derived from.
+   minFill — the fill chance below which listing is a bad bet. The broker fee is spent up
+             front on the whole listing, so a miss loses all of it; this is the odds you
+             insist on before paying that.
+
+   These used to be three fixed modes — 7/75%, 14/55%, 30/35% — which meant the second
+   number could not be chosen without also moving the first, and neither could be chosen
+   at all. The 7 / 30 / 90 buttons now fill in the DAYS field and nothing else; the floor
+   is a preference and stays where it is put. */
+const PATIENCE_PRESETS = [7, 30, 90];
+const PATIENCE_DEFAULT = { days: 90, minFill: 0.35 };
+function patienceOf(){
+  const d = Math.round(Number(state.patDays));
+  const f = Number(state.patFloor);
+  const days = Number.isFinite(d) && d >= 1 ? Math.min(365, d) : PATIENCE_DEFAULT.days;
+  const minFill = Number.isFinite(f) && f >= 0 ? Math.min(0.99, f / 100) : PATIENCE_DEFAULT.minFill;
+  return { days, minFill, label: `${days}d · ${Math.round(minFill * 100)}%` };
+}
 const TREND_DAYS = 30;          // direction is a 30-day question — shorter is noise
 const RANK_DAYS  = 60;          // where today's price sits over two months
 const HIT_DAYS   = 365;         // ~12 months of rolling windows for the fill probability
@@ -2299,8 +2326,9 @@ function rebuild(keepChecks = true){
     (parseFloat($('oddsTarget').value) || 70) / 100));
   const histMode = $('histMode').value;
   const histDays = currentHistDays();
-  state.patience = $('patRush').checked ? 'rush' : $('patPatient').checked ? 'patient' : 'balanced';
-  const pat = PATIENCE[state.patience];
+  state.patDays = $('patDays').value;
+  state.patFloor = $('patFloor').value;
+  const pat = patienceOf();
   // the tracker is per STATION; a player structure has none and takes the ESI path
   const hubStation = hub().station || null;
 
@@ -2473,8 +2501,10 @@ function rebuild(keepChecks = true){
       continue;
     }
     // THE FEE GUARD: a listing whose EXPECTED SHARE of the stack sold is under the
-    // patience mode's floor spends the broker fee on the whole listing to move a fraction
-    // of it, so it is not recommended at all.
+    // patience floor spends the broker fee on the whole listing to move a fraction of it,
+    // so it is not recommended at all. What it WOULD have been worth is kept, because a
+    // block with no price on it is the tool making a decision behind your back: the row
+    // says "blocked, listing was worth +350k" and you get to disagree with it.
     const guarded = cands.filter(o => o.p != null && o.p < pat.minFill);
     let pool = cands.filter(o => o.p == null || o.p >= pat.minFill);
     // ...unless there is no buy book to dump into: then a poor listing still beats no sale
@@ -2495,6 +2525,19 @@ function rebuild(keepChecks = true){
       strategy = chosen.legQty > 0 ? 'split' : chosen.kind === 'patient' ? 'pat' : 'ord';
     }
 
+    /* What the floor cost: the best blocked option's expectation against the plan that
+       was actually taken. Positive only — a blocked option worth less than the chosen one
+       cost nothing, and saying so would be noise. */
+    let floorCost = null, floorBest = null;
+    if (guarded.length){
+      const takenNet = chosen ? chosen.net : netInstant;
+      for (const g of guarded){
+        if (g.net == null) continue;
+        if (!floorBest || g.net > floorBest.net) floorBest = g;
+      }
+      if (floorBest && floorBest.net > takenNet) floorCost = floorBest.net - takenNet;
+    }
+
     const ref = chosen || comp;                     // the listing the leg numbers describe
     const ordFill = ref ? ref.fill : null;
     const netOrder = ref ? ref.net : null;
@@ -2508,6 +2551,14 @@ function rebuild(keepChecks = true){
     const perSlot = chosen ? chosen.perSlot : null;
     if (dir === 'falling') flags.push({t:`▼${Math.abs(trendPctWk).toFixed(1)}%/wk`, cls:'warn',
       ttl:`trend: ${pctSigned(trendPctWk)}/wk (falling)`});
+    /* The floor blocked something that was worth more. Say so on the row, with the number,
+       because the alternative is a plan that silently leaves ISK on the table and never
+       mentions it. Raising the floor field is how you disagree. */
+    if (floorCost != null) flags.push({ t: `floor ${fmtShort(floorCost)}`, cls: 'warn',
+      ttl: `blocked by the fill floor: listing at ${fmtIsk(floorBest.price)} was worth `
+        + `+${fmtIsk(floorCost)} ISK\nodds: ${pc(floorBest.p)} < ${pc(pat.minFill)} floor`
+        + `\nfee at risk: ${fmtIsk(floorBest.brokerCharge)} ISK, spent whether it fills or not`
+        + '\nlower the fill floor to take the bet' });
     // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
     const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
     const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
@@ -2565,6 +2616,7 @@ function rebuild(keepChecks = true){
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       histRows: e.hist || null,
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
+                 floorCost, floorBest,
                  window: pat.days, minFill: pat.minFill, label: pat.label },
       flags, unsellable, dupOrders,
       // latent tick state — survives strategy flips; instants are excluded from the
@@ -2600,10 +2652,12 @@ function syncControls(){
   const anyHist = [...state.esi.values()].some(e => e && e.hist && e.hist.length);
   const histUsable = $('histOn').checked || anyHist;   // stat/days feed the Hist column, flags and fallbacks once data exists
   $('histMode').disabled = $('histDays').disabled = !histUsable;
-  const pat = PATIENCE[state.patience] || PATIENCE.balanced;
+  const pat = patienceOf();
   $('patNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
   $('patNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
-    + '\nbelow the floor: the plan is INSTANT';
+    + '\nbelow the floor: the plan is INSTANT, and the row says what that cost';
+  for (const r of document.querySelectorAll('input[name="patPreset"]'))
+    r.checked = Number(r.value) === pat.days;
   $('srcHistEcho').textContent =
     `(${$('histMode').options[$('histMode').selectedIndex].text} · ${$('histDays').value || 30} d)`;
   let note = '', noteTtl = '';
@@ -4408,9 +4462,11 @@ function syncRelist(){
       + '\nmeasured against the client to the ISK on four modify-order dialogs';
 }
 function syncOrdPatience(){
-  const pat = PATIENCE[state.patience] || PATIENCE.balanced;
-  for (const b of document.querySelectorAll('#ordPatRush,#ordPatBalanced,#ordPatPatient'))
-    b.setAttribute('aria-pressed', String(b.dataset.pat === state.patience));
+  const pat = patienceOf();
+  $('ordPatDays').value = String(pat.days);
+  $('ordPatFloor').value = String(Math.round(pat.minFill * 100));
+  for (const b of document.querySelectorAll('#ordPat7,#ordPat30,#ordPat90'))
+    b.setAttribute('aria-pressed', String(Number(b.dataset.days) === pat.days));
   $('ordPatNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
   $('ordPatNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
     + '\nunder the floor: that option is not offered';
@@ -4555,7 +4611,7 @@ function computeDiag(){
     tax: feePct('salesTax'),
     relistFrac: relistPctEffective() / 100,
     brokerFrac: feePct('brokerFee'),          // the growth term pays the undiscounted rate
-    pat: PATIENCE[state.patience] || PATIENCE.balanced,
+    pat: patienceOf(),
     histDays: currentHistDays(),
     useUndercut: $('undercut').checked,
   };
@@ -4972,14 +5028,15 @@ function applyMode(){
   $('modeSell').setAttribute('aria-pressed', String(state.mode === 'sell'));
   $('modeOrders').setAttribute('aria-pressed', String(state.mode === 'orders'));
 }
-for (const b of document.querySelectorAll('#ordPatRush,#ordPatBalanced,#ordPatPatient'))
-  b.addEventListener('click', () => {
-    // one source of truth: the Sell mode's radios. Ticking one and re-running rebuild()
-    // re-reads state.patience exactly as clicking it over there would.
-    $('pat' + b.dataset.pat[0].toUpperCase() + b.dataset.pat.slice(1)).checked = true;
-    rebuild();
-    ordRecompute();
-  });
+/* One source of truth: the Sell mode's two fields. The mirror writes into them and
+   re-runs rebuild(), which is exactly what typing over there does. */
+const pushPatience = () => { rebuild(); ordRecompute(); persist(); };
+for (const b of document.querySelectorAll('#ordPat7,#ordPat30,#ordPat90'))
+  b.addEventListener('click', () => { $('patDays').value = b.dataset.days; pushPatience(); });
+$('ordPatDays').addEventListener('change', () => { $('patDays').value = $('ordPatDays').value; pushPatience(); });
+$('ordPatFloor').addEventListener('change', () => { $('patFloor').value = $('ordPatFloor').value; pushPatience(); });
+for (const r of document.querySelectorAll('input[name="patPreset"]'))
+  r.addEventListener('change', () => { $('patDays').value = r.value; pushPatience(); });
 $('relistPct').addEventListener('change', () => {
   const txt = $('relistPct').value.trim();
   relistOverride = txt === '' ? null : txt;
@@ -5037,7 +5094,7 @@ function persist(){
       market: $('market').value, histOn: $('histOn').checked,
       priceSrc: $('srcOdds').checked ? 'odds' : $('srcHist').checked ? 'hist' : 'sell',
       histMode: $('histMode').value, histDays: $('histDays').value,
-      patience: state.patience, trkDays: $('trkDays').value,
+      patDays: $('patDays').value, patFloor: $('patFloor').value, trkDays: $('trkDays').value,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
       ticked,
@@ -5096,8 +5153,15 @@ function restore(){
   }
   if (saved.trkDays && [...$('trkDays').options].some(o => o.value === String(saved.trkDays)))
     $('trkDays').value = String(saved.trkDays);
-  if (PATIENCE[saved.patience]) state.patience = saved.patience;
-  $('pat' + state.patience[0].toUpperCase() + state.patience.slice(1)).checked = true;
+  /* Old saved state carried a mode name. The window it stood for is still meaningful, so
+     it is honoured; the floor that came with it is not, because the floor is now the
+     owner's to set and the default is the one they chose. */
+  const LEGACY_PAT_DAYS = { rush: 7, balanced: 14, patient: 30 };
+  if (saved.patDays != null) state.patDays = saved.patDays;
+  else if (LEGACY_PAT_DAYS[saved.patience]) state.patDays = LEGACY_PAT_DAYS[saved.patience];
+  if (saved.patFloor != null) state.patFloor = saved.patFloor;
+  $('patDays').value = String(state.patDays);
+  $('patFloor').value = String(state.patFloor);
   if (saved.oddsTarget != null) $('oddsTarget').value = saved.oddsTarget;
   if (Array.isArray(saved.oddsRow)) state.oddsRow = new Map(saved.oddsRow);
   state.savedTicked = new Set(saved.ticked || []);
@@ -5162,7 +5226,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
 
 $('inv').addEventListener('input', () => { rebuild(); trkMemoSoon(); });
 for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'srcOdds', 'oddsTarget', 'histMode', 'histDays',
-                  'patRush', 'patBalanced', 'patPatient'])
+                  'patDays', 'patFloor'])
   // patience, fees and the history window re-rank BOTH modes locally, with no refetch
   $(id).addEventListener('change', () => { rebuild(); ordRecompute(); });
 $('topN').addEventListener('change', persist);

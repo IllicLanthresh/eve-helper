@@ -187,14 +187,22 @@ async function fetchWithHistory(page, paste, mode, days) {
   await page.waitForFunction(() => state.fetchedHist === true && state.rows.length > 0);
 }
 
-const setPatience = async (page, mode) => {
-  const id = 'pat' + mode[0].toUpperCase() + mode.slice(1);
-  await page.evaluate(i => {
-    const el = document.getElementById(i);
-    el.checked = true;
-    el.dispatchEvent(new Event('change'));
-  }, id);
-  await page.waitForFunction(m => state.patience === m, mode);
+/* Patience is two typed fields now. Days is what most of these suites vary; the floor
+   only moves where a test is about the floor. */
+const setPatience = async (page, days, floorPct) => {
+  await page.evaluate(v => {
+    const d = document.getElementById('patDays');
+    d.value = String(v.days);
+    d.dispatchEvent(new Event('change'));
+    if (v.floor != null){
+      const f = document.getElementById('patFloor');
+      f.value = String(v.floor);
+      f.dispatchEvent(new Event('change'));
+    }
+  }, { days, floor: floorPct == null ? null : floorPct });
+  await page.waitForFunction(v => Number(state.patDays) === v.days
+    && (v.floor == null || Number(state.patFloor) === v.floor),
+    { days, floor: floorPct == null ? null : floorPct });
 };
 
 const decisionRow = (page, name) => page.evaluate(n => {
@@ -209,6 +217,7 @@ const decisionRow = (page, name) => page.evaluate(n => {
     patientPrice: m.patientPrice, decay: m.decay, velPctDay: m.velPctDay, window: m.window,
     patHitP: m.patHit ? m.patHit.p : null, patHitRaw: m.patHit ? m.patHit.raw : null,
     guarded: (m.guarded || []).map(g => ({ price: g.price, p: g.p, raw: g.hit ? g.hit.raw : null })),
+    floorCost: m.floorCost == null ? null : m.floorCost,
     comp: m.comp ? { price: m.comp.price, net: m.comp.net, p: m.comp.p, days: m.comp.days,
                      broker: m.comp.brokerCharge, churn: m.comp.churn, relists: m.comp.relists,
                      listQty: m.comp.listQty, pAny: m.comp.pAny, bound: m.comp.bound,
@@ -1204,6 +1213,10 @@ H.run('sell', async () => {
 
     /* ---------- the three disposals, driven through the page ---------- */
     section('the three disposals, valued net of fees');
+    /* Pinned to an explicit fortnight rather than leaning on whatever the default is:
+       the arithmetic below re-derives the window share from the definition, so the window
+       has to be a number this test chose. */
+    await setPatience(p4, 14, 55);
     const DEC_PASTE = ['Steady Trinket\t20', 'Sliding Trinket\t20', 'Decay Widget\t20',
                        'Nohigh Widget\t20', 'Blind Widget\t20', 'Patience Widget\t20'].join('\n');
     // the user's own settings: a LEVEL statistic over a long window, which is exactly
@@ -1366,7 +1379,7 @@ H.run('sell', async () => {
       const r = state.rows.find(x => x.name === 'Steady Trinket');
       const opts = { histDays: currentHistDays(), volDay: r.volDay, tracker: null,
                      floor: r.bestBuy };
-      const at = px => { const o = listingOutlook(e, e.sellLevels, px, r.qty, (PATIENCE[state.patience] || PATIENCE.balanced).days, opts);
+      const at = px => { const o = listingOutlook(e, e.sellLevels, px, r.qty, patienceOf().days, opts);
                          return o ? o.frac : null; };
       const ceiling = reachOf(e, 1e-9).ceiling;
       // the curve itself: sampled across the whole bracket
@@ -1376,7 +1389,7 @@ H.run('sell', async () => {
         xs.push(px); fs.push(at(px));
       }
       const solved = {};
-      for (const t of [0.3, 0.5, 0.7, 0.9]) solved[t] = priceForOdds(e, e.sellLevels, r.qty, (PATIENCE[state.patience] || PATIENCE.balanced).days, t, opts);
+      for (const t of [0.3, 0.5, 0.7, 0.9]) solved[t] = priceForOdds(e, e.sellLevels, r.qty, patienceOf().days, t, opts);
       return {
         ceiling, floor: r.bestBuy,
         monotone: fs.every((f, i) => i === 0 || f == null || fs[i-1] == null || f <= fs[i-1] + 1e-12),
@@ -1495,8 +1508,8 @@ H.run('sell', async () => {
       decay.guarded.some(g => g.price === decay.patientPrice), JSON.stringify(decay.guarded));
     check('...and the reason names the fee that would have been burned',
       /fee [\d,.]+ ISK spent either way/.test(decay.why), decay.why);
-    check('...under the floor it failed to clear',
-      /skip [\d,.]+: \d+% < 55% floor \(balanced\)/.test(decay.why), decay.why);
+    check('...under the floor it failed to clear, quoting both numbers the owner typed',
+      /skip [\d,.]+: \d+% < 55% floor \(14d · 55%\)/.test(decay.why), decay.why);
     eq('the item is still sold — listed at a price the market does pay', decay.strategy, 'ord');
     eq('...which is the live best sell', decay.exportPrice, 700000);
     /* REWRITTEN from eq(…, 1): the model integrates a gamma rather than counting windows,
@@ -1510,7 +1523,7 @@ H.run('sell', async () => {
        that — it multiplied one probability by the whole listing value, so its only two
        stories were "all twenty sold" and "none did". */
     section('a listing that half-fills is worth half a fill');
-    await setPatience(p4, 'rush');
+    await setPatience(p4, 7, 75);
     const half = await decisionRow(p4, 'Patience Widget');
     const HQ = 20, HP = 1000000;
     const netInstantHalf = HQ * 900000 * (1 - TAX);
@@ -1533,7 +1546,7 @@ H.run('sell', async () => {
         + (HQ - half.comp.expUnits) / HQ * netInstantHalf, 1e-6);
     eq('...and it is an upper bound until the tracker feeds it', half.comp.bound, 'upper');
 
-    section('patience: one control, three answers, no refetch');
+    section('patience: two typed fields, three presets, no refetch');
     /* REWRITTEN onto an item the window can actually decide. Steady Trinket used to carry
        this section, on the strength of a 20-day high pattern that a 7-day window caught
        less often than a 14-day one — an artefact of counting windows, not a statement
@@ -1541,22 +1554,59 @@ H.run('sell', async () => {
        Patience Widget makes the same point out of arrival rates: 1.5 units a day reach
        1,000,000, so twenty of them take about thirteen days. */
     const fetchedTypes = await p4.evaluate(() => state.esi.size);
+    await setPatience(p4, 7, 75);
     const rush = await decisionRow(p4, 'Patience Widget');
-    eq('in a rush the window is 7 days', rush.window, 7);
+    eq('a seven-day window is seven days', rush.window, 7);
     check('...which is not enough days of arrivals to clear the stack',
       rush.comp.p < 0.75, String(rush.comp.p));
     eq('...so the thin item is sold now rather than listed on a hope', rush.strategy, 'imm');
     check('...the guard naming the fee it would have spent to move part of a stack',
       rush.guarded.some(g => g.price === 1000000), JSON.stringify(rush.guarded));
-    await setPatience(p4, 'patient');
+    /* DECISION: a block is not allowed to be silent. Under the floor the listing is
+       refused, and the row states what refusing it cost — the alternative is a plan that
+       quietly leaves ISK on the table and never mentions it. */
+    const blocked = await p4.evaluate(() => {
+      const r = state.rows.find(x => x.name === 'Patience Widget');
+      const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.dataset.key === r.key);
+      const td = tr && tr.querySelector('td.name');
+      return {
+        floorCost: r.metrics.floorCost, netInstant: r.netInstant,
+        blockedNet: r.metrics.floorBest ? r.metrics.floorBest.net : null,
+        chips: td ? [...td.querySelectorAll('.flag')].map(c => ({ t: c.textContent, ttl: c.title })) : [],
+      };
+    });
+    check('the blocked listing was worth more than the plan that was taken',
+      blocked.floorCost > 0, String(blocked.floorCost));
+    near('...by exactly the difference between the two', blocked.floorCost,
+      blocked.blockedNet - blocked.netInstant, 1e-9);
+    const fc = blocked.chips.find(c => /^floor /.test(c.t));
+    check('...and the row says so, in ISK, on a chip', !!fc, JSON.stringify(blocked.chips.map(c => c.t)));
+    check('...the chip staying a chip', fc && fc.t.length <= 12, fc && fc.t);
+    check('...with the price, the odds and the floor on its tooltip',
+      fc && /listing at [\d,.]+ was worth \+[\d,.]+ ISK/.test(fc.ttl)
+        && /odds: \d+% < \d+% floor/.test(fc.ttl)
+        && /lower the fill floor/.test(fc.ttl), fc && fc.ttl);
+
+    await setPatience(p4, 30, 35);
     const patient = await decisionRow(p4, 'Patience Widget');
-    eq('patient stretches the window to 30 days', patient.window, 30);
+    eq('...and once the floor lets it through, there is nothing to report',
+      patient.floorCost, null);
+    eq('thirty days is thirty days', patient.window, 30);
     near('...twice over what the stack needs, so all of it sells', patient.fillChance, 1, 1e-5);
     eq('...so the listing comes back', patient.strategy, 'ord');
-    eq('flipping patience never refetches anything', await p4.evaluate(() => state.esi.size), fetchedTypes);
-    await setPatience(p4, 'balanced');
+    eq('changing patience never refetches anything', await p4.evaluate(() => state.esi.size), fetchedTypes);
+    /* THE POINT OF TYPING IT: the window and the floor move independently, which the
+       three fixed modes could not express at all. Hold the window at a week and move only
+       the floor across the odds this listing actually has. */
+    await setPatience(p4, 7, 30);
+    const loose = await decisionRow(p4, 'Patience Widget');
+    eq('a week with a floor under its odds lists it', loose.strategy, 'ord');
+    eq('...on the same seven-day window as the blocked case', loose.window, 7);
+    check('...odds that sit between the two floors, which is what makes this a test',
+      loose.fillChance > 0.3 && loose.fillChance < 0.75, String(loose.fillChance));
+    await setPatience(p4, 14, 55);
     const balanced = await decisionRow(p4, 'Patience Widget');
-    eq('...and balanced restores the middle answer', balanced.strategy, 'ord');
+    eq('...and a fortnight restores the middle answer', balanced.strategy, 'ord');
     check('...a middle answer that really is in the middle',
       balanced.comp.p > rush.comp.p && balanced.comp.p < patient.comp.p,
       [rush.comp.p, balanced.comp.p, patient.comp.p].join(' < '));
@@ -1656,15 +1706,26 @@ H.run('sell', async () => {
       cols.head.join('|'));
     await s4.close();
 
-    section('the patience preset persists, and old saved state loads clean');
+    section('patience persists as two numbers, and old saved state loads clean');
     const s5 = await openSell(browser, server, {});
-    await s5.page.evaluate(() => {
-      document.getElementById('patPatient').checked = true;
-      document.getElementById('patPatient').dispatchEvent(new Event('change'));
-    });
+    eq('the window defaults to three months', await s5.page.$eval('#patDays', el => el.value), '90');
+    eq('...with the 90 preset showing as the one in force',
+      await s5.page.$eval('input[name="patPreset"]:checked', el => el.value), '90');
+    await setPatience(s5.page, 45, 20);
     const blob = await s5.page.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')));
-    eq('the chosen patience is saved', blob.patience, 'patient');
+    eq('both typed numbers are saved: days', String(blob.patDays), '45');
+    eq('...and floor', String(blob.patFloor), '20');
+    eq('...a window off the presets leaves none of them ticked',
+      await s5.page.$$eval('input[name="patPreset"]:checked', els => els.length), 0);
     check('...and the dead waitPct key is not written back', blob.waitPct === undefined, JSON.stringify(blob.waitPct));
+    await s5.page.click('#modeOrders');
+    eq('the My-orders mirror shows the same window', await s5.page.$eval('#ordPatDays', el => el.value), '45');
+    eq('...and the same floor', await s5.page.$eval('#ordPatFloor', el => el.value), '20');
+    await s5.page.click('#ordPat7');
+    await s5.page.waitForFunction(() => Number(state.patDays) === 7);
+    eq('...and a preset clicked there writes back to the Sell field',
+      await s5.page.$eval('#patDays', el => el.value), '7');
+    eq('...without touching the floor', await s5.page.$eval('#patFloor', el => el.value), '20');
     await s5.close();
 
     const ctx6 = await browser.newContext();
@@ -1681,13 +1742,32 @@ H.run('sell', async () => {
     await p6.waitForFunction("typeof rebuild === 'function'");
     eq('state from the wait-tag era restores its inventory', await p6.$eval('#inv', el => el.value), 'Tritanium\t1000');
     eq('...and its history settings', await p6.$eval('#histMode', el => el.value), 'p90');
-    eq('...while the dead waitPct is ignored silently', await p6.evaluate(() => state.patience), 'balanced');
-    check('...leaving the balanced preset selected in the UI',
-      await p6.evaluate(() => document.getElementById('patBalanced').checked));
+    eq('...while the dead waitPct is ignored silently',
+      await p6.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')).waitPct), undefined);
+    eq('...and a blob with no patience at all gets the default window',
+      await p6.$eval('#patDays', el => el.value), '90');
     await p6.evaluate(() => persist());
     check('...and a re-save drops the key',
       await p6.evaluate(() => JSON.parse(localStorage.getItem('eveSellHelper.v2')).waitPct === undefined));
     await ctx6.close();
+
+    /* A blob from the three-mode era names a mode. The WINDOW it stood for is still a
+       meaningful number, so it is honoured; the floor that came with it is not, because
+       the floor is the owner's to set now. */
+    const ctx6b = await browser.newContext();
+    await H.seedStorage(ctx6b, server.url, [
+      ['eveHelper.auth.v1', H.authState([CHAR])],
+      ['eveSellHelper.v2', { inv: 'Tritanium\t1000', patience: 'rush', market: 'jita', ticked: [] }],
+    ]);
+    await H.mockEsi(ctx6b, { skills: { accounting: 5, brokerRelations: 5 }, standings: {}, typeIds: TYPE_IDS, books: BOOKS });
+    const p6b = await ctx6b.newPage();
+    H.watchPage(p6b, 'sell-migrate-modes');
+    await p6b.goto(server.url + '/index.html');
+    await p6b.waitForFunction("typeof rebuild === 'function'");
+    eq('a saved "rush" becomes its seven days', await p6b.$eval('#patDays', el => el.value), '7');
+    eq('...and the floor is the current default, not the one that mode carried',
+      await p6b.$eval('#patFloor', el => el.value), '35');
+    await ctx6b.close();
 
     /* ================= the graphs ================= */
     section('the sparkline — the hit-rate claim, drawn');
@@ -1814,13 +1894,13 @@ H.run('sell', async () => {
       /days of price history/.test(det.aria) && /daily traded volume/.test(det.aria), det.aria);
 
     // the open chart is a property of the row, not of this render
-    await setPatience(p7, 'patient');
+    await setPatience(p7, 30, 35);
     eq('a re-rank keeps the chart open on the same row',
       await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
     await p7.click('#tbl thead th[data-key=name]');
     eq('...and so does a re-sort',
       await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
-    await setPatience(p7, 'balanced');
+    await setPatience(p7, 14, 55);
     await p7.click('#tblBody tr.open td.spark');
     await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0);
     eq('clicking again closes it', await p7.evaluate(() => state.openDetail), null);

@@ -263,9 +263,22 @@ const rowCells = (page, orderId) => page.evaluate(id => {
   return tr ? [...tr.children].map(td => td.textContent.trim()) : null;
 }, String(orderId));
 
-const setPatience = async (page, mode) => {
-  await page.click('#ordPat' + mode[0].toUpperCase() + mode.slice(1));
-  await page.waitForFunction(m => state.patience === m, mode);
+/* The My-orders mirror writes into the Sell mode's two fields, which is the whole point
+   of it — one source of truth, two screens. */
+const setPatience = async (page, days, floorPct) => {
+  await page.evaluate(v => {
+    const d = document.getElementById('ordPatDays');
+    d.value = String(v.days);
+    d.dispatchEvent(new Event('change'));
+    if (v.floor != null){
+      const f = document.getElementById('ordPatFloor');
+      f.value = String(v.floor);
+      f.dispatchEvent(new Event('change'));
+    }
+  }, { days, floor: floorPct == null ? null : floorPct });
+  await page.waitForFunction(v => Number(state.patDays) === v.days
+    && (v.floor == null || Number(state.patFloor) === v.floor),
+    { days, floor: floorPct == null ? null : floorPct });
 };
 
 H.run('orders', async () => {
@@ -295,6 +308,10 @@ H.run('orders', async () => {
 
     /* ---------- (b) the per-character import ---------- */
     section('open orders, per character');
+    /* Pinned to an explicit fortnight and a 55% floor. Every verdict below is checked
+       against arithmetic this file works out by hand, so the window it works out has to
+       be a number this file chose, not whatever the page happens to default to. */
+    await setPatience(page, 14, 55);
     await fetchOrders(page);
     const chars = await page.evaluate(() => state.orders.chars);
     const main = chars.find(c => c.id === 93813310);
@@ -434,7 +451,7 @@ H.run('orders', async () => {
        which is the sentence the tooltip has to carry. */
     check('...whose tooltip carries the units, the floor it missed, and what that costs it',
       dDump.reasons.some(r => /fill: \d+% of [\d,]+ u sells at/.test(r.ttl)
-        && /floor: \d+% \("balanced"\)/.test(r.ttl)
+        && /floor: \d+% \("14d · 55%"\)/.test(r.ttl)
         && /verdict: holding is out of the running/.test(r.ttl)),
       JSON.stringify(dDump.reasons));
     check('...and the chip stays a chip', dDump.reasons.every(r => r.t.length <= 10),
@@ -854,9 +871,9 @@ H.run('orders', async () => {
     /* ---------- (l) patience drives the same window ---------- */
     section('patience');
     await fetchOrders(page);
-    await setPatience(page, 'patient');
+    await setPatience(page, 30, 35);
     const dSlide30 = await diagOf(page, 17);
-    eq('the window follows the patience control', dSlide30.window, 30);
+    eq('the window follows the patience field', dSlide30.window, 30);
     /* REWRITTEN: the old assertion was 30/20 capped at 1 — the queue fudge again. What
        the longer window really buys is more days of arrivals at the user's price, and ten
        units need about seventeen of them. */
@@ -864,7 +881,7 @@ H.run('orders', async () => {
       dSlide30.chance > 0.9 && dSlide30.chance > dSlide.chance,
       dSlide30.chance + ' vs ' + dSlide.chance);
     eq('...which takes the warning off the row', dSlide30.reasons.length, 0);
-    await setPatience(page, 'balanced');
+    await setPatience(page, 14, 55);
     check('...and back', (await diagOf(page, 17)).reasons.length > 0);
 
     /* ---------- (m) the buy-order toggle ---------- */
@@ -1091,6 +1108,8 @@ H.run('orders', async () => {
     section('the order the page used to tell him to keep');
     const sA = await openOrders(browser, server, { orders: ACCEPT_ORDERS });
     await sA.page.click('#modeOrders');
+    // the same explicit fortnight the rest of this file works out its arithmetic against
+    await setPatience(sA.page, 14, 55);
     await fetchOrders(sA.page);
     const skin = await diagOf(sA.page, 21);
     const liquid = await diagOf(sA.page, 22);
@@ -1141,7 +1160,7 @@ H.run('orders', async () => {
       5 * 5000 * (1 - TAX), 1e-6);
     check('the row says so on the badge', /^CANCEL & DUMP/.test(skin.why), skin.why);
     check('...naming the floor that took the other two away',
-      /^floor: .*under \d+% \("balanced"\) · not offered$/m.test(skin.why), skin.why);
+      /^floor: .*under \d+% \("14d · 55%"\) · not offered$/m.test(skin.why), skin.why);
     check('...and what kind of number the odds are',
       /^odds: upper bound · source ESI regional, both sides/m.test(skin.why), skin.why);
 
