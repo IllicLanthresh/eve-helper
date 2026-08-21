@@ -1796,8 +1796,8 @@ H.run('mine-fleet', async () => {
     const dn = await sLazy.page.$eval('#fleetDataNote', el => ({ hidden: el.hidden, cls: el.className, text: el.textContent }));
     eq('with a paste and no data, the inline error shows', dn.hidden, false);
     check('...as a warning', /warn/.test(dn.cls), dn.cls);
-    check('...naming the builder', /tools\/build-industry-data\.mjs/.test(dn.text), dn.text);
-    check('...and the data README', /data\/README\.md/.test(dn.text), dn.text);
+    check('...naming the way out: the SDE line\'s Update button', /Update button/.test(dn.text), dn.text);
+    check('...and saying the data comes from CCP', /from CCP/.test(dn.text), dn.text);
 
     sLazy.state.oresFail = false;  // the file gets built — retry must recover in place
     await sLazy.page.click('#fleetDataNote button');
@@ -1816,8 +1816,8 @@ H.run('mine-fleet', async () => {
     await sPlan.page.fill('#need', 'Pyerite\t1000');
     await sPlan.page.waitForFunction(
       () => /exact ore data unavailable/.test(document.getElementById('rankList').textContent));
-    check('the source ranking shows the unavailable state naming the builder',
-      /tools\/build-industry-data\.mjs/.test(await sPlan.page.$eval('#rankList', el => el.textContent)),
+    check('the source ranking shows the unavailable state naming the way out',
+      /Update button/.test(await sPlan.page.$eval('#rankList', el => el.textContent)),
       await sPlan.page.$eval('#rankList', el => el.textContent));
     check('...and so does the mining plan',
       /exact ore data unavailable/.test(await sPlan.page.$eval('#planBox', el => el.textContent)),

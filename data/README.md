@@ -1,32 +1,40 @@
 # data/
 
-`industry.json` and `ores.json` are **generated at deploy time by CI** (see
-`.github/workflows/pages.yml`) and are not committed. Both are built in one run
-from CCP's Static Data Export (SDE) by `tools/build-industry-data.mjs` and
-served alongside the site at `data/industry.json` and `data/ores.json`.
+`industry.json` and `ores.json` are the **seed copies** the site ships. They are
+generated at deploy time by CI (see `.github/workflows/pages.yml`) and are not
+committed.
 
-- `industry.json` (~2 MB) — types / groups / marketGroups / skills / blueprints
+They are **not** where the tools get their game data from any more. Each page
+reads its data through `../sde.js`, which fetches CCP's Static Data Export
+directly in the browser, derives these same two shapes from it, and keeps the
+result in IndexedDB. The SDE line on every page names the build you are on, says
+when CCP has published a newer one, and has the button that replaces your copy.
+These files exist so that a first visit has something to work with before
+anything has been downloaded.
+
+Both are produced by `tools/build-industry-data.mjs`, which is a thin CLI over
+`sde.js` — the same derivation the browser runs, so the seed and a locally
+derived copy cannot disagree.
+
+- `industry.json` (~1.9 MB) — types / groups / marketGroups / skills / blueprints
   with `man`/`rea`/`cop`/`inv`/`me`/`te` activities, plus the `rigs` catalog of
-  real Standup engineering/reactor rigs and the `structures` size/slot map.
-  Consumed by the Industry tool.
-- `ores.json` (~80 KB) — every published Asteroid-category type (standard ores,
+  Standup engineering/reactor rigs and the `structures` size/slot map.
+  Consumed by the Industry and Structures tools.
+- `ores.json` (~87 KB) — every published Asteroid-category type (standard ores,
   moon ores, ice, every quality variant, compressed forms included) with exact
-  per-variant reprocessing outputs (`typeMaterials`), portion size, unit volume,
-  base family name, its `Compressed <name>` counterpart tid/volume, the exact
-  reprocessing skill per type (dogma `reprocessingSkillType`), a lowercased
-  name → tid lookup, and a tid → name map covering every referenced material
-  and skill. Consumed by the Mine tool.
+  per-variant reprocessing outputs, portion size, unit volume, base family name,
+  its compressed counterpart from CCP's own `compressibleTypes` mapping, the
+  exact reprocessing skill per type (dogma `reprocessingSkillType`), a
+  lowercased name → tid lookup, and a tid → name map covering every referenced
+  material and skill. Consumed by the Mine tool.
 
-Both schemas are documented at the top of `tools/build-industry-data.mjs`.
+Both schemas are documented at the top of `../sde.js`.
 
-Build them locally:
+Build them locally — no download, no unzip, no dependencies:
 
 ```sh
-cd tools && npm ci
-curl -O https://eve-static-data-export.s3-eu-west-1.amazonaws.com/tranquility/sde.zip
-unzip -q sde.zip 'fsd/blueprints.yaml' 'fsd/types.yaml' 'fsd/groups.yaml' 'fsd/marketGroups.yaml' \
-  'fsd/typeDogma.yaml' 'fsd/dogmaAttributes.yaml' 'fsd/typeMaterials.yaml' 'fsd/categories.yaml' -d /tmp/sde
-node --max-old-space-size=4096 build-industry-data.mjs --sde /tmp/sde --out ../data/industry.json
+node tools/build-industry-data.mjs --out data/industry.json
 ```
 
-(`ores.json` is written next to `--out` by default; `--ores-out` overrides.)
+(`ores.json` is written next to `--out` by default; `--ores-out` overrides, and
+`--build <number>` pins a specific SDE build instead of the current one.)

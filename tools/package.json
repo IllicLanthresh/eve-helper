@@ -1,9 +1,6 @@
 {
   "name": "eve-sell-helper-tools",
   "private": true,
-  "description": "Build scripts for CI-generated static data (SDE -> data/industry.json)",
-  "type": "module",
-  "dependencies": {
-    "js-yaml": "^4.1.0"
-  }
+  "description": "Build scripts for the seed copies of data/*.json (derived by ../sde.js)",
+  "type": "module"
 }

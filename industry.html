@@ -385,6 +385,7 @@
 <script src="auth.js"></script>
 <script src="structures.js"></script>
 <script src="industry-engine.js"></script>
+<script src="sde.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -484,24 +485,34 @@ function buildIndexes(){
   PRODUCTS.sort((a, b) => D.types[a][0].localeCompare(D.types[b][0]));
   TOP_MGIDS = Object.keys(D.marketGroups).filter(id => !D.marketGroups[id][1]).map(Number);
 }
-async function loadStatic(){
+/* The SDE is the player's own copy, not something baked into this deploy: sde.js
+   reads it from CCP, derives it in the browser and keeps it here. The bundled
+   data/industry.json is only the seed a first visit starts from. */
+let sdeBar = null;
+async function readStatic(){
   const el = $('sdeStatus');
   try{
-    const res = await fetch('data/industry.json');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    D = await res.json();
+    const got = await SDE.load('industry');
+    D = got.data;
     buildIndexes();
-    el.textContent = `SDE ${D.v} · ${fmt0.format(Object.keys(D.blueprints).length)} blueprints · `
-      + `${fmt0.format(Object.keys(D.types).length)} types · ${fmt0.format(PRODUCTS.length)} products`;
-    el.title = 'static blueprint data loaded from data/industry.json';
     el.className = 'ok';
+    sdeBar.paint(got);
+    return got;
   }catch(e){
-    el.textContent = 'data/industry.json missing or unreadable (' + (e.message || e) + ') · build it with '
-      + 'tools/build-industry-data.mjs — see data/README.md';
-    el.title = "source: CCP's SDE, built by CI at deploy time"
-      + '\nlocal checkout: run tools/build-industry-data.mjs';
     el.className = 'err';
+    sdeBar.fail('no static blueprint data (' + (e.message || e) + ') — Update fetches it from CCP');
+    return null;
   }
+}
+async function loadStatic(){
+  sdeBar = SDE.mountStatus($('sdeStatus'), {
+    summary: () => D
+      ? `${fmt0.format(Object.keys(D.blueprints).length)} blueprints · `
+        + `${fmt0.format(Object.keys(D.types).length)} types · ${fmt0.format(PRODUCTS.length)} products`
+      : '',
+    onUpdated: readStatic,
+  });
+  sdeBar.ready(await readStatic());
 }
 
 /* ---------- ESI datasets (IndexedDB-cached; one Update button refreshes all) ---------- */

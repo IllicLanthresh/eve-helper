@@ -14,6 +14,9 @@ so it can be argued with later.
   introduced if a concrete problem demands it — rate limits, or unusable slowness — and then
   deliberately, with the reason named. Stale cached market data produces wrong numbers that look
   like model bugs, and that class of problem is not worth inviting before we have to.
+  The **SDE is not covered by this**: it is static data that changes on patch days, it is kept
+  locally on purpose, it is stamped with the build it came from, and the app says when CCP has
+  moved on. That is a copy you control, not a cache that expires behind your back.
 - **Size is not a constraint.** Multi-MB downloads and a first run measured in minutes are
   normal for this class of tool. Do not trade model fidelity for payload size.
 
@@ -52,6 +55,7 @@ Log price because order books are log-normal, not normal.
 |---|---|---|
 | 14 | The A4E undercount is **corrected per item using the ESI ratio**, with the correction's size surfaced as a data-quality signal | uncorrected, biased low |
 | 15 | Trade hubs only. Structures are marked, not solved | — |
+| 20 | The **SDE is fetched by the client**, derived in the browser and kept locally; the app names the build and a button refreshes it | baked into the deploy, so refreshing game data meant pushing a commit |
 
 A4E's bulk files carry only the `has_gone=0` reading, which treats a vanished order as
 cancelled and so undercounts real sales. Measured against ESI regional totals, A4E sees a
@@ -86,16 +90,42 @@ for it, not to having it. Hiding columns is not the answer; fitting them is.
 Where the two lines diverge, the hub is out of line with the region, and that is worth seeing
 rather than averaging away.
 
+Decision 20 in detail. CCP publishes the SDE at `developers.eveonline.com/static-data` with
+`Access-Control-Allow-Origin: *` and working byte ranges, so `sde.js` reads the
+end-of-central-directory record, then the central directory, then only the nine members it
+wants — about 26 MB of a 99 MB archive — and inflates them with `DecompressionStream`. The
+derivation runs in the tab; the result goes to IndexedDB. `data/*.json` remain as a seed for
+a first visit, built by CI from the same module so the two cannot disagree.
+
+Going first-party replaced several written-down guesses with CCP's own data, and three of
+them were wrong: molecular-forged reactions **do** take reactor rig bonuses, sov structures
+**do** take structure rig bonuses, boosters **do** take equipment rig bonuses, and capital
+rigs do **not** reach titans or supercarriers. The packaged-volume table was wrong for 53
+types. And the baked SDE was thirteen months stale, over which CCP renamed 215 ore variants —
+the Mine tool would have failed to match a single pasted one.
+
 ## Order of work
 
 Everything above is to be built. The sequence is chosen so each step unblocks the next:
 
-1. **Strip the cache.** A precondition — the rest edits the same code, and none of it should be
-   built on machinery that is being deleted. Removes two invented constants on the way out.
-2. **Redesign the table.** What the owner hits every session, and what currently hides anything
-   added to it.
-3. **Solve-for-odds pricing.** Needs the new table to land in.
-4. **The SDE, client-side.** Independent of the rest.
+1. ~~**Strip the cache.**~~ Done. A precondition — the rest edits the same code, and none of it
+   should be built on machinery that is being deleted. Removed two invented constants on the
+   way out.
+2. ~~**Redesign the table.**~~ Done. What the owner hits every session, and what used to hide
+   anything added to it.
+3. ~~**Solve-for-odds pricing.**~~ Done. Needed the new table to land in.
+4. ~~**The SDE, client-side.**~~ Done. Independent of the rest.
+
+## Still to build
+
+The interview settled these and they are not yet written:
+
+adaptive half-life (3) · patience presets 7/30/90 with two typed fields (1) · the blocked-row
+cost line (2) · relist churn as settings (6) · uncapped units per transaction (7) · the
+A4E-sourced patient price (8) · mean reversion as its own case (9) · round down when
+undercutting (12) · the MAD outlier filter (13) · the ESI-ratio correction with a
+data-quality signal (14) · delete "stalled" from My orders (16) · the chart expanding on
+hover with the owner's own price and both lines (18, 19).
 
 ## Still open
 

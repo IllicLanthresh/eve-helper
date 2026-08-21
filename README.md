@@ -29,6 +29,86 @@ days to fill, chance, trend, the three verdict values, the relist fee).
 the sentence, it is here. A test suite (`tests/density.test.js`) keeps the copy from
 drifting back into prose.
 
+## The SDE, client-side
+
+Game data — every blueprint, every type volume, every ore's reprocessing yield, the whole
+rig catalog — comes from CCP's **Static Data Export**. That used to be baked at deploy
+time: CI downloaded the SDE, condensed it, and the site served whatever the last deploy
+happened to contain. Refreshing game data meant pushing a commit, so the tools drifted
+behind the game between deploys, silently.
+
+**The browser now fetches the SDE itself.** `sde.js` reads CCP's own archive, derives the
+same data in the tab, and keeps the result in IndexedDB. Every page carries an **SDE**
+line naming the build you are on; when CCP publishes a newer one it says so, and the
+button beside it replaces your copy. No deploy involved.
+
+**This is not a cache.** Market data is still fetched fresh on every calculation — that
+rule has not moved. This is a local copy of *static* data, the kind that changes only on a
+patch day, held on purpose, stamped with the build it came from, and never used without
+showing you which build that is.
+
+### Where it comes from, and how little it downloads
+
+CCP publishes the SDE at `developers.eveonline.com/static-data`, first-party, no mirror.
+Two things make it readable from a web page: the host answers with
+`Access-Control-Allow-Origin: *`, and it honours byte ranges.
+
+The archive is 99 MB and we want nine members from it. So it is read the way a zip is
+meant to be read:
+
+1. range-fetch the end-of-central-directory record at the tail;
+2. range-fetch the central directory it points at, to learn where each member lives;
+3. range-fetch **only** the members we want, and inflate them with the platform's own
+   `DecompressionStream`.
+
+That is about **26 MB on the wire** instead of 99, no zip library, and nothing to install.
+`Range` is a CORS-safelisted header, so none of it needs a preflight the bucket would not
+answer.
+
+The one big member, `types.jsonl`, is 153 MB uncompressed. It is streamed line by line and
+filtered as it arrives — a regex rejects the ~42,000 types nothing references before
+anything pays for `JSON.parse` — so it is never held whole. The full derive takes a few
+seconds.
+
+### What being first-party bought
+
+The old pipeline had to guess at things the YAML SDE did not spell out, and several
+guesses were wrong. CCP's JSONL export carries them as data:
+
+| Was | Now |
+| --- | --- |
+| A 50-row hand-written table of packaged volumes by ship group | `packagedVolume`, per type. 261 types that had none now have one (containers), and 53 were **wrong** — capitals and freighters repackage to 1,300,000 m³, not the table's 1,000,000 / 1,050,000 |
+| Which products each rig affects, from the rig's *name* and a curated group list | `industryModifierSources` + `industryTargetFilters` — CCP's own mapping |
+| "Molecular-forged reactions get no reactor rig bonus" (a written-down assumption) | They do. CCP's biochemical filter includes them |
+| Sov structures excluded from structure rig bonuses | They are included |
+| Boosters excluded from equipment rig bonuses | They are included |
+| Capital rigs applied to titans and supercarriers | They do not. Only the XL ship rig reaches those hulls |
+| Compressed ore matched by name (`"Compressed " + name`) | `compressibleTypes`, an explicit mapping |
+| The rig catalog filtered by a name pattern (`/^Standup /`) | A rig with no market group cannot be bought, so it is not offered — which is what separates the 125 fittable rigs from the 88 legacy Outpost Conversion ones |
+
+The SDE this replaced was thirteen months old, and in the meantime CCP had **renamed every
+ore variant**: "Crimson Arkonor" is "Arkonor II-Grade" now, and 215 more like it. Pasting
+a hangar into the Mine tool would have failed to match on every one. That is the failure
+mode this whole change exists to remove.
+
+### Refusing to install bad data
+
+Silently wrong game data is worse than none, so the derive checks itself against numbers
+with a known in-game value before it hands anything over: Veldspar reprocesses in batches
+of 100 and yields Tritanium; Veldspar, Zeolites, Mercoxit and Clear Icicle name their four
+reprocessing skills; the XL ship rig reads 4.20% ME / 42.0% TE in nullsec; the five
+canonical hulls are the sizes they are; and every dogma attribute id is verified **by
+name** against `dogmaAttributes`, so a renumbering fails loudly instead of zeroing every
+rig. Any of those failing aborts the update and leaves your existing copy alone.
+
+### The copy the site ships with
+
+`data/industry.json` and `data/ores.json` are still built by CI and served alongside the
+site, so a first visit works immediately. They are a **seed**, not the source: the moment
+you press Update, your own copy takes over. CI builds them with
+`tools/build-industry-data.mjs`, a thin CLI over the very same `sde.js` — one
+implementation, so the shipped seed and the copy your browser derives cannot disagree.
+
 ## EVE login (optional)
 
 "Log in with EVE" in the top bar pulls your skill levels and standings to auto-fill what
@@ -889,7 +969,7 @@ confirm promises, rather than a selection pointing at nothing.
 ## Exact SDE data
 
 Every per-ore number on the page comes straight from CCP's Static Data Export via
-`data/ores.json` (the same CI build as `industry.json`): unit volumes, portion sizes,
+`data/ores.json` (derived from CCP's SDE by `sde.js`, in your browser): unit volumes, portion sizes,
 per-variant reprocessing outputs, and — per type — the **exact reprocessing skill** from
 the SDE's own `reprocessingSkillType` dogma attribute. The former hand-curated density
 table and the name-based skill grouping are gone, including the assumed mapping for the
@@ -899,7 +979,7 @@ Ore Processing; the other seven were right. The imported-skills panel's "applies
 column is likewise derived from the data (each skill lists the ores that actually carry
 it). The **only** curated data left is which ores spawn in which sov-array anomaly type —
 game-world spawn info that no CCP export provides (EVE University Wiki). Without
-`data/ores.json` the affected sections show an explicit "exact ore data unavailable"
+the ore tables the affected sections show an explicit "exact ore data unavailable"
 state with a retry; nothing ever falls back to approximations.
 
 ## Profit mode (survey scan or Auth extraction)
@@ -916,7 +996,7 @@ instead of silently dropped. Rocks aggregate per ore type and every type gets tw
 densities, side by side:
 
 - **refined ISK/m³** — the variant's exact per-type reprocessing outputs (from the SDE via
-  `data/ores.json`, generated by the same CI build as `industry.json`), priced with the
+  the SDE ore tables, the same ones the ranking uses), priced with the
   section-2 material prices and multiplied by the **reprocessed by** character's refine
   rate: the same skills and the same facility row (structure, rig, security band, implant)
   the mining plan uses. Ice products (isotopes, heavy water…) aren't in the section-2
@@ -991,17 +1071,12 @@ Answers one question across the whole market at once: *of everything I could man
 what is worth building right now* — with home facilities in null, Jita as the trade hub,
 and shipping both ways priced in.
 
-## Static data pipeline
+## Static data: your copy, not the build's
 
-Blueprint recipes, type volumes, market groups and skills come from CCP's **Static Data
-Export**. CI downloads the SDE at deploy time and runs
-`tools/build-industry-data.mjs`, which condenses the ~500 MB YAML into
-`data/industry.json` (~2 MB: every man/rea/inv/cop/me/te activity with materials,
-products, probabilities and skills) plus `data/ores.json` (~80 KB: every ore/moon
-ore/ice variant with exact reprocessing outputs, for the Mine tool). The files are
-generated, not committed — for a local checkout, build them once from an extracted SDE:
-`node tools/build-industry-data.mjs --sde <dir> --out data/industry.json`. The page's
-status line shows the SDE version and blueprint count it loaded.
+Blueprint recipes, type volumes, market groups, skills, the rig catalog and every ore
+number come from CCP's **Static Data Export** — and the browser fetches it itself. See
+[The SDE, client-side](#the-sde-client-side) for how, and why it stopped being a build
+step.
 
 ## Live data — one "Update ESI" button
 
@@ -1312,6 +1387,13 @@ among them: **never wait on time, wait on a signal**).
 README's *On-screen text is terse by design* section describes — `?` disclosures closed,
 no prose connectives in always-visible copy, table cells under 24 characters, chips under
 12 **and carrying the tooltip that holds what the chip replaced**.
+
+`sde.test.js` covers the client-side SDE end to end without touching CCP: a miniature
+Static Data Export is assembled into a real zip and served from a range-capable local
+server, so the zip reader, the streaming, the derivation and the status line all run on
+the same code path they do in production. It also breaks the fixture on purpose — a moved
+Veldspar batch size, a renumbered dogma attribute, a rig that no longer reads 4.20% — and
+checks each one is **refused** rather than installed.
 
 Three suites cover the structure centralisation from different angles, and all three have to
 stay green for it to count as working:

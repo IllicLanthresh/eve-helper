@@ -65,7 +65,7 @@
     max-width:960px;line-height:1.5}
   details.help .helpbody code{font-size:11px}
   .subhead{margin:4px 0 0;color:var(--dim);font-size:13px}
-  #esiStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  #esiStatus,#sdeStatus{font-family:var(--mono);font-size:12px;color:var(--dim)}
   .ok{color:var(--green)} .err{color:var(--red)}
   #fetchBar{height:3px;background:#1a2233;border-radius:2px;margin-top:8px;overflow:hidden}
   #fetchFill{height:100%;background:var(--cyan);width:0;transition:width .25s}
@@ -323,6 +323,7 @@
     <button id="btnEsi" type="button" class="primary" title="pull Jita 4-4 prices from ESI (public, no login)">Fetch prices</button>
     <span id="esiStatus"></span>
   </div>
+  <div id="sdeStatus" style="margin-top:4px"></div>
   <details id="skillsBox" hidden style="margin-top:8px">
     <summary id="skillsSummary" class="hint" style="cursor:pointer"></summary>
     <table id="skillsTbl" style="width:auto;margin-top:6px;font-size:12px"><tbody id="skillsTblBody"></tbody></table>
@@ -447,6 +448,7 @@
 
 <script src="auth.js"></script>
 <script src="structures.js"></script>
+<script src="sde.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -588,18 +590,36 @@ function buildSources(){
       if (!SRC.has(ore)) console.warn('mine: anomaly ore missing from data/ores.json: ' + ore);
 }
 
-function loadOreDB(){
-  if (oreDB || oreDBErr || oreDBPending) return;
+/* The ore tables are the player's own copy of the SDE (sde.js): CCP renames and
+   rebalances ores, and a copy pinned to the last deploy quietly stops matching
+   what a hangar pastes in. The bundled data/ores.json is only a seed. */
+let sdeBar = null;
+function loadOreDB(force){
+  if ((oreDB || oreDBErr || oreDBPending) && !force) return;
   oreDBPending = true;
-  fetch('data/ores.json')
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(d => {
+  SDE.load('ores')
+    .then(got => {
+      const d = got.data;
       if (!d || !d.ores || !d.names || !d.types) throw new Error('unexpected shape');
       oreDB = d;
+      oreDBErr = null;
       buildSources();
+      if (sdeBar) sdeBar.paint(got);
+      return got;
     })
-    .catch(e => { oreDBErr = e.message; })
+    .catch(e => { oreDBErr = e.message; if (sdeBar) sdeBar.fail('no ore data (' + e.message + ')'); return null; })
     .finally(() => { oreDBPending = false; renderAll(); });
+}
+/* Mounted once at boot. It says which SDE build the ore numbers come from and
+   offers the button that replaces them — and it does NOT load the ore tables to
+   do it: the build is read from the local copy, or reported as the shipped one.
+   The lazy load stays lazy. */
+function mountSdeBar(){
+  sdeBar = SDE.mountStatus($('sdeStatus'), {
+    summary: () => oreDB ? Object.keys(oreDB.ores).length + ' ore and ice types' : 'ore data not loaded yet',
+    onUpdated: () => { oreDB = null; oreDBErr = null; loadOreDB(true); },
+  });
+  sdeBar.ready(null);
 }
 
 /* ---------- state ---------- */
@@ -1282,8 +1302,8 @@ function kindBadge(s){
 function appendOreDataMsg(box){
   if (oreDBErr){
     const d = el('div', 'hint warn empty',
-      'exact ore data unavailable (' + oreDBErr + ') — data/ores.json is generated at deploy '
-      + 'time by tools/build-industry-data.mjs from the SDE (see data/README.md); build it locally. ');
+      'exact ore data unavailable (' + oreDBErr + ') — the SDE line above has an Update button '
+      + 'that fetches it straight from CCP. ');
     const retry = el('button', null, 'retry');
     retry.type = 'button';
     retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderAll(); });
@@ -2165,10 +2185,10 @@ function renderFleet(){
     dn.hidden = false;
     if (oreDBErr){
       dn.className = 'hint warn';
-      dn.textContent = 'ore data unavailable (' + oreDBErr + ') · build data/ores.json with '
-        + 'tools/build-industry-data.mjs from the SDE — see data/README.md ';
-      dn.title = 'data/ores.json is generated at deploy time from the SDE'
-        + '\nprofit mode needs it — build it locally';
+      dn.textContent = 'ore data unavailable (' + oreDBErr + ') · the SDE line at the top has an '
+        + 'Update button that fetches it from CCP ';
+      dn.title = 'profit mode needs the ore tables'
+        + '\nthey come from CCP\'s SDE, fetched by this browser';
       const retry = el('button', null, 'retry');
       retry.type = 'button';
       retry.addEventListener('click', () => { oreDBErr = null; loadOreDB(); renderFleet(); });
@@ -2950,6 +2970,7 @@ for (const [id, key] of [['fleetRate', 'rate'], ['fleetCycM3', 'cycM3'], ['fleet
 restore();
 renderFacControls();
 renderAll();
+mountSdeBar();
 
 // logged in → per-ore refine from the REPROCESSOR role character's skills (incl. the
 // ore-group skills) + the facility selectors; the flat refine input becomes a disabled

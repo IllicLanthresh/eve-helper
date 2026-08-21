@@ -5,7 +5,7 @@
 data/industry.json
 data/ores.json
 
-# node deps for the build tooling
+# the build tooling has no dependencies (sde.js is dependency-free)
 tools/node_modules/
 
 # test deps

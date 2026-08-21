@@ -164,6 +164,7 @@
 <script src="auth.js"></script>
 <script src="structures.js"></script>
 <script src="industry-engine.js"></script>
+<script src="sde.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -187,25 +188,35 @@ function buildIndexes(){
   PRODUCTS = [...productToBp.keys()].filter(t => D.types[t] && D.types[t][4]);
   PRODUCTS.sort((a, b) => D.types[a][0].localeCompare(D.types[b][0]));
 }
-async function loadStatic(){
+/* The rig catalog comes from the player's own copy of the SDE (sde.js), so a
+   patch that adds or rebalances a rig lands without a deploy. */
+let sdeBar = null;
+async function readStatic(){
   const el = $('sdeStatus');
   try{
-    const res = await fetch('data/industry.json');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    D = await res.json();
+    const got = await SDE.load('industry');
+    D = got.data;
     buildIndexes();
     // hand the structure size/slot map to the shared store: pages that never load this
-    // 2 MB file read it from the cached copy the store keeps
+    // 2 MB file read it from the copy the store keeps
     if (D.structures) S.useTypeMap(D.structures);
-    el.textContent = `SDE ${D.v} · ${fmt0.format(Object.keys(D.rigs || {}).length)} Standup rigs`;
-    el.title = 'rig catalog loaded from data/industry.json';
     el.className = 'ok';
+    sdeBar.paint(got);
+    render();
+    return got;
   }catch(e){
-    el.textContent = 'data/industry.json missing or unreadable (' + (e.message || e) + ') · rig editing is '
-      + "unavailable until it is there; it is built by CI from CCP's SDE at deploy time (see data/README.md)";
     el.className = 'err';
+    sdeBar.fail('no rig catalog (' + (e.message || e) + ') — rig editing needs it; Update fetches it from CCP');
+    render();
+    return null;
   }
-  render();
+}
+async function loadStatic(){
+  sdeBar = SDE.mountStatus($('sdeStatus'), {
+    summary: () => D ? `${fmt0.format(Object.keys(D.rigs || {}).length)} Standup rigs` : '',
+    onUpdated: readStatic,
+  });
+  sdeBar.ready(await readStatic());
 }
 
 /* ---------- rig catalog helpers (the security band drives every effective %) ---------- */
