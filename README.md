@@ -623,18 +623,32 @@ ignored and dropped on the next save.
 
 Every priced row carries an inline **sparkline** — the last 120 days of daily average
 price, drawn in the trend's own colour (green rising, red falling, grey flat), with
-horizontal markers for the three prices the row turns on: the current best sell (cyan),
-the competitive list price (amber, drawn only when it differs from the best sell) and the
-patient price (violet). The vertical scale spans the series *and* the markers, so a marker
-is never off-canvas and "the patient price is above everything this market has done lately"
-becomes a picture rather than a percentage.
+horizontal markers for the prices the row turns on: the current best sell (cyan), the
+competitive list price (amber, drawn only when it differs from the best sell), the patient
+price (violet) and — the one you are actually deciding about — **the price this plan would
+put you in the market at** (green, drawn only when it is not already on the canvas under
+another name). The vertical scale spans the series *and* every marker, so nothing is ever
+off-canvas and "the patient price is above everything this market has done lately" becomes
+a picture rather than a percentage.
 
-**Click a sparkline** (or focus it and press Enter) to expand the row into a full chart:
-the same series at ~12 months, a shaded band between the daily high and low where ESI
-provides them, the price markers repeated and labelled, daily traded volume as bars
-beneath, and the row's decision numbers — plan, expected net, fill estimate, chance,
-ISK/slot-day — restated under it next to the plain-language *why*. One chart is open at a
-time, and it stays open across a re-sort or a patience flip.
+**Hover a sparkline** to expand the row into a full chart; **click** to pin it open (a
+violet edge marks a pinned chart), click again to let it go. Focus it and press Enter for
+the same thing from the keyboard. A chart is a glance, and a glance should not cost a click
+and then another one to put it away — but one you want to read while you study the numbers
+under it should stay put. One chart is open at a time, and a pinned one survives a re-sort
+or a patience change.
+
+The expanded chart draws **both series**, on one scale, neither turned into the other:
+
+- **region, both sides** — ESI's regional daily average, in the trend's colour, with a
+  shaded band between the daily high and low where ESI provides them.
+- **hub sell side** — Adam4EVE's sell-side prints at *this station*, violet and dashed.
+
+Where the two diverge, the hub is out of line with its region, and that is the thing worth
+seeing rather than averaging away. A gap in the tracker's coverage is a **gap in the line**,
+not a shortcut across it. Underneath: daily traded volume as bars, and the row's decision
+numbers — plan, expected net, fill estimate, chance, ISK/slot-day — restated next to the
+plain-language *why*.
 
 It is all inline SVG: no chart library, no external request, no canvas. Sparklines are
 drawn **lazily**, only for cells actually scrolled into the table's viewport, so a 250-row

@@ -111,6 +111,7 @@
   #preview{height:200px}
   /* price history: a sparkline per row, and the chart it opens into */
   td.spark{padding:3px 6px;cursor:zoom-in;width:124px}
+  tr.detail.pinned td{box-shadow:inset 2px 0 0 var(--violet)}
   td.spark svg{display:block}
   td.spark:hover{background:#1b2434}
   td.spark:focus-visible{outline:1px solid var(--cyan)}
@@ -2843,6 +2844,10 @@ function rebuild(keepChecks = true){
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       histRows: e.hist || null,
+      // the second line: sell-side prints AT THIS HUB, kept apart from ESI's regional
+      // series rather than averaged into it — where the two diverge, the hub is out of
+      // line with its region, and that is worth seeing
+      trkRows: trkRaw && trkRaw.sell && trkRaw.sell.length ? trkRaw.sell : null,
       metrics: { chosen, comp, patOpt, guarded, patHit, patientPrice, decay, velPctDay,
                  floorCost, floorBest,
                  skipped: clean.dropped, skipFloor: clean.floor, decayInfo,
@@ -3108,6 +3113,16 @@ function markersOf(r){
     out.push({ key: 'list', price: r.L, colour: 'var(--amber)', label: 'competitive list' });
   // an order row's own asking price — the marker that makes a hopeless price obvious
   if (r.yourPrice != null) out.push({ key: 'yours', price: r.yourPrice, colour: 'var(--amber)', label: 'your order' });
+  /* ...and the Sell side's equivalent: the price THIS PLAN would put you in the market at.
+     Without it the chart drew everyone else's prices and not your own, which is the one
+     line you are actually deciding about. Drawn only when it is not already on the canvas
+     under another name. */
+  if (r.exportPrice != null && r.yourPrice == null){
+    const near = p => p != null && Math.abs(r.exportPrice - p) <= tickFor(r.exportPrice) / 2;
+    const pp0 = r.metrics ? r.metrics.patientPrice : null;
+    if (!near(r.bestSell) && !near(r.L) && !near(pp0))
+      out.push({ key: 'mine', price: r.exportPrice, colour: 'var(--green)', label: 'your price' });
+  }
   if (r.repriceTo != null) out.push({ key: 'reprice', price: r.repriceTo, colour: 'var(--violet)', label: 'reprice to' });
   const pp = r.metrics ? r.metrics.patientPrice : null;
   if (pp != null && (r.L == null || Math.abs(pp - r.L) > tickFor(pp) / 2))
@@ -3181,12 +3196,21 @@ function buildDetailChart(r){
     return box;
   }
   const marks = markersOf(r);
+  /* THE SECOND LINE. ESI's series is regional and pools both sides of the book across
+     every station; the tracker's is sell-side prints at THIS hub. Averaging them would
+     hide the one thing worth seeing — where they diverge, the hub is out of line with its
+     region. So both are drawn, on one scale, and neither is turned into the other. */
+  const hubRows = (r.trkRows || [])
+    .filter(h => Number.isFinite(h.average) && h.average > 0
+      && Date.parse(h.date) >= Date.now() - DETAIL_DAYS * 86400e3)
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const hasBand = rows.some(h => Number.isFinite(h.highest) && Number.isFinite(h.lowest) && h.highest > 0);
   const vals = rows.map(h => h.average);
   if (hasBand) for (const h of rows){
     if (Number.isFinite(h.highest) && h.highest > 0) vals.push(h.highest);
     if (Number.isFinite(h.lowest) && h.lowest > 0) vals.push(h.lowest);
   }
+  for (const h of hubRows) vals.push(h.average);
   const sc = priceScale(vals, marks, DET_TOP, DET_PRICE_BOT);
   const x = i => DET_L + i * (DET_W - DET_L - DET_R) / (rows.length - 1);
   const wrap = document.createElement('div');
@@ -3227,6 +3251,27 @@ function buildDetailChart(r){
   rows.forEach((h, i) => { d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sc.y(h.average).toFixed(1); });
   svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.5, stroke: TREND_STROKE[r.dir] || 'var(--dim)',
     'data-series': 'avg', 'data-points': rows.length }));
+  /* The hub line, placed on the SAME date axis as the regional one — a gap in the
+     tracker's coverage is a gap in the line, not a shortcut across it. */
+  if (hubRows.length > 1){
+    const at = new Map(rows.map((h, i) => [h.date, i]));
+    let hd = '', pen = false, drawn = 0;
+    for (const h of hubRows){
+      const i = at.get(h.date);
+      if (i == null){ pen = false; continue; }
+      hd += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sc.y(h.average).toFixed(1);
+      pen = true; drawn++;
+    }
+    if (drawn > 1){
+      svg.appendChild(svgEl('path', { d: hd, fill: 'none', 'stroke-width': 1.5,
+        stroke: 'var(--violet)', 'stroke-dasharray': '3 2',
+        'data-series': 'hub', 'data-points': drawn }));
+      txt('hub sell side', { x: DET_W - DET_R, y: DET_TOP - 4, fill: 'var(--violet)',
+        'font-size': 9, 'text-anchor': 'end' });
+      txt('region, both sides', { x: DET_L, y: DET_TOP - 4,
+        fill: TREND_STROKE[r.dir] || 'var(--dim)', 'font-size': 9 });
+    }
+  }
   for (const m of marks){
     const y = sc.y(m.price);
     svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: y, y2: y, stroke: m.colour,
@@ -3337,11 +3382,54 @@ function renderDetail(tbody){
   ((second && second.dataset.key === tr.dataset.key) ? second : tr).after(dtr);
   // the table body is a scroll box: a chart opened at its bottom edge would be off-screen
   if (state.openDetailScroll){ state.openDetailScroll = false; dtr.scrollIntoView({ block: 'nearest' }); }
+  if (state.detailPinned) dtr.classList.add('pinned');
+}
+/* Opening a chart WITHOUT a re-render. The detail row is one <tr>; moving it is a DOM
+   edit, and a full render() on every mouseover would rebuild 250 rows under the cursor,
+   which both costs and makes the pointer land on a different element than it left. */
+function showDetail(key){
+  const tbody = $('tblBody');
+  const old = tbody.querySelector('tr.detail');
+  if (old) old.remove();
+  for (const tr of tbody.querySelectorAll('tr.open')) tr.classList.remove('open');
+  for (const td of tbody.querySelectorAll('td.spark[aria-expanded="true"]'))
+    td.setAttribute('aria-expanded', 'false');
+  state.openDetail = key || null;
+  if (!key) return;
+  renderDetail(tbody);
+  const head = [...tbody.children].find(x => x.dataset && x.dataset.key === key
+    && x.classList.contains('a'));
+  const td = head && head.querySelector('td.spark');
+  if (td) td.setAttribute('aria-expanded', 'true');
+}
+
+/* Hover opens it, a click PINS it. The chart is a glance, and a glance should not cost a
+   click and then another one to put it away; but a chart you want to read while you look
+   at the numbers under it has to stay, so clicking nails it open until you click again. */
+let detailCloseTimer = null;
+const cancelDetailClose = () => { clearTimeout(detailCloseTimer); detailCloseTimer = null; };
+function scheduleDetailClose(){
+  if (state.detailPinned || !state.openDetail) return;
+  cancelDetailClose();
+  // long enough to cross the gap between the cell and the chart, short enough not to linger
+  detailCloseTimer = setTimeout(() => { detailCloseTimer = null; showDetail(null); }, 220);
+}
+function hoverDetail(key){
+  cancelDetailClose();
+  if (state.detailPinned || state.openDetail === key) return;
+  state.openDetailScroll = false;
+  showDetail(key);
 }
 function toggleDetail(key){
-  state.openDetail = state.openDetail === key ? null : key;
-  state.openDetailScroll = !!state.openDetail;
-  render();
+  cancelDetailClose();
+  if (state.openDetail === key && state.detailPinned){
+    state.detailPinned = false;
+    showDetail(null);
+    return;
+  }
+  state.detailPinned = true;
+  state.openDetailScroll = true;
+  showDetail(key);
 }
 
 /* THE ordering of the Sell mode. The column you sorted by, ties broken by expected net and
@@ -4890,6 +4978,7 @@ function diagnoseOne(o, cfg){
   d.volBuy  = trk ? trk.buyUnitsDay : null;
   d.capture = trk ? trk.capture : null;
   // the raw counts are a measurement and stay one; the tooltip quotes them beside it
+  d.trkRows = trkRaw && trkRaw.sell && trkRaw.sell.length ? trkRaw.sell : null;
   d.volSellRaw = trkRaw ? trkRaw.sellUnitsDay : null;
   d.volBuyRaw  = trkRaw ? trkRaw.buyUnitsDay : null;
   d.volUnitsSell = trkRaw ? trkRaw.sellUnits : null;
@@ -5211,7 +5300,7 @@ function ordSparkCell(r){
   const td = document.createElement('td');
   td.className = 'spark';
   const svg = r.histRows && r.histRows.length ? buildSparkline({
-    name: r.name, histRows: r.histRows, dir: r.dir, trendPctWk: r.trendPctWk,
+    name: r.name, histRows: r.histRows, trkRows: r.trkRows, dir: r.dir, trendPctWk: r.trendPctWk,
     bestSell: r.bestOther ?? null, yourPrice: r.price,
     repriceTo: r.verdict === 'reprice' ? r.repricePrice : null,
   }, false) : null;
@@ -5685,6 +5774,25 @@ $('tblBody').addEventListener('click', e => {
   if (!text || text === '—') return;
   cellCopy(text, td);
 });
+
+/* The chart follows the pointer. mouseover rather than mouseenter because it delegates:
+   one listener on the body, not one per row, and the rows are rebuilt constantly. */
+$('tblBody').addEventListener('mouseover', e => {
+  const t = e.target;
+  const spark = t.closest && t.closest('td.spark');
+  if (spark){
+    const tr = spark.closest('tr');
+    // a row with no history opens the explanation, exactly as clicking it does — the two
+    // ways in show the same thing or one of them is lying about the row
+    if (tr && tr.dataset.key) hoverDetail(tr.dataset.key);
+    else cancelDetailClose();
+    return;
+  }
+  // inside the open chart itself: reading it is not leaving it
+  if (t.closest && t.closest('tr.detail')){ cancelDetailClose(); return; }
+  scheduleDetailClose();
+});
+$('tblBody').addEventListener('mouseleave', scheduleDetailClose);
 
 restoreOrders();                  // the last order pull, so the mode is not empty on a reload
 if (state.orders.fetched){

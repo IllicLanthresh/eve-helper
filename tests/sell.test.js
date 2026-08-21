@@ -1969,7 +1969,7 @@ H.run('sell', async () => {
         bare: cell('Blind Widget').dataset.spark,
         bareText: cell('Blind Widget').textContent,
         bareSvg: !!cell('Blind Widget').querySelector('svg'),
-        row: (() => { const r = state.rows.find(x => x.name === 'Spark Widget'); return { L: r.L, bestSell: r.bestSell, patient: r.metrics.patientPrice, dir: r.dir }; })(),
+        row: (() => { const r = state.rows.find(x => x.name === 'Spark Widget'); return { L: r.L, bestSell: r.bestSell, patient: r.metrics.patientPrice, dir: r.dir, exportPrice: r.exportPrice, strategy: r.strategy }; })(),
       };
     });
     eq('a priced row with history gets a sparkline', geom.state, 'ready');
@@ -1978,7 +1978,20 @@ H.run('sell', async () => {
     // the scale spans the series AND the markers, so a marker is never off-canvas:
     //   lo = 1,000 (today's average)   hi = 2,190 (the oldest day)
     //   y(v) = (H-2) - (v - lo)/(hi - lo) x (H-4)
-    const yOf = v => ((geom.H - 2) - (v - 1000) / (2190 - 1000) * (geom.H - 4)).toFixed(2);
+    /* The scale spans the series AND every marker — including, now, the price THIS PLAN
+       would put you in the market at. Spark Widget's plan is to dump into a buy book at
+       800, below the series' own low of 1,000, so the floor of the scale is that marker.
+       Deriving it from the markers rather than hard-coding 1,000 is the point: the rule is
+       "nothing is ever off-canvas", not "the series decides". */
+    const scaleLo = Math.min(1000, ...geom.markers.map(m => m.price));
+    const scaleHi = Math.max(2190, ...geom.markers.map(m => m.price));
+    const yOf = v => ((geom.H - 2) - (v - scaleLo) / (scaleHi - scaleLo) * (geom.H - 4)).toFixed(2);
+    eq('the plan\'s own price is on the chart', geom.markers.filter(m => m.key === 'mine').length, 1);
+    eq('...which for this row is the instant sale it recommends', geom.row.strategy, 'imm');
+    eq('...at the price it would actually get', geom.markers.find(m => m.key === 'mine').price,
+      geom.row.exportPrice);
+    check('...and the scale grew to hold it rather than clipping it',
+      scaleLo <= geom.row.exportPrice, scaleLo + ' vs ' + geom.row.exportPrice);
     eq('the best sell is marked', geom.markers.filter(m => m.key === 'sell').length, 1);
     eq('...at exactly its place on the shared scale',
       geom.markers.find(m => m.key === 'sell').y, yOf(1200));
@@ -2072,6 +2085,51 @@ H.run('sell', async () => {
     await p7.click('#tblBody tr.open td.spark');
     await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0);
     eq('clicking again closes it', await p7.evaluate(() => state.openDetail), null);
+    eq('...and unpins it', await p7.evaluate(() => !!state.detailPinned), false);
+
+    /* ---------- hover opens it, a click pins it ---------- */
+    /* A chart is a glance, and a glance should not cost a click and then another one to
+       put it away. Reading one while you look at the numbers under it should, so a click
+       nails it open. */
+    section('the chart opens on hover, and a click pins it');
+    // park the pointer off the table first: hovering where it already is moves no mouse
+    // and fires no mouseover, and a test that passes on a stale position tests nothing
+    await p7.hover('#inv');
+    await p7.hover(sparkCell('spark widget'));
+    await p7.waitForSelector('tr.detail svg[role=img]');
+    eq('hovering a sparkline opens the chart', await p7.evaluate(() => state.openDetail), 'spark widget');
+    eq('...without pinning it', await p7.evaluate(() => !!state.detailPinned), false);
+    check('...and the chart is not marked pinned',
+      !(await p7.evaluate(() => !!document.querySelector('tr.detail.pinned'))));
+    // moving onto another row's numbers, still inside the table: the chart follows
+    await p7.hover(sparkCell('blind widget'));
+    await p7.waitForFunction(() => state.openDetail === 'blind widget');
+    eq('...and moving to another sparkline moves the chart', await p7.evaluate(() =>
+      document.querySelectorAll('#tblBody tr.detail').length), 1);
+    // leaving the table closes it, on its own
+    await p7.hover(sparkCell('spark widget'));
+    await p7.waitForFunction(() => state.openDetail === 'spark widget');
+    await p7.hover('#inv');
+    await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0,
+      null, { timeout: 5000 });
+    eq('...and leaving the table closes it with no click at all',
+      await p7.evaluate(() => state.openDetail), null);
+    // now pin it
+    await p7.hover(sparkCell('spark widget'));
+    await p7.waitForFunction(() => state.openDetail === 'spark widget');
+    await p7.click(sparkCell('spark widget'));
+    await p7.waitForSelector('tr.detail.pinned');
+    eq('a click pins the chart open', await p7.evaluate(() => !!state.detailPinned), true);
+    await p7.hover('#inv');
+    await p7.hover(sparkCell('blind widget'));
+    await new Promise(r => setTimeout(r, 400));
+    eq('...so hovering elsewhere no longer moves it',
+      await p7.evaluate(() => state.openDetail), 'spark widget');
+    check('...nor does leaving the table close it', await p7.evaluate(() =>
+      document.querySelectorAll('#tblBody tr.detail').length) === 1);
+    await p7.click(sparkCell('spark widget'));
+    await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0);
+    eq('...and a second click lets it go again', await p7.evaluate(() => !!state.detailPinned), false);
     // the keyboard reaches it too
     await p7.evaluate(() => {
       const td = document.querySelector('#tblBody tr[data-key="spark widget"] td.spark');

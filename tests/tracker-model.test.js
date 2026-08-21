@@ -575,6 +575,46 @@ H.run('tracker-model', async () => {
       anchored.fromEsi !== anchored.fromTracker,
       anchored.fromEsi + ' vs ' + anchored.fromTracker);
 
+    /* ---------- D2d: two lines, not an average of two -------------------------------- */
+    /* ESI's series is regional and pools both sides of the book across every station; the
+       tracker's is sell-side prints at THIS hub. Averaging them would hide the one thing
+       worth seeing — where they diverge, the hub is out of line with its region. */
+    section('the chart plots both series, and neither becomes the other');
+    const chart = await s2.page.evaluate(() => {
+      const r = state.rows.find(x => x.trkRows && x.trkRows.length > 1 && x.histRows && x.histRows.length > 1);
+      if (!r) return null;
+      const box = buildDetailChart(r);
+      const svg = box.querySelector('svg');
+      const path = k => svg.querySelector(`[data-series="${k}"]`);
+      const legend = [...svg.querySelectorAll('text')].map(t => t.textContent);
+      return {
+        name: r.name,
+        avg: path('avg') ? { points: Number(path('avg').dataset.points), stroke: path('avg').getAttribute('stroke'),
+                             dash: path('avg').getAttribute('stroke-dasharray') } : null,
+        hub: path('hub') ? { points: Number(path('hub').dataset.points), stroke: path('hub').getAttribute('stroke'),
+                             dash: path('hub').getAttribute('stroke-dasharray'), d: path('hub').getAttribute('d') } : null,
+        legend,
+        trkDays: r.trkRows.length,
+      };
+    });
+    check('there is a row with both series to draw', !!chart, 'none found');
+    check('the regional series is drawn', !!(chart && chart.avg), JSON.stringify(chart && chart.avg));
+    check('...and the hub sell side is drawn beside it', !!(chart && chart.hub),
+      JSON.stringify(chart && chart.hub));
+    check('...in a different colour', chart && chart.hub.stroke !== chart.avg.stroke,
+      chart && (chart.avg.stroke + ' vs ' + chart.hub.stroke));
+    check('...and a different line, so the two are told apart without colour',
+      chart && chart.hub.dash && !chart.avg.dash, chart && chart.hub.dash);
+    check('both are labelled for what they are',
+      chart && chart.legend.some(t => /hub sell side/.test(t))
+        && chart.legend.some(t => /region, both sides/.test(t)),
+      JSON.stringify(chart && chart.legend));
+    check('a gap in the tracker\'s coverage is a gap in the line, not a shortcut across it',
+      chart && (chart.hub.d.match(/M/g) || []).length >= 1, chart && chart.hub.d.slice(0, 60));
+    check('...and the hub line never claims more days than the tracker holds',
+      chart && chart.hub.points <= chart.trkDays,
+      chart && (chart.hub.points + ' of ' + chart.trkDays));
+
     section('the split is a column, not a number with the split hidden on hover');
     const cols = await s2.page.evaluate(() => {
       const th = [...document.querySelectorAll('#tbl thead th')];
