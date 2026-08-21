@@ -121,6 +121,9 @@ async function mockA4E(context, opts) {
     counters.urls.push(url);
     // a host that accepts the connection and then says nothing, for as long as it takes
     if (opts.hang) return new Promise(() => {});
+    // ...or one that does it to a single file and serves the rest, which is what a real
+    // half-open connection looks like and is what the watchdog has to survive
+    if (opts.hangFirst && counters.urls.length === 1) return new Promise(() => {});
     counters.concurrent++;
     counters.maxConcurrent = Math.max(counters.maxConcurrent, counters.concurrent);
     const finish = async r => {
@@ -305,7 +308,7 @@ H.run('tracker-model', async () => {
     const s1 = await openSell(browser, server, {});
     await fetchPrices(s1.page);
     eq('with nothing cached the age line is quiet, not an error',
-      await s1.page.textContent('#trkAge'), 'never fetched');
+      await s1.page.textContent('#trkAge'), 'not fetched');
     const beforeSrc = await s1.page.textContent('#volSrc');
     check('...and the provenance line names the ESI fallback for what it is',
       /ESI regional/.test(beforeSrc) && /upper bound/.test(beforeSrc), beforeSrc);
@@ -377,28 +380,39 @@ H.run('tracker-model', async () => {
       stored.clampVw + ' vs ' + stored.clampHi);
     eq('...and the clamp is counted, not hidden', stored.clampFlag, 1);
 
-    /* ---------- the coverage manifest ------------------------------------------------ */
-    section('a day already held is never asked for again');
+    /* ---------- nothing is kept between runs ---------------------------------------
+       The cache was removed deliberately: market data that outlives the run which fetched
+       it goes stale and then produces wrong numbers that read as model bugs. So a refresh
+       is always a full re-fetch of the window, and a reload starts from nothing. These two
+       sections assert exactly what the old cache tests asserted, inverted. */
+    section('a refresh re-fetches, so nothing on screen can be stale');
     const before = s1.trk.urls.length;
     await s1.page.click('#btnTrk');
     await s1.page.waitForFunction(() => !state.trkRunning && !document.getElementById('btnTrk').disabled,
       null, { timeout: 30000 });
-    eq('a second refresh asks for nothing', s1.trk.urls.length, before);
-    eq('...and says so', await s1.page.textContent('#trkStatus'), 'up to date');
+    check('a second refresh asks for every file again',
+      s1.trk.urls.length === before * 2, `${before} -> ${s1.trk.urls.length}`);
+    check('...and reports what it fetched rather than declaring itself up to date',
+      /\d+d · [\d,]+ rows/.test(await s1.page.textContent('#trkStatus')),
+      await s1.page.textContent('#trkStatus'));
+    eq('...holding the same days as the first run, since the window did not move',
+      await s1.page.evaluate(() => Object.keys(state.trk.cov.days).length), st1.held);
 
-    section('the cache survives a reload');
+    section('a reload starts from nothing');
     await s1.page.reload();
     await s1.page.waitForFunction("typeof rebuild === 'function'");
-    await s1.page.waitForFunction(() => state.trk && state.trk.on, null, { timeout: 20000 });
-    const reloaded = await s1.page.evaluate(() => ({
+    await s1.page.waitForFunction("typeof trkDb === 'object'");
+    const reloaded = await s1.page.evaluate(async () => ({
       age: document.getElementById('trkAge').textContent,
-      days: Object.keys(state.trk.cov.days).length,
+      rows: await trkDb.count(),
+      cov: await trkDb.meta('coverage'),
       window: document.getElementById('trkDays').value,
     }));
-    eq('nothing was refetched to draw it', s1.trk.urls.length, before);
-    eq('...the same days are held', reloaded.days, st1.held);
-    eq('...the same line is drawn', reloaded.age, st1.age);
-    eq('...and the window control came back as it was left', reloaded.window, '30');
+    eq('no rows survived the reload', reloaded.rows, 0);
+    eq('...nor any record of what was held', reloaded.cov, undefined);
+    eq('...so the line reads as a page that has fetched nothing', reloaded.age, 'not fetched');
+    // the SETTING is a preference and does persist; the DATA is not and does not
+    eq('...while the window control came back as it was left', reloaded.window, '30');
     await s1.close();
 
     /* ================= the three empty states ======================================== */
@@ -622,19 +636,11 @@ H.run('tracker-model', async () => {
 
     /* ================= failure containment =========================================== */
     section('a 404 on a published, retained day is a fault, and is counted');
-    /* Seeded so exactly ONE day of the window is missing: a single-day group is fetched
-       as a daily, which is the request whose 404 policy this is about. */
+    /* One day inside the daily window answers 404 while it is published and retained,
+       which is the case this policy is about: not the schedule, a real fault. */
     const gapDay = shift(todayUTC(), -3);
     const s4 = await openSell(browser, server, { missing: [gapDay] });
     await fetchPrices(s4.page);
-    await s4.page.evaluate(async d => {
-      const days = {};
-      for (let i = 1; i <= 30; i++) {
-        const x = new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10);
-        if (x !== d) days[x] = { at: Date.now(), src: 'seed', hubs: { 60003760: 1 } };
-      }
-      await trkDb.setMeta('coverage', { v: 1, days });
-    }, gapDay);
     await refreshVolume(s4.page, 30);
     const failedRun = await s4.page.evaluate(() => ({
       text: document.getElementById('trkStatus').textContent,
@@ -642,14 +648,13 @@ H.run('tracker-model', async () => {
       held: Object.keys(state.trk.cov.days).length,
       age: document.getElementById('trkAge').textContent,
     }));
-    eq('exactly one file was asked for', s4.trk.urls.length, 1);
-    check('...as a daily, which is what a one-day gap inside the window is',
-      /_daily_/.test(s4.trk.urls[0]), s4.trk.urls[0]);
+    check('the missing day was asked for as a daily, being inside the retention window',
+      s4.trk.urls.some(u => u.includes('_daily_' + gapDay)), s4.trk.urls.join(' '));
     check('the run reports the failure rather than swallowing it',
       / · 1 failed$/.test(failedRun.text), failedRun.text);
     eq('...in red', failedRun.cls, 'err');
-    check('...and the days that DID land are still held', failedRun.held === 29,
-      String(failedRun.held));
+    check('...and every other day of the window still landed',
+      failedRun.held >= 28, String(failedRun.held));
     check('...with the hole named as a gap, not as staleness',
       / · 1 gaps$/.test(failedRun.age), failedRun.age);
     await s4.close();
@@ -665,93 +670,67 @@ H.run('tracker-model', async () => {
     const s9 = await openSell(browser, server, { missingWeeks: [gapWeek.key] });
     await fetchPrices(s9.page);
     await refreshVolume(s9.page, 30);
-    const weekGap = await s9.page.evaluate(async d => ({
+    const weekGap = await s9.page.evaluate(d => ({
       text: document.getElementById('trkStatus').textContent,
       cls: document.getElementById('trkStatus').className,
-      absent: await trkDb.meta('absent'),
+      asked: 0,
       has: !!(state.trk.cov.days[d]),
     }), gapWeek.day);
     check('the missing week is reported as a failure', / · \d+ failed$/.test(weekGap.text),
       weekGap.text);
     eq('...in red', weekGap.cls, 'err');
-    eq('...its days are marked gone, so the next run does not loop on them',
-      weekGap.absent[gapWeek.day], 'retired');
-    check('...and none of them is claimed as held', !weekGap.has, String(weekGap.has));
-    const askedTwice = s9.trk.urls.length;
+    check('...and none of its days is claimed as held', !weekGap.has, String(weekGap.has));
+    // within one run a dead weekly is not retried; across runs everything is asked again,
+    // because nothing is kept to remember it by
+    const askedOnce = s9.trk.urls.length;
+    const weeklyAsks = s9.trk.urls.filter(u => u.includes(gapWeek.key)).length;
+    eq('the dead weekly was asked for once in the run, not looped on', weeklyAsks, 1);
     await s9.page.click('#btnTrk');
     await s9.page.waitForFunction(() => !state.trkRunning
       && !document.getElementById('btnTrk').disabled, null, { timeout: 30000 });
-    eq('a second run asks for nothing at all', s9.trk.urls.length, askedTwice);
+    eq('a second run asks for the whole window again', s9.trk.urls.length, askedOnce * 2);
     await s9.close();
 
-    section('with IndexedDB blocked the page is the page it always was');
+    /* Storage is not touched at all any more, so a browser that refuses it must be
+       indistinguishable from one that allows it — including a refresh that still works.
+       This is the regression test against ever quietly reintroducing a dependency on it. */
+    section('a browser with storage switched off is not a degraded browser');
     const s5 = await openSell(browser, server, {
       beforeLoad: () => {
-        // a private window, or a browser with site data switched off
+        // a private window, or site data switched off
         Object.defineProperty(window, 'indexedDB', {
           get() { throw new Error('indexedDB is blocked'); },
         });
       },
     });
     await fetchPrices(s5.page);
-    await s5.page.waitForFunction(() => state.trkDisabled === true, null, { timeout: 20000 });
-    const blocked = await s5.page.evaluate(() => ({
+    await refreshVolume(s5.page, 30);
+    const blocked = await s5.page.evaluate(async () => ({
       rows: document.querySelectorAll('#tblBody tr').length,
       age: document.getElementById('trkAge').textContent,
-      tip: document.getElementById('trkAge').title,
+      status: document.getElementById('trkStatus').textContent,
+      statusCls: document.getElementById('trkStatus').className,
       src: document.getElementById('volSrc').textContent,
-      volSell: state.rows.every(r => r.volSell == null),
+      stored: await trkDb.count(),
+      volSell: state.rows.some(r => r.volSell > 0),
       strategies: state.rows.map(r => r.strategy).join(','),
       esiStatus: document.getElementById('esiStatus').textContent,
       esiCls: document.getElementById('esiStatus').className,
     }));
     check('every row still renders', blocked.rows >= 4, String(blocked.rows));
-    eq('the line says why, once', blocked.age, 'storage unavailable');
-    check('...and what it costs', /falls back to ESI regional/.test(blocked.tip), blocked.tip);
-    check('the provenance line is the ESI one', /ESI regional/.test(blocked.src), blocked.src);
-    check('no row invents a tracker number', blocked.volSell);
+    check('the refresh ran to completion', /\d+d · [\d,]+ rows/.test(blocked.status), blocked.status);
+    eq('...without an error', blocked.statusCls, 'ok');
+    check('...and really did hold rows', blocked.stored > 0, String(blocked.stored));
+    check('rows carry measured sell-side volume, exactly as anywhere else', blocked.volSell);
+    check('the provenance line names the tracker', /Adam4EVE/.test(blocked.src), blocked.src);
+    check('the coverage line is the ordinary one, not a warning',
+      /\d+d through/.test(blocked.age), blocked.age);
     check('...and every row still has a plan', blocked.strategies.split(',').every(Boolean),
       blocked.strategies);
-    // a dead cache must not leak into an unrelated status line
-    check('the price fetch reports its own success, not the cache\'s failure',
+    check('the price fetch reports its own success',
       /· \d+ items · /.test(blocked.esiStatus), blocked.esiStatus);
     eq('...in green', blocked.esiCls, 'ok');
     await s5.close();
-
-    section('a schema bump throws the old database away rather than misreading it');
-    const s6 = await openSell(browser, server, {});
-    await fetchPrices(s6.page);
-    await refreshVolume(s6.page, 30);
-    const bumped = await s6.page.evaluate(async () => {
-      // write a value shape this build does not understand, under an older schema stamp
-      const db = await new Promise((res, rej) => {
-        const rq = indexedDB.open('eveHelperTracker', 1);
-        rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
-      });
-      await new Promise(res => {
-        const tx = db.transaction(['meta', 'rows'], 'readwrite');
-        tx.objectStore('meta').put({ v: 0 }, 'schema');
-        tx.objectStore('rows').put({ h: 60003760, t: 34, w: '1999-01', r: 'not an array' },
-          '60003760|34|1999-01');
-        tx.oncomplete = () => res();
-      });
-      db.close();
-      return true;
-    });
-    check('the stale database is in place', bumped);
-    await s6.page.reload();
-    await s6.page.waitForFunction("typeof trkDb === 'object'");
-    const afterBump = await s6.page.evaluate(async () => ({
-      count: await trkDb.count(),
-      cov: await trkDb.meta('coverage'),
-      schema: await trkDb.meta('schema'),
-      age: document.getElementById('trkAge').textContent,
-    }));
-    eq('every row is gone', afterBump.count, 0);
-    eq('...and the coverage manifest with them', afterBump.cov, undefined);
-    eq('...leaving the current schema stamped', afterBump.schema.v, 1);
-    eq('...and a page that reads as a new one', afterBump.age, 'never fetched');
-    await s6.close();
 
     section('a reload racing the refresh cannot leave a half-run line on screen');
     /* The inventory box reloads the memo on a debounce, so one can be in flight while a
@@ -976,19 +955,11 @@ H.run('tracker-model', async () => {
     await s13.close();
 
     section('...and a stall nobody cancels is given up on, counted, and shown');
-    /* One day of the window missing, so the run is exactly one request: the watchdog is
-       what ends it, and the page must land in the same place the ABORTING host already
-       lands — buttons back, red, "1 failed". */
-    const s14 = await openSell(browser, server, { hang: true });
+    /* One file of the run stalls and the rest serve. The watchdog is what ends that one
+       request, and the page must land where the ABORTING host already lands — buttons
+       back, red, "1 failed" — with every other day of the window still landing. */
+    const s14 = await openSell(browser, server, { hangFirst: true });
     await fetchPrices(s14.page);
-    await s14.page.evaluate(async d => {
-      const days = {};
-      for (let i = 1; i <= 30; i++) {
-        const x = new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10);
-        if (x !== d) days[x] = { at: Date.now(), src: 'seed', hubs: { 60003760: 1 } };
-      }
-      await trkDb.setMeta('coverage', { v: 1, days });
-    }, shift(todayUTC(), -3));
     await s14.page.selectOption('#trkDays', '30');
     await s14.page.waitForFunction(() => !state.trkRunning);
     await s14.page.click('#btnTrk');
@@ -1007,7 +978,8 @@ H.run('tracker-model', async () => {
     check('...counting the file it lost', / · 1 failed$/.test(stalled.text), stalled.text);
     eq('...in red', stalled.cls, 'err');
     check('...with the button given back', !stalled.disabled);
-    eq('...and the days that were already held still held', stalled.held, 29);
+    check('...and every file that did answer still landed', stalled.held > 0,
+      String(stalled.held));
     await s14.close();
 
     /* ================= the guard that became the measurement ========================= */

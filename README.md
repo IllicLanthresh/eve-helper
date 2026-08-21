@@ -397,13 +397,18 @@ differences them, then publishes one CSV per day (and one per ISO week) with, **
 station and per day**, the units bought *from sell orders* separately from the units sold
 *to buy orders*.
 
-**It is fetched by your browser, not baked into this page.** Press **Refresh volume**;
-files come from `static.adam4eve.eu` (public, no login, permissive CORS) one at a time,
-are parsed locally and stored in IndexedDB under `eveHelperTracker`. Backfill uses weekly
-files, catch-up uses daily ones — the host retires dailies at about 16 days, so anything
-older only exists as a week. Nothing is ever downloaded twice: a coverage manifest records
-each day *after* its rows have committed, so a run you kill halfway costs only the file it
-was on.
+**It is fetched by your browser, not baked into this page, and not kept between runs.**
+Press **Refresh volume**; files come from `static.adam4eve.eu` (public, no login,
+permissive CORS) one at a time and are parsed in the page. Backfill uses weekly files,
+catch-up uses daily ones — the host retires dailies at about 16 days, so anything older
+only exists as a week.
+
+**Nothing is cached.** The rows live for the run that fetched them and no longer, so every
+number on screen was downloaded for the calculation you are looking at. A cache of market
+data goes stale between sessions and then produces wrong numbers that read as model bugs,
+which is a class of problem not worth inviting before something forces it. If fetching
+afresh each run ever becomes the bottleneck — a rate limit, or a wait nobody will sit
+through — that is the moment to reconsider, deliberately and with the reason named.
 
 | Column | What it is |
 | --- | --- |
@@ -454,21 +459,17 @@ Two details worth knowing, both measured rather than assumed:
   the primary source for that figure; the tracker's is the fallback when there is no ESI
   history at all, and it is labelled as the ceiling it is.
 
-**Staleness.** The line beside the button reads `never fetched` until you press it, then
-`90d through 08-20`, plus ` · n gaps` for holes inside the window and ` · stale` when the
-newest day held is more than two days old. Two days, not one: A4E publishes yesterday's
-file at 03:32–03:38 UTC, so a one-day threshold would cry stale for three and a half hours
-every night with nothing to fetch. A 404 before that cutoff is the schedule and is not
-reported as a fault; a 404 on a published, still-retained day is, and lands in the status
-line as ` · n failed`.
+**Coverage, not staleness.** The line beside the button reads `not fetched` until you
+press it, then `90d through 08-20`, plus ` · n gaps` for days the source published nothing
+for. There is no staleness warning because there is nothing that can be stale — what you
+are looking at was fetched this run. A 404 on a day A4E has not published yet is the
+schedule and is not reported as a fault; a 404 on a published, still-retained day is, and
+lands in the status line as ` · n failed`.
 
-**Storage.** Rows are packed one record per (hub, type, ISO week) — measured 22× faster to
-write than one record per row — but nothing is aggregated: every day, every side and every
-published column survives, so the model can change later without re-downloading anything.
-Budget **9.4 MB of IndexedDB per week held** (measured: 122 MB for the 13 weeks of a
-90-day window, against a 1,109 MB quota). The run checks `navigator.storage.estimate()`
-first and refuses rather than truncating your window behind your back. Shrinking the
-window does not delete anything, it only narrows what the model reads.
+**In memory.** Rows are packed one record per (hub, type, ISO week), but nothing is
+aggregated: every day, every side and every published column survives, so the model can
+change without changing what gets fetched. Shrinking the window narrows what the model
+reads; widening it costs another download.
 
 **Bandwidth.** The host serves gzip and every browser asks for it: a weekly file is
 22,147,080 B raw and **4,756,781 B on the wire** (1.73 s measured), a daily 2.9 MB raw and
