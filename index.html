@@ -55,6 +55,31 @@
   thead th.s-asc::after{content:' ▲';color:var(--cyan);font-size:10px}
   thead th.s-desc::after{content:' ▼';color:var(--cyan);font-size:10px}
   tbody td{padding:5px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
+  /* an item is two <tr>s: the pair shares one bottom border, and the line between them
+     is not drawn at all, so the eye reads a row rather than two */
+  #tbl{table-layout:fixed}
+  #tbl td,#tbl th{overflow:hidden}
+  #tbl tbody tr.a>td{padding:5px 6px 1px;border-bottom:none}
+  #tbl tbody tr.b>td{padding:0 6px 6px;border-bottom:1px solid #1a2233;
+    color:var(--dim);font-size:11px;white-space:nowrap}
+  /* the name may be long and the chips must never be the thing that gets pushed out, so
+     the name is the only part allowed to give way */
+  #tbl tbody tr.a>td.name{white-space:nowrap;display:flex;align-items:center;gap:4px;
+    padding-right:4px}
+  #tbl td.name .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #tbl td.name .flag{flex:none;margin:0}
+  #tbl td.name img.ticon{flex:none}
+  #tbl td.plan .badge{padding:1px 5px}
+  #tbl tbody tr.a>td.tick,#tbl tbody tr.a>td.pos{border-bottom:1px solid #1a2233;
+    vertical-align:middle;text-align:center}
+  #tbl tbody tr.a:hover>td,#tbl tbody tr.a:hover+tr.b>td{background:#141b28}
+  #tbl tbody tr.b:hover>td,#tbl tbody tr.b:hover>td{background:#141b28}
+  #tbl td.sub .k{color:#5d6a7e;font-size:10px}
+  #tbl td.sub .up{color:var(--cyan)}
+  #tbl td.sub .dn{color:#7c8798}
+  #tbl td.name .nm{font-weight:600;font-size:12.5px;vertical-align:middle}
+  #tbl td.plan .splitnote{margin-left:5px;font-size:10px}
+  #tbl td.pos{color:var(--dim);font-size:10px}
   tbody td:not(:first-child){cursor:copy}
   tbody td.copied{box-shadow:inset 0 0 0 1px var(--cyan);background:#14344a}
   tbody tr.falling td:first-child{box-shadow:inset 3px 0 0 var(--red)}
@@ -172,7 +197,7 @@
 </nav>
 <header>
   <h1>Sell Helper</h1>
-  <div class="subhead sell-only">inventory → ESI prices → INSTANT / LIST / LIST-PATIENT · ranked by ISK/slot-day<details
+  <div class="subhead sell-only">inventory → ESI prices → INSTANT / LIST / PATIENT · ranked by ISK/slot-day<details
     class="help"><summary>?</summary><span class="helpbody">Paste an inventory, pick a hub, pull live prices from ESI (public, no login).
     Each item is valued against the real buy-order book (depth and <code>min_volume</code> scams respected) and against
     both ways of listing it, priced with the broker fee you pay up front and the odds the order ever fills.
@@ -294,7 +319,7 @@
     <ul class="plain">
       <li><b>INSTANT</b> — walks the real buy book top-down; <code>volume_remain</code> and
           <code>min_volume</code> (margin-scam bait) respected. Certain, no broker fee, no market slot.</li>
-      <li><b>LIST</b> at the competitive price <code>L</code> · <b>LIST-PATIENT</b> at the history
+      <li><b>LIST</b> at the competitive price <code>L</code> · <b>PATIENT</b> at the history
           reference. Value = <code>p × (it fills) + (1 − p) × (dump at the end of the window, carried by
           the trend)</code>; the broker fee is subtracted in <i>both</i> branches, which is why a decaying
           item stops being recommended for listing.</li>
@@ -368,9 +393,11 @@
       <option value="all">all plans</option>
       <option value="imm">INSTANT only</option>
       <option value="ord">LIST only</option>
-      <option value="pat">LIST-PATIENT only</option>
+      <option value="pat">PATIENT only</option>
       <option value="split">SPLIT only</option>
     </select>
+    <label for="sortBy" style="margin:0">sort</label>
+    <select id="sortBy" style="width:150px" title="every value the table holds, including the ones that share a column&#10;the nine headings sort too — this reaches the rest"></select>
     <input id="fltText" type="text" placeholder="filter by name…" style="width:220px">
     <span class="hint" id="fltCount"></span>
     <span class="hint">· cell → copy · spark → chart</span>
@@ -379,30 +406,15 @@
   <div class="tablewrap">
     <table id="tbl">
       <thead><tr>
-        <th data-key="checked" title="tick: include in the import list&#10;INSTANT: no price to import — instant checklist instead">Import</th>
-        <th class="num nosort" title="position in the table as sorted&#10;renumbers when you sort or filter&#10;Tick top N works down this order">#</th>
-        <th data-key="name" title="the name as EVE spells it&#10;click a cell to copy it">Item</th>
-        <th data-key="trendPctWk" title="chart: 120d daily average&#10;markers: best sell · list price · patient price&#10;sort: trend %/wk · click a cell for the full chart">History</th>
-        <th data-key="qty" class="num" title="units of it in the inventory you pasted">Qty</th>
-        <th data-key="bestBuy" class="num" title="highest buy order covering the hub">Top buy ISK/u</th>
-        <th data-key="bestSell" class="num" title="cheapest sell order at the hub">Sell ISK/u</th>
-        <th data-key="margin" class="num" title="(sell − buy) ÷ buy&#10;negative: crossed market">Margin %</th>
-        <th data-key="hist" class="num" title="chosen statistic over the region's daily averages">Hist ISK/u</th>
-        <th data-key="sellVsHist" class="num" title="(sell − hist) ÷ hist&#10;green: above history · red: below&#10;dip or decay: the Plan column decides">Sell/Hist %</th>
-        <th data-key="volDay" class="num" title="units traded/day over the history window&#10;over CALENDAR days — a day with no trades counts as zero&#10;regional, both sides (no API splits traded volume)">Vol/day</th>
-        <th data-key="volSell" class="num" title="units bought from sell orders per day&#10;this station only, not the region&#10;Adam4EVE order tracker — an estimate">Sell u/d</th>
-        <th data-key="volBuy" class="num" title="units sold to buy orders per day&#10;this station only, not the region&#10;does not fill a sell order">Buy u/d</th>
-        <th data-key="capture" class="num" title="share of traded units that hit sell orders&#10;22%: most volume is dumping into buy orders&#10;measured at this station over the held window">Sell share</th>
-        <th data-key="buyDepth" class="num" title="units wanted by buy orders covering the hub">Buy depth</th>
-        <th data-key="sellDepth" class="num" title="units offered by sell orders at the hub">Sell depth</th>
-        <th data-key="strategy" title="recommended disposal · hover a badge for its numbers">Plan</th>
-        <th data-key="exportPrice" class="num" title="price to import at">Import at ISK/u</th>
-        <th data-key="fillDays" class="num" title="queue at the price ÷ Vol/day&#10;queue: units already listed at or below it, yours excluded&#10;regional volume, both sides, all stations — optimistic">Fill est. (d)</th>
-        <th data-key="fillChance" class="num" title="share of the listed stack expected to sell inside the patience window&#10;the queue ahead drains first, then buyers paying your price arrive&#10;≤ marks an upper bound: ESI regional volume, both sides pooled">Fill %</th>
-        <th data-key="perSlot" class="num" title="expected net ÷ expected days on the market&#10;INSTANT uses no slot — not ranked here">ISK/slot-day</th>
-        <th data-key="totalNet" class="num" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given">Expected net ISK</th>
-        <th data-key="advTotal" class="num" title="listing plan net − instant net&#10;negative: instant is better">Order Δ ISK</th>
-        <th data-key="flags" title="warnings on the row · hover a chip for its numbers&#10;sorts by how many, not by how bad">Flags</th>
+        <th data-key="checked" style="width:26px" title="tick: include in the import list&#10;INSTANT: no price to import — instant checklist instead"></th>
+        <th class="num nosort" style="width:26px" title="position in the table as sorted&#10;renumbers when you sort or filter&#10;Tick top N works down this order">#</th>
+        <th data-key="name" style="width:222px" title="the name as EVE spells it&#10;below: units held · buy/sell depth&#10;click a value to copy it">Item</th>
+        <th data-key="trendPctWk" style="width:auto" title="chart: 120d daily average&#10;markers: best sell · list price · patient price&#10;below: history reference price · sell vs it&#10;sort: trend %/wk · click for the full chart">History</th>
+        <th data-key="strategy" style="width:84px" title="recommended disposal · hover a badge for its numbers&#10;below: listing plan net − instant net">Plan</th>
+        <th data-key="exportPrice" class="num" style="width:118px" title="price to import at&#10;below: top buy → best sell · margin">Price</th>
+        <th data-key="volDay" class="num" style="width:104px" title="units traded/day, regional, both sides pooled&#10;over CALENDAR days — a day with no trades counts as zero&#10;below: bought from sell orders ↑ · sold to buy orders ↓ · sell share">Flow</th>
+        <th data-key="fillChance" class="num" style="width:70px" title="share of the listed stack expected to sell inside the patience window&#10;≤ marks an upper bound: ESI regional volume, both sides pooled&#10;below: estimated days to fill">Fill</th>
+        <th data-key="totalNet" class="num" style="width:100px" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given&#10;below: expected net ÷ expected days on the market">Net ISK</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
     </table>
@@ -2504,7 +2516,8 @@ function syncControls(){
 }
 
 /* ---------- rendering ---------- */
-const PLAN_LABEL = { imm: 'INSTANT', ord: 'LIST', pat: 'LIST-PATIENT', split: 'SPLIT' };
+// PATIENT, not LIST-PATIENT: the long form wrapped to two lines in a 74px column
+const PLAN_LABEL = { imm: 'INSTANT', ord: 'LIST', pat: 'PATIENT', split: 'SPLIT' };
 const PLAN_CLASS = { imm: 'imm', ord: 'ord', pat: 'pat', split: 'split' };
 const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 /* THREE states the volume columns must never blur into one another, each with its own
@@ -2534,6 +2547,21 @@ const captureTip = r => r.volState !== 'tracker' ? volNoneTip(r)
   : `sell side: ${Math.round(r.capture * 100)}% of units traded`
     + `\nbuy side: ${100 - Math.round(r.capture * 100)}% — no help to a sell order`;
 const fmtIsk = n => n == null ? '—' : fmt.format(Math.round(n * 100) / 100);
+/* Width is the scarce resource, so a cell carries the magnitude and the exact figure sits
+   on hover and on the clipboard. 12,328,200 in a 100px column either clips or pushes the
+   column wider than the screen; 12.3M does neither and answers the same question. Three
+   significant figures throughout, so the eye can compare down the column. */
+const fmtShort = n => {
+  if (n == null) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 0 : 1) + 'B';
+  if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
+  if (a >= 1e3) return (n / 1e3).toFixed(a >= 1e4 ? 0 : 1) + 'k';
+  if (a >= 1)   return String(Math.round(n * 10) / 10);
+  return String(Math.round(n * 100) / 100);
+};
+// ...and the exact figure, for the hover that has to justify the short one
+const exactTip = n => n == null ? '' : 'exact: ' + fmt.format(Math.round(n * 100) / 100);
 function fmtExport(n){
   let s = n.toFixed(2).replace(/\.?0+$/, '');
   if (!s.includes('.')) s = n.toFixed(0);
@@ -2877,7 +2905,8 @@ function drawSpark(td){
    re-render puts it back where it belongs instead of collapsing it. */
 function renderDetail(tbody){
   if (!state.openDetail) return;
-  const tr = [...tbody.children].find(x => x.dataset && x.dataset.key === state.openDetail);
+  const tr = [...tbody.children].find(x => x.dataset && x.dataset.key === state.openDetail
+    && x.classList.contains('a'));
   if (!tr){ return; }
   const r = state.rows.find(x => x.key === state.openDetail);
   if (!r) return;
@@ -2888,7 +2917,9 @@ function renderDetail(tbody){
   td.colSpan = document.querySelectorAll('#tbl thead th').length;
   td.appendChild(buildDetailChart(r));
   dtr.appendChild(td);
-  tr.after(dtr);
+  // an item is a PAIR of rows; the chart belongs under both, not between them
+  const second = tr.nextElementSibling;
+  ((second && second.dataset.key === tr.dataset.key) ? second : tr).after(dtr);
   // the table body is a scroll box: a chart opened at its bottom edge would be off-screen
   if (state.openDetailScroll){ state.openDetailScroll = false; dtr.scrollIntoView({ block: 'nearest' }); }
 }
@@ -2904,6 +2935,7 @@ function toggleDetail(key){
    screen. Every branch falls through to the same tie-break, so the order is total. */
 const TEXT_KEYS = new Set(['name', 'strategy']);   // read A→Z on the default direction
 // the fixed part of the ISK/slot-day header tooltip; render() appends the live part
+const NET_TIP = 'expected ISK in the wallet for the whole stack\nnet of fees, over the plan the row is given';
 const PERSLOT_TIP = 'expected net ÷ expected days on the market\nINSTANT uses no slot — not ranked here';
 function rowCmp(a, b){
   const k = state.sortKey, d = state.sortDir;
@@ -2927,6 +2959,32 @@ function rowsForExport(){ return state.rows.slice().sort(rowCmp); }
 // effective import membership: a latent tick AND a plan with a price to import
 function markImport(){ for (const r of state.rows) r.inImport = r.checked && r.strategy !== 'imm'; }
 
+/* One item is TWO rows: the decision on top, the evidence beneath it. Width is the scarce
+   resource on half a monitor and height is not, so the twenty-four columns this table used
+   to have are folded into nine, and nothing is hidden — the flags that used to sit off the
+   right-hand edge now sit against the item name, where the eye already is.
+
+   Both <tr>s carry the same data-key, so anything that looks a row up by key finds the
+   pair. The tick and the position span both lines; every other column has a value on top
+   and its supporting figures underneath. */
+const subCell = (parts, cls) => {
+  const td = document.createElement('td');
+  td.className = 'sub' + (cls ? ' ' + cls : '');
+  for (const p of parts){
+    if (p == null) continue;
+    if (typeof p === 'string'){ td.appendChild(document.createTextNode(p)); continue; }
+    const sp = document.createElement('span');
+    sp.className = p.cls || '';
+    sp.textContent = p.t;
+    if (p.cell) sp.dataset.cell = p.cell;     // addressable by NAME, never by column index
+    if (p.copy) sp.dataset.copy = p.copy;
+    if (p.title) sp.title = p.title;
+    td.appendChild(sp);
+  }
+  return td;
+};
+const K = t => ({ t, cls: 'k' });                    // a quiet label, never the value
+
 function render(){
   markImport();
   const tbody = $('tblBody');
@@ -2936,19 +2994,30 @@ function render(){
   for (const r of sortedRows()){
     pos++;
     const tr = document.createElement('tr');
-    tr.dataset.key = r.key;
+    const tr2 = document.createElement('tr');
+    tr.className = 'a'; tr2.className = 'b';
+    tr.dataset.key = tr2.dataset.key = r.key;
     // dim only rows that end up in neither artifact (instants always go to the checklist)
-    if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)) tr.classList.add('excluded');
-    if (r.dir === 'falling') tr.classList.add('falling');
+    if (!r.inImport && !(r.strategy === 'imm' && !r.unsellable)){
+      tr.classList.add('excluded'); tr2.classList.add('excluded');
+    }
+    if (r.dir === 'falling'){ tr.classList.add('falling'); tr2.classList.add('falling'); }
 
+    const priceCopy = n => n == null ? '' : fmtExport(n);
+    const signCls = n => n == null ? '' : n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+    const pct1 = n => n == null ? '—' : (n > 0 ? '+' : '') + n.toFixed(1) + '%';
+
+    /* ---- line 1: the decision ---- */
     const tdCheck = document.createElement('td');
+    tdCheck.className = 'tick';
+    tdCheck.rowSpan = 2;
     if (r.strategy === 'imm'){
       // nothing to import for an instant sale — it always goes to the checklist
-      const s = document.createElement('span');
-      s.textContent = '⚡';
-      s.style.color = 'var(--amber)'; s.style.cursor = 'help';
-      s.title = 'INSTANT: nothing to import\nsold from the instant checklist';
-      tdCheck.appendChild(s);
+      const sp = document.createElement('span');
+      sp.textContent = '⚡';
+      sp.style.color = 'var(--amber)'; sp.style.cursor = 'help';
+      sp.title = 'INSTANT: nothing to import\nsold from the instant checklist';
+      tdCheck.appendChild(sp);
     } else {
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.checked = r.checked;
@@ -2957,40 +3026,34 @@ function render(){
     }
     tr.appendChild(tdCheck);
 
-    const priceCopy = n => n == null ? '' : fmtExport(n);
-    const signCls = n => n == null ? '' : n > 0 ? ' pos' : n < 0 ? ' neg' : '';
-    for (const [cls, text, copy, title] of [
-      ['num', String(pos), ''],
-      ['name', r.name, r.name],
-      ['num', fmt.format(r.qty), String(r.qty)],
-      ['num', fmtIsk(r.bestBuy), priceCopy(r.bestBuy)],
-      ['num', fmtIsk(r.bestSell), priceCopy(r.bestSell)],
-      ['num', r.margin == null ? '—' : r.margin.toFixed(1) + '%', r.margin == null ? '' : r.margin.toFixed(2)],
-      ['num', fmtIsk(r.hist), priceCopy(r.hist)],
-      ['num' + signCls(r.sellVsHist), r.sellVsHist == null ? '—' : (r.sellVsHist > 0 ? '+' : '') + r.sellVsHist.toFixed(1) + '%', r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2)],
-      ['num', r.volDay == null ? '—' : fmt.format(r.volDay),
-       r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100)],
-      ['num', volCell(r, r.volSell),
-       r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), volTip(r, 'sell')],
-      ['num', volCell(r, r.volBuy),
-       r.volBuy == null ? '' : String(Math.round(r.volBuy * 100) / 100), volTip(r, 'buy')],
-      ['num', r.capture == null ? (r.volState === 'none' ? VOL_NONE : '—')
-        : Math.round(r.capture * 100) + '%',
-       r.capture == null ? '' : r.capture.toFixed(4), captureTip(r)],
-      ['num', r.buyDepth == null ? '—' : fmt.format(r.buyDepth), r.buyDepth == null ? '' : String(r.buyDepth)],
-      ['num', r.sellDepth == null ? '—' : fmt.format(r.sellDepth), r.sellDepth == null ? '' : String(r.sellDepth)],
-    ]){
-      const td = document.createElement('td'); td.className = cls; td.textContent = text;
-      if (copy) td.dataset.copy = copy;
-      if (title) td.title = title;
-      if (cls === 'name') prependTypeIcon(td, r.typeId, r.name);
-      tr.appendChild(td);
-    }
+    const tdPos = document.createElement('td');
+    tdPos.className = 'num pos'; tdPos.rowSpan = 2; tdPos.dataset.cell = 'pos';
+    tdPos.textContent = String(pos);
+    tr.appendChild(tdPos);
 
-    // the sparkline sits next to the name, where the eye already is. It is not drawn
-    // here: the observer fills it in if and when the row is actually on screen.
+    // name, then the warnings that used to be twenty columns to the right of it
+    const tdName = document.createElement('td');
+    tdName.className = 'name';
+    const nm = document.createElement('span');
+    nm.className = 'nm'; nm.textContent = r.name; nm.dataset.copy = r.name;
+    nm.title = r.name;          // the chips win the space, so the full name lives here
+    tdName.dataset.cell = 'name';
+    tdName.appendChild(nm);
+    for (const f of r.flags){
+      const sp = document.createElement('span');
+      sp.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info'
+        : f.cls === 'wait' ? ' wait' : '');
+      sp.textContent = f.t;
+      if (f.ttl) sp.title = f.ttl;
+      tdName.appendChild(sp);
+    }
+    prependTypeIcon(tdName, r.typeId, r.name);
+    tr.appendChild(tdName);
+
+    // the chart is not drawn here: the observer fills it in if the row reaches the screen
     const tdSpark = document.createElement('td');
     tdSpark.className = 'spark';
+    tdSpark.dataset.cell = 'spark';
     tdSpark._row = r;
     tdSpark.tabIndex = 0;
     tdSpark.setAttribute('role', 'button');
@@ -2999,58 +3062,109 @@ function render(){
       + 'click: full price chart';
     const obs = sparkObserver();
     if (obs) obs.observe(tdSpark); else drawSpark(tdSpark);
-    tr.insertBefore(tdSpark, tr.children[3]);   // after Import, #, Item
+    tr.appendChild(tdSpark);
 
     const tdStrat = document.createElement('td');
+    tdStrat.className = 'plan';
+    tdStrat.dataset.cell = 'strategy';
     const badge = document.createElement('span');
     badge.className = 'badge ' + PLAN_CLASS[r.strategy];
     badge.textContent = PLAN_LABEL[r.strategy];
     badge.title = r.why;
-    tdStrat.dataset.copy = badge.textContent;
+    badge.dataset.copy = badge.textContent;
     tdStrat.appendChild(badge);
     if (r.strategy === 'split'){
-      const s = document.createElement('span');
-      s.className = 'hint';
-      s.style.marginLeft = '6px';
+      const sp = document.createElement('span');
+      sp.className = 'hint splitnote';
       const patLeg = r.metrics && r.metrics.chosen && r.metrics.chosen.kind === 'patient';
-      s.textContent = `${fmt.format(r.splitFill)} now · ${fmt.format(r.qty - r.splitFill)} listed`
-        + (patLeg ? ' · patient' : '');
-      s.title = `instant leg: ${fmt.format(r.splitFill)} u\nlisted: ${fmt.format(r.qty - r.splitFill)} u`
+      sp.textContent = `${fmt.format(r.splitFill)}+${fmt.format(r.qty - r.splitFill)}`;
+      sp.title = `instant leg: ${fmt.format(r.splitFill)} u\nlisted: ${fmt.format(r.qty - r.splitFill)} u`
         + (patLeg ? '\nprice: the patient (history) price' : '');
-      tdStrat.appendChild(s);
+      tdStrat.appendChild(sp);
     }
     tr.appendChild(tdStrat);
 
-    for (const [cls, text, copy, title] of [
-      ['num', fmtIsk(r.exportPrice), priceCopy(r.exportPrice)],
-      ['num', r.fillDays == null ? '—' : fmtDays(r.fillDays), r.fillDays == null ? '' : r.fillDays.toFixed(2),
-        r.strategy === 'imm' ? 'INSTANT: nothing is listed'
-          : r.fillDays == null ? 'no sell book, or no traded volume to divide by'
-          : `queue: ${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} u at or below ${fmtIsk(r.exportPrice)}`
-            + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)`],
-      ['num', pcBound(r.fillChance, r.fillBound),
-        r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
-        r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why],
-      ['num', r.perSlot == null ? '—' : fmtIsk(r.perSlot), r.perSlot == null ? '' : priceCopy(r.perSlot),
-        r.strategy === 'imm' ? 'INSTANT: no slot used — not ranked here' : r.why],
-      ['num', fmtIsk(r.totalNet), priceCopy(r.totalNet)],
-      ['num' + (r.advTotal > 0 ? ' pos' : r.advTotal < 0 ? ' neg' : ''), r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtIsk(r.advTotal), priceCopy(r.advTotal)],
+    for (const [name, cls, text, copy, title] of [
+      ['exportPrice', 'num', fmtShort(r.exportPrice), priceCopy(r.exportPrice), exactTip(r.exportPrice)],
+      ['volDay', 'num', r.volDay == null ? '—' : fmtShort(r.volDay) + '/d',
+       r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100), exactTip(r.volDay)],
+      ['fillChance', 'num', pcBound(r.fillChance, r.fillBound),
+       r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
+       r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why],
+      ['totalNet', 'num', fmtShort(r.totalNet), priceCopy(r.totalNet), exactTip(r.totalNet)],
     ]){
       const td = document.createElement('td'); td.className = cls; td.textContent = text;
+      td.dataset.cell = name;
       if (copy) td.dataset.copy = copy;
+      if (title) td.title = title;
       tr.appendChild(td);
     }
 
-    const tdFlags = document.createElement('td');
-    for (const f of r.flags){
-      const s = document.createElement('span');
-      s.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info' : f.cls === 'wait' ? ' wait' : '');
-      s.textContent = f.t;
-      if (f.ttl) s.title = f.ttl;
-      tdFlags.appendChild(s);
-    }
-    tr.appendChild(tdFlags);
+    /* ---- line 2: what the decision rests on ---- */
+    tr2.appendChild(subCell([
+      K('qty '), { cell: 'qty', t: fmtShort(r.qty), copy: String(r.qty), title: exactTip(r.qty) }, '  ', K('depth '),
+      { cell: 'buyDepth', t: fmtShort(r.buyDepth),
+        copy: r.buyDepth == null ? '' : String(r.buyDepth), title: 'units wanted by buy orders covering the hub' },
+      '/',
+      { cell: 'sellDepth', t: fmtShort(r.sellDepth),
+        copy: r.sellDepth == null ? '' : String(r.sellDepth), title: 'units offered by sell orders at the hub' },
+    ]));
+
+    tr2.appendChild(subCell([
+      K('hist '),
+      { cell: 'hist', t: fmtShort(r.hist), copy: priceCopy(r.hist), title: 'chosen statistic over the region\'s daily averages' },
+      ' ',
+      { cell: 'sellVsHist', t: pct1(r.sellVsHist), cls: signCls(r.sellVsHist),
+        copy: r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2),
+        title: '(sell − hist) ÷ hist\ngreen: above history · red: below' },
+    ]));
+
+    tr2.appendChild(subCell([
+      { cell: 'advTotal', t: r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtShort(r.advTotal),
+        cls: signCls(r.advTotal), copy: priceCopy(r.advTotal),
+        title: 'listing plan net − instant net\nnegative: instant is better' },
+    ]));
+
+    tr2.appendChild(subCell([
+      { cell: 'bestBuy', t: fmtShort(r.bestBuy), copy: priceCopy(r.bestBuy), title: 'highest buy order covering the hub' },
+      ' → ',
+      { cell: 'bestSell', t: fmtShort(r.bestSell), copy: priceCopy(r.bestSell), title: 'cheapest sell order at the hub' },
+      ' ',
+      { cell: 'margin', t: r.margin == null ? '—' : r.margin.toFixed(0) + '%', cls: 'k',
+        copy: r.margin == null ? '' : r.margin.toFixed(2),
+        title: '(sell − buy) ÷ buy\nnegative: crossed market' },
+    ], 'num'));
+
+    tr2.appendChild(subCell([
+      // the arrow is a direction mark, not part of the number: it stays outside the value
+      // so the cell's text is the figure and nothing else
+      { cell: 'volSell', t: volCell(r, r.volSell), cls: 'up',
+        copy: r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), title: volTip(r, 'sell') },
+      K('↑ '),
+      { cell: 'volBuy', t: volCell(r, r.volBuy), cls: 'dn',
+        copy: r.volBuy == null ? '' : String(Math.round(r.volBuy * 100) / 100), title: volTip(r, 'buy') },
+      K('↓ '),
+      { cell: 'capture', t: r.capture == null ? (r.volState === 'none' ? VOL_NONE : '—') : Math.round(r.capture * 100) + '%',
+        cls: 'k', copy: r.capture == null ? '' : r.capture.toFixed(4), title: captureTip(r) },
+    ], 'num'));
+
+    tr2.appendChild(subCell([
+      { cell: 'fillDays', t: r.fillDays == null ? '—' : fmtDays(r.fillDays) + 'd',
+        copy: r.fillDays == null ? '' : r.fillDays.toFixed(2),
+        title: r.strategy === 'imm' ? 'INSTANT: nothing is listed'
+          : r.fillDays == null ? 'no sell book, or no traded volume to divide by'
+          : `queue: ${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} u at or below ${fmtIsk(r.exportPrice)}`
+            + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)` },
+    ], 'num'));
+
+    tr2.appendChild(subCell([
+      { cell: 'perSlot', t: fmtShort(r.perSlot), copy: r.perSlot == null ? '' : priceCopy(r.perSlot),
+        title: r.strategy === 'imm' ? 'INSTANT: no slot used — not ranked here' : r.why },
+      K('/sd'),
+    ], 'num'));
+
     frag.appendChild(tr);
+    frag.appendChild(tr2);
   }
   tbody.appendChild(frag);
   renderDetail(tbody);
@@ -3071,11 +3185,15 @@ function render(){
       th.classList.add(asc ? 's-asc' : 's-desc');
     }
   });
-  // ISK/slot-day is empty without history — say so on the header rather than let the
-  // column imply a ranking it is not doing
+  /* ISK/slot-day is empty without history. It shares the Net ISK column now, so the count
+     of rows it cannot rank is stated on that heading rather than left to imply a ranking
+     the column is not doing. */
   const unrated = state.rows.filter(r => r.strategy !== 'imm' && r.perSlot == null).length;
-  const psTh = document.querySelector('#tbl thead th[data-key="perSlot"]');
-  if (psTh) psTh.title = PERSLOT_TIP + (unrated ? `\nno rate yet: ${unrated} rows — fetch history` : '');
+  const psTh = document.querySelector('#tbl thead th[data-key="totalNet"]');
+  if (psTh) psTh.title = NET_TIP + '\nbelow: ' + PERSLOT_TIP.split('\n')[0]
+    + (unrated ? `\nno rate yet: ${unrated} rows — fetch history` : '');
+  const sortSel = $('sortBy');
+  if (sortSel && sortSel.value !== state.sortKey) sortSel.value = state.sortKey;
   const shown = state.rows.filter(rowFilter).length;
   const hiddenTicked = state.rows.filter(r => r.inImport && !rowFilter(r)).length;
   $('fltCount').textContent = (shown === state.rows.length
@@ -5025,6 +5143,39 @@ $('tblBody').addEventListener('keydown', e => {
   if (tr && tr.dataset.key) toggleDetail(tr.dataset.key);
 });
 
+/* Nine headings cannot expose twenty-two sortable values, and hiding twelve of them behind
+   a column nobody can click would be the old problem in a new shape. The select carries
+   every key; the headings are shortcuts to the nine that have one. Both write the same
+   state, and the select is redrawn from it, so they cannot disagree. */
+const SORT_KEYS = [
+  ['perSlot', 'ISK/slot-day'], ['totalNet', 'expected net'], ['advTotal', 'order Δ'],
+  ['name', 'item name'], ['qty', 'qty'], ['strategy', 'plan'],
+  ['exportPrice', 'import price'], ['bestBuy', 'top buy'], ['bestSell', 'best sell'],
+  ['margin', 'margin %'], ['hist', 'history price'], ['sellVsHist', 'sell vs history'],
+  ['trendPctWk', 'trend %/wk'], ['volDay', 'vol/day'], ['volSell', 'sell u/d'],
+  ['volBuy', 'buy u/d'], ['capture', 'sell share'], ['buyDepth', 'buy depth'],
+  ['sellDepth', 'sell depth'], ['fillDays', 'fill est. days'], ['fillChance', 'fill %'],
+  ['checked', 'in the import list'],
+];
+function buildSortSelect(){
+  const sel = $('sortBy');
+  if (!sel) return;
+  sel.textContent = '';
+  for (const [k, label] of SORT_KEYS){
+    const o = document.createElement('option');
+    o.value = k; o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = state.sortKey;
+  sel.addEventListener('change', () => {
+    state.sortKey = sel.value;
+    state.sortDir = TEXT_KEYS.has(state.sortKey) ? -1 : -1;
+    render();
+  });
+}
+
+buildSortSelect();
+
 document.querySelectorAll('#tbl thead th').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.key;
@@ -5050,7 +5201,8 @@ async function cellCopy(text, td){
 $('tblBody').addEventListener('click', e => {
   const own = e.target.closest('[data-copy]');
   const td = e.target.closest('td');
-  if (!td || td.cellIndex === 0 || td.colSpan > 1) return;      // checkbox column / empty-state row
+  // the tick column and the empty-state row carry nothing worth copying
+  if (!td || td.classList.contains('tick') || td.colSpan > 1) return;
   if (e.target.closest('input')) return;
   if (td.classList.contains('spark')){                          // the chart, not a value to copy
     const tr = td.closest('tr');

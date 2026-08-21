@@ -236,15 +236,21 @@ async function refreshVolume(page, windowDays) {
     null, { timeout: 90000 });
 }
 
+/* An item is a PAIR of <tr>s sharing one data-key, and every value carries data-cell, so
+   a lookup is by NAME rather than by counting columns. */
 const rowOf = (page, name) => page.evaluate(n => {
   const r = state.rows.find(x => x.name === n);
   if (!r) return null;
-  const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key || '');
-  const tr = [...document.querySelectorAll('#tblBody tr')].find(x => x.children[2].textContent === n);
+  const head = [...document.querySelectorAll('#tblBody tr.a')]
+    .find(x => x.querySelector('.nm') && x.querySelector('.nm').textContent === n);
+  const pair = head ? [head, head.nextElementSibling] : [];
   const cellOf = k => {
-    const i = heads.indexOf(k);
-    return tr && i >= 0 ? { text: tr.children[i].textContent, tip: tr.children[i].title,
-      copy: tr.children[i].dataset.copy || '' } : { text: '(no such column)', tip: '', copy: '' };
+    for (const tr of pair){
+      if (!tr) continue;
+      const el = tr.querySelector(`[data-cell="${k}"]`);
+      if (el) return { text: el.textContent, tip: el.title, copy: el.dataset.copy || '' };
+    }
+    return { text: '(no such column)', tip: '', copy: '' };
   };
   return { volDay: r.volDay, volSell: r.volSell, volBuy: r.volBuy, capture: r.capture,
     volSrc: r.volSrc, volState: r.volState, volHeldDays: r.volHeldDays,
@@ -503,19 +509,42 @@ H.run('tracker-model', async () => {
         unpriced: tsv.filter(l => l.includes('UNPRICED')).map(l => l.split('\t').length),
       };
     });
-    check('Sell u/d and Buy u/d are real columns',
-      cols.keys.includes('volSell') && cols.keys.includes('volBuy'), cols.keys.join(','));
-    check('...next to each other, and next to the regional figure they are not',
-      cols.keys.indexOf('volBuy') === cols.keys.indexOf('volSell') + 1
-      && cols.keys.indexOf('volSell') === cols.keys.indexOf('volDay') + 1, cols.keys.join(','));
-    check('the per-item sell share is a column of its own', cols.keys.includes('capture'),
-      cols.keys.join(','));
-    check('every one of the three explains itself on hover',
-      cols.tips.length === 3 && cols.tips.every(t => t && t.split('\n').every(l => l.length <= 130)),
-      JSON.stringify(cols.tips));
-    check('...and each names the estimate for what it is',
-      cols.tips.some(t => /Adam4EVE/.test(t)) && cols.tips.some(t => /this station only/.test(t)),
-      JSON.stringify(cols.tips));
+    /* REWRITTEN for the two-line row. The Sell table folded twenty-four headers into nine,
+       so a "column" is now an addressable, VISIBLE cell rather than a <th>. The intent is
+       unchanged and is the one the owner stated twice: the split is shown, not hidden on a
+       hover. These assert the values are real rendered text, side by side, and that
+       deleting the tooltips would not delete the numbers. */
+    const flow = await s2.page.evaluate(() => {
+      const tr = [...document.querySelectorAll('#tblBody tr.a')]
+        .find(x => x.querySelector('.nm').textContent === 'Tritanium');
+      const pair = [tr, tr.nextElementSibling];
+      const get = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`)).find(Boolean);
+      const cell = k => { const e = get(k); return e && { text: e.textContent, tip: e.title,
+        td: e.closest('td').dataset.cell || e.closest('td').className }; };
+      const s = get('volSell'), b2 = get('volBuy'), c = get('capture');
+      return { sell: cell('volSell'), buy: cell('volBuy'), cap: cell('capture'),
+        sameCell: s.closest('td') === b2.closest('td') && b2.closest('td') === c.closest('td'),
+        order: s.compareDocumentPosition(b2) & Node.DOCUMENT_POSITION_FOLLOWING
+             && b2.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING,
+        flowHead: [...document.querySelectorAll('#tbl thead th')]
+          .find(x => x.dataset.key === 'volDay').title };
+    });
+    check('the sell side is rendered text, not a tooltip',
+      flow.sell && flow.sell.text && flow.sell.text !== '', JSON.stringify(flow.sell));
+    check('...and so is the buy side', flow.buy && flow.buy.text && flow.buy.text !== '',
+      JSON.stringify(flow.buy));
+    check('...and the per-item share', flow.cap && flow.cap.text && flow.cap.text !== '',
+      JSON.stringify(flow.cap));
+    check('all three sit together under the regional figure they qualify', flow.sameCell);
+    check('...in the order sell, buy, share', !!flow.order);
+    check('each still explains itself on hover, without the hover carrying the number',
+      [flow.sell, flow.buy, flow.cap].every(c => c.tip && c.tip.split('\n').every(l => l.length <= 130)),
+      JSON.stringify([flow.sell.tip, flow.buy.tip, flow.cap.tip]));
+    check('...and the group header names what the two sides mean',
+      /sell orders/.test(flow.flowHead) && /buy orders/.test(flow.flowHead), flow.flowHead);
+    check('...while each value names the station it was measured at',
+      [flow.sell.tip, flow.buy.tip].every(t => /station:/.test(t)),
+      JSON.stringify([flow.sell.tip, flow.buy.tip]));
     /* REWRITTEN: My orders used to get Sell u/d and Sell share, with the buy side on the
        tooltip of one of them. This is the screen where live orders are read, and the
        split behind a hover is the shape that was rejected. It gets the column. */
@@ -825,9 +854,11 @@ H.run('tracker-model', async () => {
     section('the tooltip states the units the cache holds, over the days it holds');
     const tips = await s11.page.evaluate(() => {
       const r = state.rows.find(x => x.name === 'Tritanium');
-      const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key || '');
-      const tr = [...document.querySelectorAll('#tblBody tr')].find(x => x.children[2].textContent === 'Tritanium');
-      const tip = k => tr.children[heads.indexOf(k)].title.split('\n')[0];
+      const head = [...document.querySelectorAll('#tblBody tr.a')]
+        .find(x => x.querySelector('.nm').textContent === 'Tritanium');
+      const pair = [head, head.nextElementSibling];
+      const tip = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`))
+        .find(Boolean).title.split('\n')[0];
       return {
         sell: tip('volSell'), buy: tip('volBuy'),
         held: `sell side: ${fmt.format(Math.round(r.volUnitsSell))} u over ${r.volHeldDays}d held`,

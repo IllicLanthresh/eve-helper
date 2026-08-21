@@ -173,14 +173,18 @@ H.run('density', async () => {
       null, { timeout: 20000 });
 
     const sell = await s.page.evaluate(() => {
-      const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key || '');
-      const skip = new Set(['name', 'flags', 'trendPctWk']);   // item name, chip cell, sparkline
+      /* An item is two <tr>s and a cell can group several related values, each carrying
+         its own data-cell name. The rule is unchanged — a VALUE is a number and its unit,
+         never a sentence — so it is the named values that get measured, not the container
+         that happens to hold three of them side by side. */
+      const skip = new Set(['name', 'spark']);          // item name + chips, and the chart
       const cells = [];
-      for (const tr of document.querySelectorAll('#tblBody tr')) {
-        [...tr.children].forEach((td, i) => {
-          if (skip.has(heads[i])) return;
-          cells.push({ col: heads[i], t: td.textContent.trim() });
-        });
+      for (const el of document.querySelectorAll('#tblBody [data-cell]')) {
+        const col = el.dataset.cell;
+        if (skip.has(col)) continue;
+        // a cell that holds named children is a container: measure the children instead
+        if (el.querySelector('[data-cell]')) continue;
+        cells.push({ col, t: el.textContent.trim() });
       }
       return {
         cells,

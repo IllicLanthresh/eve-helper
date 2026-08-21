@@ -260,6 +260,41 @@ remembered.
    while the status line claims it copied what you were looking at. Both come out in the
    order their table is in.
 
+## The table: two lines per item
+
+The Sell table used to be **24 columns wanting 1,944px in the 880px** a browser gets at
+half the width of a monitor. It scrolled sideways, and the Flags column — 55px, dead last —
+was never seen, which is the worst possible place to put a warning.
+
+It is **nine columns and two rows per item** now. Line one is the decision, line two is what
+the decision rests on, under the same heading. Nothing was dropped: every value the 24
+columns carried is still on screen.
+
+| Column | Line 1 | Line 2 |
+| --- | --- | --- |
+| — | tick, or ⚡ for an INSTANT | *(spans both)* |
+| **#** | position in this view | *(spans both)* |
+| **Item** | icon, name, **warning chips** | qty · buy/sell depth |
+| **History** | sparkline | history reference price · sell vs it |
+| **Plan** | INSTANT / LIST / PATIENT / SPLIT | order Δ |
+| **Price** | import price | top buy → best sell · margin |
+| **Flow** | vol/day, regional | ↑ sell u/d · ↓ buy u/d · sell share |
+| **Fill** | fill % | estimated days |
+| **Net ISK** | expected net | ISK per slot-day |
+
+**Warnings moved to the item name**, where the eye already is, rather than sitting past the
+right-hand edge. When a row carries chips and a long name, the chips keep their space and
+the name gives way — the full name is on hover and is still what a click copies.
+
+**Numbers are shown at their magnitude**: `12.3M`, not `12,328,200`. The exact figure is on
+hover and is what lands on the clipboard, and every export is unchanged. A full-precision
+ISK figure in a 118px column either clips mid-digit or drags the table back off screen.
+
+**Sorting.** Nine headings cannot expose twenty-two sortable values, so the headings sort
+the nine they name and a **sort** control beside the filter reaches every one of the rest.
+Both write the same state and the control is redrawn from it, so they cannot disagree.
+`LIST-PATIENT` is now `PATIENT`: the long form wrapped to two lines in an 84px column.
+
 ## The decision layer
 
 The scarce resource is not ISK, it is a **market slot-day**: you can only have so many
@@ -410,12 +445,15 @@ which is a class of problem not worth inviting before something forces it. If fe
 afresh each run ever becomes the bottleneck — a rate limit, or a wait nobody will sit
 through — that is the moment to reconsider, deliberately and with the reason named.
 
-| Column | What it is |
+The **Flow** column carries all four, the regional figure on top and this station's split
+beneath it:
+
+| Value | What it is |
 | --- | --- |
-| **Vol/day** | ESI, regional, both sides pooled — unchanged, still the Fill est. denominator |
-| **Sell u/d** | units a day bought **from sell orders** at this station |
-| **Buy u/d** | units a day sold **to buy orders** at this station |
-| **Sell share** | `sell units ÷ (sell units + buy units)`, over the days held |
+| **Vol/day** | ESI, regional, both sides pooled — still the Fill est. denominator |
+| **↑ sell u/d** | units a day bought **from sell orders** at this station |
+| **↓ buy u/d** | units a day sold **to buy orders** at this station |
+| **sell share** | `sell units ÷ (sell units + buy units)`, over the days held |
 
 Both rates divide by the **days actually downloaded**, which the coverage manifest knows
 exactly, and the share is taken over **raw units on that one day set** — not as a ratio of

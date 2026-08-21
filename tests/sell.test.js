@@ -392,10 +392,10 @@ H.run('sell', async () => {
     check('nothing is ticked by default', rows.every(r => !r.checked), JSON.stringify(rows.map(r => r.checked)));
     eq('the import preview starts empty', await s2.page.$eval('#preview', el => el.value), '');
 
-    const cells = await s2.page.evaluate(() => [...document.querySelectorAll('#tblBody tr')].map(tr => ({
-      name: tr.children[2].textContent,
-      hasCheckbox: !!tr.children[0].querySelector('input[type=checkbox]'),
-      bolt: tr.children[0].textContent.trim(),
+    const cells = await s2.page.evaluate(() => [...document.querySelectorAll('#tblBody tr.a')].map(tr => ({
+      name: tr.querySelector('.nm').textContent,
+      hasCheckbox: !!tr.querySelector('td.tick').querySelector('input[type=checkbox]'),
+      bolt: tr.querySelector('td.tick').textContent.trim(),
     })));
     const instRow = cells.find(c => c.name === 'Pyerite');
     check('an INSTANT row shows ⚡ and no checkbox',
@@ -416,12 +416,14 @@ H.run('sell', async () => {
       preview.split('\n').filter(Boolean).every(l => l.split('\t').length === 2), preview);
 
     section('item icons — matching a row against the stack in your hangar');
-    const icons = await s2.page.evaluate(() => [...document.querySelectorAll('#tblBody tr')].map(tr => {
-      const td = tr.children[2];
+    const icons = await s2.page.evaluate(() => [...document.querySelectorAll('#tblBody tr.a')].map(tr => {
+      const td = tr.querySelector('[data-cell="name"]');
+      // the cell holds the icon, the name and any warning chips; the NAME is its own span
+      const nm = td.querySelector('.nm');
       const img = td.querySelector('img.ticon');
       return {
-        name: td.textContent,
-        copy: td.dataset.copy || null,
+        name: nm.textContent,
+        copy: nm.dataset.copy || null,
         src: img ? img.getAttribute('src') : null,
         lazy: img ? img.getAttribute('loading') : null,
         alt: img ? img.getAttribute('alt') : null,
@@ -457,9 +459,9 @@ H.run('sell', async () => {
     const before = await s2.page.$eval('#preview', el => el.value);
     await s2.page.fill('#fltText', 'tritanium');
     await s2.page.dispatchEvent('#fltText', 'input');
-    await s2.page.waitForFunction(() => document.querySelectorAll('#tblBody tr').length === 1);
+    await s2.page.waitForFunction(() => document.querySelectorAll('#tblBody tr.a').length === 1);
     eq('the table now shows one row',
-      await s2.page.evaluate(() => document.querySelectorAll('#tblBody tr').length), 1);
+      await s2.page.evaluate(() => document.querySelectorAll('#tblBody tr.a').length), 1);
     eq('...but the import list is untouched', await s2.page.$eval('#preview', el => el.value), before);
     check('...and the toolbar says how many ticked rows are hidden',
       /hidden/.test(await s2.page.$eval('#fltCount', el => el.textContent)),
@@ -477,10 +479,10 @@ H.run('sell', async () => {
     await s2.page.selectOption('#fltType', 'ord');
     // wait on the rendered outcome, not just the state flag behind it
     await s2.page.waitForFunction(() => state.filterType === 'ord'
-      && [...document.querySelectorAll('#tblBody tr')]
-        .every(tr => !/^(Pyerite|Damage Control II)$/.test(tr.children[2].textContent)));
+      && [...document.querySelectorAll('#tblBody tr.a')]
+        .every(tr => !/^(Pyerite|Damage Control II)$/.test(tr.querySelector('.nm').textContent)));
     const shown = await s2.page.evaluate(() =>
-      [...document.querySelectorAll('#tblBody tr')].map(tr => tr.children[2].textContent));
+      [...document.querySelectorAll('#tblBody tr.a')].map(tr => tr.querySelector('.nm').textContent));
     check('the plan filter shows only ORDER rows',
       shown.length && shown.every(n => n !== 'Pyerite' && n !== 'Damage Control II'), JSON.stringify(shown));
     eq('...and still does not change the import list',
@@ -519,9 +521,9 @@ H.run('sell', async () => {
     const s3 = await openSell(browser, server);
     await fetchInventory(s3.page, PASTE);
 
-    const viewOf = page => page.evaluate(() => [...document.querySelectorAll('#tblBody tr')]
-      .filter(tr => tr.children.length > 3)
-      .map(tr => ({ pos: tr.children[1].textContent, name: tr.children[2].textContent })));
+    const viewOf = page => page.evaluate(() => [...document.querySelectorAll('#tblBody tr.a')]
+      
+      .map(tr => ({ pos: tr.querySelector('[data-cell="pos"]').textContent, name: tr.querySelector('.nm').textContent })));
 
     let view = await viewOf(s3.page);
     check('the table has rows to number', view.length >= 5, JSON.stringify(view));
@@ -529,7 +531,7 @@ H.run('sell', async () => {
       view.map(v => v.pos).join(','), view.map((_v, i) => i + 1).join(','));
     const byPerSlot = view.map(v => v.name);
 
-    await s3.page.click('#tbl thead th[data-key="qty"]');
+    await s3.page.selectOption('#sortBy', 'qty');
     await s3.page.waitForFunction(() => state.sortKey === 'qty');
     view = await viewOf(s3.page);
     const byQty = view.map(v => v.name);
@@ -578,7 +580,8 @@ H.run('sell', async () => {
     const rateTip = await s3.page.evaluate(() => ({
       unrated: state.rows.filter(r => r.strategy !== 'imm' && r.perSlot == null).length,
       total: state.rows.length,
-      tip: document.querySelector('#tbl thead th[data-key="perSlot"]').title,
+      // ISK/slot-day shares the Net ISK column now, so its heading carries the count
+      tip: document.querySelector('#tbl thead th[data-key="totalNet"]').title,
     }));
     check('this fixture is fetched without history, so there are no rates',
       rateTip.unrated > 0, JSON.stringify(rateTip));
@@ -596,11 +599,11 @@ H.run('sell', async () => {
       await page.click('#btnTop');
       return page.evaluate(() => ({
         ticked: state.rows.filter(r => r.inImport).map(r => r.name).sort(),
-        view: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
+        view: [...document.querySelectorAll('#tblBody tr.a')]
           .map(tr => {
             const row = state.rows.find(r => r.key === tr.dataset.key);
-            return { pos: tr.children[1].textContent, name: tr.children[2].textContent,
-                     ticked: !!tr.children[0].querySelector('input:checked'),
+            return { pos: tr.querySelector('[data-cell="pos"]').textContent, name: tr.querySelector('.nm').textContent,
+                     ticked: !!tr.querySelector('td.tick').querySelector('input:checked'),
                      sel: !!row && selectable(row) };
           }),
         echo: document.getElementById('impEcho').textContent,
@@ -609,7 +612,7 @@ H.run('sell', async () => {
       }));
     };
 
-    await s3.page.click('#tbl thead th[data-key="perSlot"]');
+    await s3.page.selectOption('#sortBy', 'perSlot');
     await s3.page.waitForFunction(() => state.sortKey === 'perSlot' && state.sortDir === -1);
     const topPerSlot = await tickTop(s3.page, 2);
     const prefix = v => v.filter(x => x.sel).map(x => x.ticked ? 'T' : '.').join('');
@@ -618,7 +621,7 @@ H.run('sell', async () => {
     eq('exactly 2 rows are in the import list', topPerSlot.ticked.length, 2);
     const perSlotPick = topPerSlot.ticked.join(',');
 
-    await s3.page.click('#tbl thead th[data-key="qty"]');
+    await s3.page.selectOption('#sortBy', 'qty');
     await s3.page.waitForFunction(() => state.sortKey === 'qty' && state.sortDir === -1);
     const topQty = await tickTop(s3.page, 2);
     eq('...still exactly 2 after re-sorting and clicking again', topQty.ticked.length, 2);
@@ -634,10 +637,10 @@ H.run('sell', async () => {
     const skipped = topQty.view.filter(v => !v.sel);
     check('a row it passes over is visibly untickable',
       skipped.length === 0 || (await s3.page.evaluate(names => names.every(n => {
-        const tr = [...document.querySelectorAll('#tblBody tr')]
-          .find(x => x.children.length > 3 && x.children[2].textContent === n);
+        const tr = [...document.querySelectorAll('#tblBody tr.a')]
+          .find(x => x.querySelector('.nm').textContent === n);
         const r = state.rows.find(y => y.name === n);
-        return !tr.children[0].querySelector('input') || (r && r.unsellable && r.flags.length > 0);
+        return !tr.querySelector('td.tick').querySelector('input') || (r && r.unsellable && r.flags.length > 0);
       }), skipped.map(v => v.name))), JSON.stringify(skipped.map(v => v.name)));
     check('...and the button says so rather than promising 1..N',
       /passes over/.test(await s3.page.$eval('#btnTop', el => el.title)),
@@ -648,7 +651,7 @@ H.run('sell', async () => {
        second click under a disjoint filter ADDED to the list. Two clicks of "top 2" left
        four rows in it, and the ⚠ that said so disappeared the moment the filter cleared —
        exactly when the list was at its most wrong. */
-    await s3.page.click('#tbl thead th[data-key="perSlot"]');
+    await s3.page.selectOption('#sortBy', 'perSlot');
     await s3.page.waitForFunction(() => state.sortKey === 'perSlot' && state.sortDir === -1);
     const s2a = await tickTop(s3.page, 2);
     eq('unfiltered, "top 2" is 2', s2a.ticked.length, 2);
@@ -823,13 +826,13 @@ H.run('sell', async () => {
     await s3.page.click('#tbl thead th[data-key="name"]');
     await s3.page.waitForFunction(() => state.sortKey === 'name');
     const ordered = await s3.page.evaluate(() => ({
-      view: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
-        .filter(tr => tr.children[0].querySelector('input:checked'))
-        .map(tr => tr.children[2].textContent),
+      view: [...document.querySelectorAll('#tblBody tr.a')]
+        .filter(tr => tr.querySelector('td.tick').querySelector('input:checked'))
+        .map(tr => tr.querySelector('.nm').textContent),
       preview: document.getElementById('preview').value.split('\n').filter(Boolean).map(l => l.split('\t')[0]),
       tsv: fullTsv().split('\n').slice(1).map(l => l.split('\t')[0]),
-      allView: [...document.querySelectorAll('#tblBody tr')].filter(tr => tr.children.length > 3)
-        .map(tr => tr.children[2].textContent),
+      allView: [...document.querySelectorAll('#tblBody tr.a')]
+        .map(tr => tr.querySelector('.nm').textContent),
     }));
     eq('the import list pastes in the order the table shows',
       ordered.preview.join(','), ordered.view.join(','));
@@ -844,8 +847,8 @@ H.run('sell', async () => {
       state.sortKey = 'checked'; state.sortDir = -1;
       render();
       const first = document.querySelector('#tblBody tr');
-      return { top: first.children[2].textContent,
-               topIsInstant: first.children[0].textContent.trim() === '⚡',
+      return { top: first.querySelector('.nm').textContent,
+               topIsInstant: first.querySelector('td.tick').textContent.trim() === '⚡',
                echo: document.getElementById('impEcho').textContent };
     });
     check('a latent tick on an INSTANT row does not sort to the top of Import',
@@ -1240,7 +1243,7 @@ H.run('sell', async () => {
       steady.patOpt.net / expDays > steady.comp.net / expDays, steady.perSlot);
     const sorted = await p4.evaluate(() => ({
       key: state.sortKey, dir: state.sortDir,
-      order: [...document.querySelectorAll('#tblBody tr')].map(tr => tr.children[2].textContent),
+      order: [...document.querySelectorAll('#tblBody tr.a')].map(tr => tr.querySelector('.nm').textContent),
       rates: state.rows.filter(rowFilter).map(r => r.perSlot),
     }));
     eq('the table sorts by ISK/slot-day out of the box', sorted.key, 'perSlot');
@@ -1393,29 +1396,38 @@ H.run('sell', async () => {
     section('the new columns are exported and copyable');
     const cols = await p4.evaluate(() => {
       const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.textContent.trim());
-      const tr = [...document.querySelectorAll('#tblBody tr')].find(x => x.children[2].textContent === 'Steady Trinket');
-      const idx = k => [...document.querySelectorAll('#tbl thead th')].findIndex(th => th.dataset.key === k);
+      const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.querySelector('.nm').textContent === 'Steady Trinket');
+      const pair = [tr, tr.nextElementSibling];
+      const at = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`)).find(Boolean);
       const tsv = fullTsv().split('\n');
       return {
         heads,
         keys: [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key),
-        chance: tr.children[idx('fillChance')].textContent,
-        slot: tr.children[idx('perSlot')].dataset.copy,
-        fill: tr.children[idx('fillDays')].dataset.copy,
-        planCell: tr.children[idx('strategy')].textContent,
-        planTitle: tr.children[idx('strategy')].querySelector('.badge').title,
+        chance: at('fillChance').textContent,
+        slot: at('perSlot').dataset.copy,
+        fill: at('fillDays').dataset.copy,
+        planCell: at('strategy').textContent,
+        planTitle: at('strategy').querySelector('.badge').title,
         head: tsv[0].split('\t'),
         row: (tsv.find(l => l.startsWith('Steady Trinket')) || '').split('\t'),
+        cellText: Object.fromEntries(['fillDays', 'fillChance', 'perSlot']
+          .map(k => [k, at(k) ? at(k).textContent : ''])),
+        sortable: [...document.querySelectorAll('#sortBy option')].map(o => o.value),
       };
     });
-    check('Fill est., Chance % and ISK/slot-day are columns',
-      ['fillDays', 'fillChance', 'perSlot'].every(k => cols.keys.includes(k)), cols.keys.join(','));
+    check('Fill est., Chance % and ISK/slot-day are shown, each an addressable cell',
+      ['fillDays', 'fillChance', 'perSlot'].every(k => cols.cellText[k] && cols.cellText[k] !== ''),
+      JSON.stringify(cols.cellText));
+    check('...and every one of them is reachable from the sort control',
+      ['fillDays', 'fillChance', 'perSlot'].every(k => cols.sortable.includes(k)),
+      cols.sortable.join(','));
     check('no numeric Trend %/wk column crowds the table — it lives in the tooltip',
       !cols.heads.some(h => /^Trend/.test(h)), cols.heads.join('|'));
     check('...the sparkline column carries that sort instead',
       cols.heads[3] === 'History' && cols.keys[3] === 'trendPctWk',
       cols.heads[3] + '/' + cols.keys[3]);
-    check('the plan cell reads as an action', /LIST-PATIENT/.test(cols.planCell), cols.planCell);
+    // PATIENT, not LIST-PATIENT: the long form wrapped to two lines in a 74px column
+    check('the plan cell reads as an action', /PATIENT/.test(cols.planCell), cols.planCell);
     check('...and hovering it gives the numbers behind it',
       /ISK\/slot-day/.test(cols.planTitle) && /% in \d+d/.test(cols.planTitle), cols.planTitle);
     check('the chance cell shows a percentage', /%$/.test(cols.chance), cols.chance);
@@ -1478,8 +1490,8 @@ H.run('sell', async () => {
     await p7.waitForFunction(() => document.querySelectorAll('#tblBody td.spark[data-spark]').length === 2);
 
     const geom = await p7.evaluate(() => {
-      const cell = n => [...document.querySelectorAll('#tblBody tr')]
-        .find(tr => tr.children[2].textContent === n).children[3];
+      const cell = n => [...document.querySelectorAll('#tblBody tr.a')]
+        .find(tr => tr.querySelector('.nm').textContent === n).querySelector('[data-cell="spark"]');
       const spark = cell('Spark Widget');
       const line = spark.querySelector('[data-series]');
       return {
@@ -1649,7 +1661,7 @@ H.run('sell', async () => {
       const t0 = performance.now();
       render();
       const ms = performance.now() - t0;
-      return { ms, rows: document.querySelectorAll('#tblBody tr').length,
+      return { ms, rows: document.querySelectorAll('#tblBody tr.a').length,
                cells: document.querySelectorAll('#tblBody td.spark').length,
                drawnNow: document.querySelectorAll('#tblBody td.spark[data-spark]').length };
     });
