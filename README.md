@@ -669,11 +669,28 @@ and then another one to put it away — but one you want to read while you study
 under it should stay put. One chart is open at a time, and a pinned one survives a re-sort
 or a patience change.
 
-The expanded chart draws **both series**, on one scale, neither turned into the other:
+The expanded chart **fills the pane** (it was a fixed 820px canvas in whatever width the
+window gave it), carries **five gridlines and five dated ticks** rather than two of each,
+and de-collides its marker labels: they are sorted by price, pushed apart to a readable
+gap, and joined back to their own rule with a leader. Two markers 100 ISK apart used to
+print on top of each other as raw glyphs — and that was not a rare case, because the
+competitive list price is the best sell minus exactly one tick whenever it comes from the
+sell book. That second line is no longer drawn at all unless the list price is genuinely
+somewhere else. Labels carry the **exact** ISK; they used to be rounded to a 100-ISK bucket,
+so two different markers could print identical text.
+
+The high/low band is clipped at its **2nd and 98th percentile** for scaling purposes — one
+day where somebody paid triple used to drag the extent out and squash a year of trading
+into a stripe. Every daily average and every marker still sets the scale; none of them may
+fall off the canvas.
+
+It draws **both series**, on one scale, neither turned into the other:
 
 - **region, both sides** — ESI's regional daily average, in the trend's colour, with a
   shaded band between the daily high and low where ESI provides them.
-- **hub sell side** — Adam4EVE's sell-side prints at *this station*, violet and dashed.
+- **hub sell side** — Adam4EVE's sell-side prints at *this station*, violet and thinner.
+  (Dashed, once — at 1.66px per day a 3px dash is under two days long, so the data's own
+  density destroyed the pattern and the two lines read as one.)
 
 Where the two diverge, the hub is out of line with its region, and that is the thing worth
 seeing rather than averaging away. A gap in the tracker's coverage is a **gap in the line**,

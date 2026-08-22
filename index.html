@@ -128,7 +128,11 @@
   td.spark:focus-visible{outline:1px solid var(--cyan)}
   tr.open td.spark{background:#14344a}
   tr.detail td{background:var(--panel2);padding:12px 14px;cursor:default}
-  tr.detail .chartwrap{overflow-x:auto;max-width:100%}
+  /* The chart fills the pane. It was a fixed 820px canvas in whatever width the window
+     gave it, so on a wide monitor a third of the row was empty while the year of price
+     inside it stayed cramped. The viewBox scales uniformly, so the text grows with it. */
+  tr.detail .chartwrap{max-width:100%}
+  tr.detail .chartwrap svg{width:100%;height:auto;display:block}
   tr.detail svg{max-width:100%;height:auto}
   .chart-nums{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 0}
   .chart-nums span{color:var(--dim);font-size:11px;display:block;text-transform:uppercase;letter-spacing:.6px}
@@ -3163,7 +3167,13 @@ const TREND_STROKE = { rising: 'var(--green)', falling: 'var(--red)', flat: 'var
 function markersOf(r){
   const out = [];
   if (r.bestSell != null) out.push({ key: 'sell', price: r.bestSell, colour: 'var(--cyan)', label: 'best sell' });
-  if (r.L != null && (r.bestSell == null || Math.abs(r.L - r.bestSell) > tickFor(r.bestSell) / 2))
+  /* The competitive list price is `undercut(bestSell)` — the best sell minus exactly one
+     tick — whenever it comes from the sell book at all. Drawing it as a second line 100 ISK
+     from the first told you nothing the −1 tick checkbox had not already said, and on a
+     239k item the two labels were 0.05px apart and printed on top of each other. It is
+     drawn only when it is genuinely somewhere else: more than two ticks away, which an
+     undercut never is and a solved or history price often is. */
+  if (r.L != null && (r.bestSell == null || Math.abs(r.L - r.bestSell) > tickFor(r.bestSell) * 2))
     out.push({ key: 'list', price: r.L, colour: 'var(--amber)', label: 'competitive list' });
   // an order row's own asking price — the marker that makes a hopeless price obvious
   if (r.yourPrice != null) out.push({ key: 'yours', price: r.yourPrice, colour: 'var(--amber)', label: 'your order' });
@@ -3242,7 +3252,9 @@ function buildSparkline(r, clickable){
 /* The expanded chart: the same series with room to breathe — a high/low band where ESI
    gave us one, the price line, labelled markers, and the daily traded volume beneath.
    Same numbers as the row, restated so the recommendation can be read against the picture. */
-const DET_W = 820, DET_H = 300, DET_TOP = 14, DET_PRICE_BOT = 196, DET_VOL_TOP = 218, DET_VOL_BOT = 272;
+/* DET_TOP leaves room for two things above the plot: the two series' names, and the
+   topmost gridline's own label, which used to be drawn half outside the canvas. */
+const DET_W = 820, DET_H = 300, DET_TOP = 26, DET_PRICE_BOT = 198, DET_VOL_TOP = 218, DET_VOL_BOT = 272;
 const DET_L = 62, DET_R = 152;    // gutters: axis labels left, marker labels right
 // axis and marker labels want to be short — the legend under the chart carries the exact ISK
 const fmtCompact = n => {
@@ -3271,17 +3283,32 @@ function buildDetailChart(r){
       && Date.parse(h.date) >= Date.now() - DETAIL_DAYS * 86400e3)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const hasBand = rows.some(h => Number.isFinite(h.highest) && Number.isFinite(h.lowest) && h.highest > 0);
+  /* Every daily average and every marker sets the scale — those are the numbers the
+     decision is made of and none of them may fall off the canvas. The high/low BAND does
+     not: one day where somebody paid triple, or sold at a tenth, used to drag the extent
+     out and squash a year of trading into a stripe. The band is clipped to its own 2nd and
+     98th percentile, so the outlier days run off the top or bottom of the plot instead of
+     flattening everything else. */
   const vals = rows.map(h => h.average);
-  if (hasBand) for (const h of rows){
-    if (Number.isFinite(h.highest) && h.highest > 0) vals.push(h.highest);
-    if (Number.isFinite(h.lowest) && h.lowest > 0) vals.push(h.lowest);
-  }
   for (const h of hubRows) vals.push(h.average);
+  if (hasBand){
+    const his = [], los = [];
+    for (const h of rows){
+      if (Number.isFinite(h.highest) && h.highest > 0) his.push(h.highest);
+      if (Number.isFinite(h.lowest) && h.lowest > 0) los.push(h.lowest);
+    }
+    his.sort((a, b) => a - b); los.sort((a, b) => a - b);
+    const q = (arr, p2) => arr.length ? arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p2))] : null;
+    const bHi = q(his, 0.98), bLo = q(los, 0.02);
+    if (bHi != null) vals.push(bHi);
+    if (bLo != null) vals.push(bLo);
+  }
   const sc = priceScale(vals, marks, DET_TOP, DET_PRICE_BOT);
   const x = i => DET_L + i * (DET_W - DET_L - DET_R) / (rows.length - 1);
   const wrap = document.createElement('div');
   wrap.className = 'chartwrap';
-  const svg = svgEl('svg', { viewBox: `0 0 ${DET_W} ${DET_H}`, width: DET_W, height: DET_H, role: 'img' });
+  const svg = svgEl('svg', { viewBox: `0 0 ${DET_W} ${DET_H}`, width: DET_W, height: DET_H,
+    preserveAspectRatio: 'xMidYMid meet', role: 'img' });
   const label = `${r.name}: ${rows.length} days of price history from ${rows[0].date} to `
     + `${rows[rows.length - 1].date}, ${fmtIsk(sc.lo)} to ${fmtIsk(sc.hi)} ISK, with daily traded volume`;
   svg.setAttribute('aria-label', label);
@@ -3293,11 +3320,14 @@ function buildDetailChart(r){
     svg.appendChild(t);
     return t;
   };
-  // price gridlines: just the two ends, so the scale is readable without a busy grid
-  for (const v of [sc.hi, sc.lo]){
-    svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: sc.y(v), y2: sc.y(v),
-      stroke: 'var(--line)', 'stroke-width': 1 }));
-    txt(fmtCompact(v), { x: DET_L - 4, y: sc.y(v) + 3, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  /* Gridlines you can read a value off. Two lines at the extremes told you the range and
+     nothing else: every point in between was unmeasurable, which is most of the chart. */
+  for (let i = 0; i <= 4; i++){
+    const v = sc.lo + (sc.hi - sc.lo) * i / 4;
+    const gy = sc.y(v);
+    svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: gy, y2: gy,
+      stroke: 'var(--line)', 'stroke-width': 1, opacity: i === 0 || i === 4 ? 1 : 0.45 }));
+    txt(fmtCompact(v), { x: DET_L - 4, y: gy + 3, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
   }
   if (hasBand){
     let up = '', down = '';
@@ -3310,12 +3340,13 @@ function buildDetailChart(r){
       const lo = Number.isFinite(h.lowest) && h.lowest > 0 ? h.lowest : h.average;
       down += 'L' + x(i).toFixed(1) + ' ' + sc.y(lo).toFixed(1);
     }
-    svg.appendChild(svgEl('path', { d: up + down + 'Z', fill: 'var(--cyan)', opacity: 0.12,
+    svg.appendChild(svgEl('path', { d: up + down + 'Z', fill: 'var(--cyan)', opacity: 0.07,
       stroke: 'none', 'data-band': 'highlow' }));
   }
   let d = '';
   rows.forEach((h, i) => { d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + sc.y(h.average).toFixed(1); });
-  svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.5, stroke: TREND_STROKE[r.dir] || 'var(--dim)',
+  svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.9, 'stroke-linejoin': 'round',
+    stroke: TREND_STROKE[r.dir] || 'var(--dim)',
     'data-series': 'avg', 'data-points': rows.length }));
   /* The hub line, placed on the SAME date axis as the regional one — a gap in the
      tracker's coverage is a gap in the line, not a shortcut across it. */
@@ -3329,8 +3360,11 @@ function buildDetailChart(r){
       pen = true; drawn++;
     }
     if (drawn > 1){
-      svg.appendChild(svgEl('path', { d: hd, fill: 'none', 'stroke-width': 1.5,
-        stroke: 'var(--violet)', 'stroke-dasharray': '3 2',
+      /* Thinner and solid rather than the same weight and dashed: at 1.66 units per day
+         a 3-unit dash is under two days long, so the pattern was destroyed by the data's
+         own density and the two lines read as one. */
+      svg.appendChild(svgEl('path', { d: hd, fill: 'none', 'stroke-width': 1,
+        stroke: 'var(--violet)', opacity: 0.9,
         'data-series': 'hub', 'data-points': drawn }));
       txt('hub sell side', { x: DET_W - DET_R, y: DET_TOP - 4, fill: 'var(--violet)',
         'font-size': 9, 'text-anchor': 'end' });
@@ -3338,11 +3372,34 @@ function buildDetailChart(r){
         fill: TREND_STROKE[r.dir] || 'var(--dim)', 'font-size': 9 });
     }
   }
-  for (const m of marks){
-    const y = sc.y(m.price);
+  /* MARKER LABELS THAT DO NOT OVERPRINT.
+
+     They used to be drawn at the marker's own y with no collision handling at all, so any
+     two markers closer than ~5.5% of the price range printed on top of each other as raw
+     glyphs. That is not a rare case: the competitive list price is the best sell minus ONE
+     TICK by construction, so on a 239k item the pair is 100 ISK apart and the mush was
+     guaranteed on every row that had both.
+
+     Labels are sorted by price, pushed apart to a readable gap, and joined back to their
+     rule with a leader — so the label says which line it belongs to even after it has been
+     moved off it. The rule itself is never moved. */
+  const LBL_GAP = 11;
+  const placed = marks
+    .map(m => ({ m, y: sc.y(m.price), ly: sc.y(m.price) }))
+    .sort((a, b) => a.y - b.y);
+  for (let i = 1; i < placed.length; i++)
+    if (placed[i].ly - placed[i - 1].ly < LBL_GAP) placed[i].ly = placed[i - 1].ly + LBL_GAP;
+  // if the push ran off the bottom, walk the whole stack back up
+  const overflow = placed.length ? placed[placed.length - 1].ly - DET_PRICE_BOT : 0;
+  if (overflow > 0) for (const p2 of placed) p2.ly -= overflow;
+  for (const { m, y, ly } of placed){
     svg.appendChild(svgEl('line', { x1: DET_L, x2: DET_W - DET_R, y1: y, y2: y, stroke: m.colour,
       'stroke-width': 1, 'stroke-dasharray': '4 3', 'data-marker': m.key, 'data-price': m.price }));
-    txt(`${m.label} ${fmtCompact(m.price)}`, { x: DET_W - DET_R + 5, y: y + 3, fill: m.colour,
+    if (Math.abs(ly - y) > 0.5)
+      svg.appendChild(svgEl('path', {
+        d: `M${DET_W - DET_R} ${y.toFixed(1)}L${DET_W - DET_R + 4} ${ly.toFixed(1)}`,
+        stroke: m.colour, 'stroke-width': 1, fill: 'none', opacity: 0.6, 'data-leader': m.key }));
+    txt(`${m.label} ${fmtIsk(m.price)}`, { x: DET_W - DET_R + 6, y: ly + 3, fill: m.colour,
       'font-size': 9, 'data-marker-label': m.key });
   }
   // volume beneath, on its own scale
@@ -3359,27 +3416,35 @@ function buildDetailChart(r){
     stroke: 'var(--line)', 'stroke-width': 1 }));
   txt(`${fmtCompact(maxVol)} u/day`, { x: DET_L - 4, y: DET_VOL_TOP + 8, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
   txt('volume', { x: DET_L - 4, y: DET_VOL_BOT, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
-  txt(rows[0].date, { x: DET_L, y: DET_H - 10, fill: 'var(--dim)', 'font-size': 9 });
-  txt(rows[rows.length - 1].date, { x: DET_W - DET_R, y: DET_H - 10, fill: 'var(--dim)', 'font-size': 9, 'text-anchor': 'end' });
+  /* Five dated ticks, not two ends. The x position is the row's INDEX, and days with no
+     trade are filtered out of the series entirely, so the axis is "nth trading day" — the
+     ticks are placed on real rows and carry those rows' real dates rather than pretending
+     the spacing is calendar-uniform. */
+  const TICKS = 5;
+  for (let i = 0; i < TICKS; i++){
+    const idx = Math.round(i * (rows.length - 1) / (TICKS - 1));
+    const tx = x(idx);
+    const anchor = i === 0 ? 'start' : i === TICKS - 1 ? 'end' : 'middle';
+    svg.appendChild(svgEl('line', { x1: tx, x2: tx, y1: DET_VOL_BOT, y2: DET_VOL_BOT + 3,
+      stroke: 'var(--line)', 'stroke-width': 1 }));
+    txt(rows[idx].date.slice(2), { x: tx, y: DET_H - 10, fill: 'var(--dim)', 'font-size': 9,
+      'text-anchor': anchor, 'data-datetick': idx });
+  }
   wrap.appendChild(svg);
   box.appendChild(wrap);
 
-  const legend = document.createElement('div');
-  legend.className = 'chart-legend';
-  for (const m of marks){
-    const e = document.createElement('em');
-    e.style.color = m.colour;
-    e.innerHTML = '<i></i>';
-    e.appendChild(document.createTextNode(`${m.label} ${fmtIsk(m.price)}`));
-    legend.appendChild(e);
-  }
+  /* The legend used to restate every marker the chart had just labelled in place, at the
+     same precision — four facts printed twice. What is left is the one thing the picture
+     cannot say for itself. */
   if (hasBand){
+    const legend = document.createElement('div');
+    legend.className = 'chart-legend';
     const e = document.createElement('em');
     e.style.color = 'var(--dim)';
-    e.textContent = 'band: daily high–low';
+    e.textContent = 'band: daily high–low, clipped at the 2nd and 98th percentile';
     legend.appendChild(e);
+    box.appendChild(legend);
   }
-  box.appendChild(legend);
 
   // the four numbers the recommendation is made of, restated against the picture
   const nums = document.createElement('div');

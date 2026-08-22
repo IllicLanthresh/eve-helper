@@ -2131,6 +2131,68 @@ H.run('sell', async () => {
     check('the chart is labelled for a screen reader',
       /days of price history/.test(det.aria) && /daily traded volume/.test(det.aria), det.aria);
 
+    /* ---------- the expanded chart is readable ---------- */
+    /* Reported as "completely unreadable" off a real screenshot. Four mechanical faults,
+       each pinned here: labels printed on top of each other, two gridlines for the whole
+       price range, two dates for a year, and a fixed-width canvas in a variable pane. */
+    section('the expanded chart: nothing overprints, everything is scaled');
+    const CH = await p7.evaluate(() => {
+      const svg = document.querySelector('tr.detail svg');
+      const byKey = new Map([...svg.querySelectorAll('[data-marker]')]
+        .map(l => [l.dataset.marker, Number(l.dataset.price)]));
+      const labs = [...svg.querySelectorAll('[data-marker-label]')]
+        .map(t => ({ k: t.dataset.markerLabel, y: Number(t.getAttribute('y')),
+                     text: t.textContent, exact: fmtIsk(byKey.get(t.dataset.markerLabel)) }))
+        .sort((a, b) => a.y - b.y);
+      let worst = Infinity;
+      for (let i = 1; i < labs.length; i++) worst = Math.min(worst, labs[i].y - labs[i - 1].y);
+      return {
+        labs, worst,
+        leaders: svg.querySelectorAll('[data-leader]').length,
+        grid: [...svg.querySelectorAll('text')].filter(t => /^[\d.]+[kMB]?$/.test(t.textContent)).length,
+        dates: svg.querySelectorAll('[data-datetick]').length,
+        width: svg.getAttribute('width'),
+        cssWidth: getComputedStyle(svg).width,
+        boxWidth: svg.parentElement.clientWidth,
+        legend: [...document.querySelectorAll('tr.detail .chart-legend em')].map(e => e.textContent),
+      };
+    });
+    check('there are at least two markers to collide', CH.labs.length >= 2,
+      JSON.stringify(CH.labs.map(l => l.k)));
+    check('no two marker labels are within a line of each other',
+      CH.worst >= 10, CH.worst + ' apart: ' + JSON.stringify(CH.labs));
+    /* The labels used to be fmtCompact'd to "239.4k" — 100 ISK of resolution on a price
+       whose neighbour was 100 ISK away, so two DIFFERENT markers could print the same
+       text. They carry the exact figure now. */
+    check('...and each carries its price exactly, not rounded to a bucket',
+      CH.labs.every(l => l.text.endsWith(l.exact)),
+      JSON.stringify(CH.labs.map(l => l.text + ' vs ' + l.exact)));
+    check('the price axis is more than its two ends', CH.grid >= 5, String(CH.grid));
+    eq('the date axis carries five dated ticks, not two', CH.dates, 5);
+    check('the chart fills the pane rather than sitting in a fixed 820px box',
+      Math.abs(parseFloat(CH.cssWidth) - CH.boxWidth) < 2,
+      CH.cssWidth + ' in ' + CH.boxWidth + 'px');
+    check('the legend no longer repeats every marker the chart just labelled',
+      CH.legend.every(t => !/best sell|patient price|your price|competitive/.test(t)),
+      JSON.stringify(CH.legend));
+
+    /* The competitive list price is the best sell minus ONE TICK whenever it comes from
+       the sell book, so drawing it as a second line said nothing the −1 tick checkbox had
+       not, and the two labels were 0.05px apart. */
+    const undercutMarks = await p7.evaluate(() => {
+      document.getElementById('undercut').checked = true;
+      document.getElementById('undercut').dispatchEvent(new Event('change'));
+      const r = state.rows.find(x => x.name === 'Spark Widget');
+      return { L: r.L, bestSell: r.bestSell, keys: markersOf(r).map(m => m.key) };
+    });
+    check('an undercut IS the best sell, so it is not drawn as a second line',
+      undercutMarks.L < undercutMarks.bestSell && !undercutMarks.keys.includes('list'),
+      JSON.stringify(undercutMarks));
+    await p7.evaluate(() => {
+      document.getElementById('undercut').checked = false;
+      document.getElementById('undercut').dispatchEvent(new Event('change'));
+    });
+
     // the open chart is a property of the row, not of this render
     await setPatience(p7, 30, 35);
     eq('a re-rank keeps the chart open on the same row',

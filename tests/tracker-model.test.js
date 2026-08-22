@@ -607,9 +607,9 @@ H.run('tracker-model', async () => {
       return {
         name: r.name,
         avg: path('avg') ? { points: Number(path('avg').dataset.points), stroke: path('avg').getAttribute('stroke'),
-                             dash: path('avg').getAttribute('stroke-dasharray') } : null,
+                             width: path('avg').getAttribute('stroke-width') } : null,
         hub: path('hub') ? { points: Number(path('hub').dataset.points), stroke: path('hub').getAttribute('stroke'),
-                             dash: path('hub').getAttribute('stroke-dasharray'), d: path('hub').getAttribute('d') } : null,
+                             width: path('hub').getAttribute('stroke-width'), d: path('hub').getAttribute('d') } : null,
         legend,
         trkDays: r.trkRows.length,
       };
@@ -620,8 +620,11 @@ H.run('tracker-model', async () => {
       JSON.stringify(chart && chart.hub));
     check('...in a different colour', chart && chart.hub.stroke !== chart.avg.stroke,
       chart && (chart.avg.stroke + ' vs ' + chart.hub.stroke));
-    check('...and a different line, so the two are told apart without colour',
-      chart && chart.hub.dash && !chart.avg.dash, chart && chart.hub.dash);
+    /* Weight, not a dash. At 1.66 units per day a 3-unit dash is under two days long, so
+       the pattern was destroyed by the data's own density and the two lines read as one. */
+    check('...and a different weight, so the two are told apart without colour',
+      chart && Number(chart.hub.width) < Number(chart.avg.width),
+      chart && (chart.avg.width + ' vs ' + chart.hub.width));
     check('both are labelled for what they are',
       chart && chart.legend.some(t => /hub sell side/.test(t))
         && chart.legend.some(t => /region, both sides/.test(t)),
