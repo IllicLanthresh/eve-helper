@@ -1,6 +1,6 @@
 {
   "artboards": [
-    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 690,  "title": "1 · Row, redesigned" },
+    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 700,  "title": "1 · Row, redesigned" },
     { "file": "Decision.dc.html",   "x": 0,    "y": 830,  "w": 1440, "h": 975,  "title": "2 · Expanded decision ledger" },
     { "file": "Alternates.dc.html", "x": 0,    "y": 1945, "w": 1440, "h": 640,  "title": "5 · Two alternates" },
     { "file": "Glance.dc.html",     "x": 1600, "y": 0,    "w": 1040, "h": 845,  "title": "3 · Tooltips → widgets" },

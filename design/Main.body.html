@@ -1,5 +1,5 @@
 <style-extra>
-  .board{width:1440px;height:690px;background:var(--bg)}
+  .board{width:1440px;height:700px;background:var(--bg)}
   .key{display:flex;gap:18px;align-items:center;color:var(--dim);font-size:11px;
     background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:6px 12px;margin-bottom:12px}
   .key b{font-family:var(--mono);color:var(--text);font-weight:400;margin-right:5px}
@@ -39,6 +39,9 @@
   .amb{color:var(--amber)} .grn{color:var(--green)} .red{color:var(--red)} .dimv{color:var(--dim)}
   .mline{display:flex;justify-content:space-between;font-size:12px;line-height:1.7}
   .mline .lbl{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.7px}
+  .corr{color:#5d6b80;font-family:var(--mono);font-size:10px;text-align:right;margin:-3px 0 2px}
+  .corr.amb{color:var(--amber)}
+  .codds .k{margin-right:1px}
   .flagchip{display:inline-block;font-size:10px;padding:0 5px;border-radius:3px;
     background:#3a2f14;color:var(--amber);border:1px solid #6b571f;margin-top:4px}
   .note{margin-top:14px;color:var(--dim);font-size:11.5px;display:flex;gap:26px}
@@ -55,15 +58,15 @@
     <span style="margin-left:auto;color:#5d6b80">no tooltip carries a number you cannot already see</span>
   </div>
   <table>
-    <colgroup><col style="width:232px"><col style="width:512px"><col style="width:172px">
-      <col style="width:196px"><col style="width:152px"><col style="width:132px"></colgroup>
+    <colgroup><col style="width:230px"><col style="width:512px"><col style="width:158px">
+      <col style="width:196px"><col style="width:178px"><col style="width:122px"></colgroup>
     <thead><tr>
       <th>Item</th>
-      <th>Decision <span class="unit">candidates &rarr; gate &rarr; taken</span></th>
+      <th>Decision <span class="unit">card = price/u &middot; net &Sigma; &middot; &Delta; vs taken &middot; fill odds</span></th>
       <th>Book <span class="unit">ISK/u</span></th>
       <th class="stackcol">Outcome <span class="unit">ISK &Sigma;</span></th>
       <th>Market</th>
-      <th>Rank <span class="unit">/slot-d</span></th>
+      <th>Rank <span class="unit">ISK/slot-d</span></th>
     </tr></thead>
     <tbody>
 
@@ -77,8 +80,8 @@
           <span class="gate">
             <span class="gk">floor</span><span class="num">55<shr>%</shr></span>
             <span class="arw">&#9656;</span><span class="gk">pass</span><span class="num amb">0/2</span>
-            <span class="arw">&#9656;</span><span class="gk">ranked</span><span class="num">0</span>
-            <span class="arw">&#9656;</span><span class="gk"><span class="gk">beat instant</span>Delta; inst</span><span class="num dimv">n/a</span>
+            <span class="arw">&#9656;</span><span class="gk">rank</span><span class="num dimv">&mdash;</span>
+            <span class="arw">&#9656;</span><span class="gk">won by</span><span class="num amb">walkover</span>
           </span>
         </div>
         <div class="cands">
@@ -87,21 +90,21 @@
             <div class="cprice num">207,800<u1>/u</u1> <span class="k">avg</span></div>
             <div class="cnet num">4,618,095<sig>&Sigma;</sig></div>
             <div class="cdel mut">baseline</div>
-            <div class="codds"><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
           </div>
           <div class="cand blk">
             <div class="ctop"><span class="ck">List</span><span class="cst no">BLOCKED</span></div>
             <div class="cprice num">239,000<u1>/u</u1></div>
             <div class="cnet num">5,200,044<sig>&Sigma;</sig></div>
             <div class="cdel up">+581,949<sig>&Sigma;</sig></div>
-            <div class="codds"><span class="g"><b class="no" style="width:54%"></b><i style="left:55%"></i></span><span class="num amb">54<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b class="no" style="width:54%"></b><i style="left:55%"></i></span><span class="num amb">54<shr>%</shr></span></div>
           </div>
           <div class="cand blk">
             <div class="ctop"><span class="ck">Patient</span><span class="cst no">BLOCKED</span></div>
             <div class="cprice num">280,800<u1>/u</u1></div>
             <div class="cnet num">5,151,589<sig>&Sigma;</sig></div>
             <div class="cdel up">+533,494<sig>&Sigma;</sig></div>
-            <div class="codds"><span class="g"><b class="no" style="width:0%"></b><i style="left:55%"></i></span><span class="num amb">0<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b class="no" style="width:0%"></b><i style="left:55%"></i></span><span class="num amb">0<shr>%</shr></span></div>
           </div>
         </div>
       </td>
@@ -114,13 +117,13 @@
         <div class="mline"><span class="lbl">net taken</span><span class="num">4,618,095</span></div>
         <div class="mline"><span class="lbl">sales tax</span><span class="num red">-161,305</span></div>
         <div class="mline"><span class="lbl">broker</span><span class="num dimv">0</span></div>
-        <span class="flagchip">left on table +581,949&Sigma;</span>
       </td>
       <td>
-        <div class="mline"><span class="lbl">sell flow</span><span class="num">48.8<rate>/d</rate></span></div>
+        <div class="mline"><span class="lbl">sell flow</span><span class="num">48.8<rate>u/d</rate></span></div>
+        <div class="corr amb">A4E &times;2.15 &middot; saw 46%</div>
+        <div class="mline"><span class="lbl">buy flow</span><span class="num">108.5<rate>u/d</rate></span></div>
         <div class="mline"><span class="lbl">sell share</span><span class="num">31<shr>%</shr></span></div>
         <div class="mline"><span class="lbl">trend</span><span class="num grn">+1.0<rate>%/wk</rate></span></div>
-        <span class="flagchip">flow corr &times;2.15</span>
       </td>
       <td><div class="mline"><span class="num dimv">no slot</span></div>
         <div class="mline"><span class="lbl">est</span><span class="num dimv">0<rate>d</rate></span></div></td>
@@ -136,8 +139,8 @@
           <span class="gate">
             <span class="gk">floor</span><span class="num">35<shr>%</shr></span>
             <span class="arw">&#9656;</span><span class="gk">pass</span><span class="num grn">1/1</span>
-            <span class="arw">&#9656;</span><span class="gk">slot</span><span class="num">13,844</span>
-            <span class="arw">&#9656;</span><span class="gk"><span class="gk">beat instant</span>Delta; inst</span><span class="num grn">+11,593<sig>&Sigma;</sig></span>
+            <span class="arw">&#9656;</span><span class="gk">rank</span><span class="num dimv">ISK/slot-d</span>
+            <span class="arw">&#9656;</span><span class="gk">won by</span><span class="num grn">+11,593<sig>&Sigma;</sig></span>
           </span>
         </div>
         <div class="cands">
@@ -146,21 +149,21 @@
             <div class="cprice num">118.0<u1>/u</u1> <span class="k">avg</span></div>
             <div class="cnet num">141,382<sig>&Sigma;</sig></div>
             <div class="cdel mut">baseline</div>
-            <div class="codds"><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
           </div>
           <div class="cand won">
             <div class="ctop"><span class="ck">List</span><span class="cst ok">TAKEN</span></div>
             <div class="cprice num">130.9<u1>/u</u1></div>
             <div class="cnet num">152,975<sig>&Sigma;</sig></div>
             <div class="cdel up">+11,593<sig>&Sigma;</sig></div>
-            <div class="codds"><span class="g"><b style="width:92%"></b><i style="left:35%"></i></span><span class="num grn">92<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b style="width:92%"></b><i style="left:35%"></i></span><span class="num grn">92<shr>%</shr></span></div>
           </div>
           <div class="cand na">
-            <div class="ctop"><span class="ck">Patient</span><span class="cst sk">NOT BUILT</span></div>
+            <div class="ctop"><span class="ck">Patient</span><span class="cst sk">SKIPPED</span></div>
             <div class="cprice num">127.2<u1>/u</u1></div>
             <div class="cnet num dimv">&mdash;</div>
-            <div class="cdel mut">anchor &le; list 130.9</div>
-            <div class="codds"><span class="g"></span><span class="num dimv">&mdash;</span></div>
+            <div class="cdel mut">&le; list 130.9 &middot; no gain</div>
+            <div class="codds"><span class="k">fill</span><span class="g"></span><span class="num dimv">&mdash;</span></div>
           </div>
         </div>
       </td>
@@ -176,11 +179,13 @@
         <div class="mline"><span class="lbl">vs instant</span><span class="num grn">+11,593</span></div>
       </td>
       <td>
-        <div class="mline"><span class="lbl">sell flow</span><span class="num">620<rate>/d</rate></span></div>
+        <div class="mline"><span class="lbl">sell flow</span><span class="num">620<rate>u/d</rate></span></div>
+        <div class="corr">A4E &times;1.3 &middot; saw 77%</div>
+        <div class="mline"><span class="lbl">buy flow</span><span class="num">789<rate>u/d</rate></span></div>
         <div class="mline"><span class="lbl">sell share</span><span class="num">44<shr>%</shr></span></div>
         <div class="mline"><span class="lbl">trend</span><span class="num red">-0.4<rate>%/wk</rate></span></div>
       </td>
-      <td><div class="mline"><span class="num">13,844</span></div>
+      <td><div class="mline"><span class="num">13,844<rate>/slot-d</rate></span></div>
         <div class="mline"><span class="lbl">est</span><span class="num">11.1<rate>d</rate></span></div></td>
     </tr>
 
@@ -194,8 +199,8 @@
           <span class="gate">
             <span class="gk">floor</span><span class="num">35<shr>%</shr></span>
             <span class="arw">&#9656;</span><span class="gk">pass</span><span class="num grn">1/2</span>
-            <span class="arw">&#9656;</span><span class="gk">slot</span><span class="num">789,861</span>
-            <span class="arw">&#9656;</span><span class="gk"><span class="gk">beat instant</span>Delta; inst</span><span class="num grn">+383,007<sig>&Sigma;</sig></span>
+            <span class="arw">&#9656;</span><span class="gk">rank</span><span class="num dimv">ISK/slot-d</span>
+            <span class="arw">&#9656;</span><span class="gk">won by</span><span class="num grn">+383,007<sig>&Sigma;</sig></span>
           </span>
         </div>
         <div class="cands">
@@ -204,21 +209,21 @@
             <div class="cprice num">2,947<u1>/u</u1> <span class="k">avg</span></div>
             <div class="cnet num">13,668,626<sig>&Sigma;</sig></div>
             <div class="cdel mut">baseline</div>
-            <div class="codds"><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b style="width:100%"></b></span><span class="num grn">100<shr>%</shr></span></div>
           </div>
           <div class="cand won">
             <div class="ctop"><span class="ck">Split</span><span class="cst ok">TAKEN</span></div>
             <div class="cprice num">3,080<u1>/u</u1> <span class="k">+900u now</span></div>
             <div class="cnet num">14,051,633<sig>&Sigma;</sig></div>
             <div class="cdel up">+383,007<sig>&Sigma;</sig></div>
-            <div class="codds"><span class="g"><b style="width:71%"></b><i style="left:35%"></i></span><span class="num grn">71<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b style="width:71%"></b><i style="left:35%"></i></span><span class="num grn">71<shr>%</shr></span></div>
           </div>
           <div class="cand blk">
             <div class="ctop"><span class="ck">Patient</span><span class="cst no">BLOCKED</span></div>
             <div class="cprice num">3,610<u1>/u</u1></div>
             <div class="cnet num">14,253,263<sig>&Sigma;</sig></div>
             <div class="cdel up">+201,630<sig>&Sigma;</sig></div>
-            <div class="codds"><span class="g"><b class="no" style="width:18%"></b><i style="left:35%"></i></span><span class="num amb">18<shr>%</shr></span></div>
+            <div class="codds"><span class="k">fill</span><span class="g"><b class="no" style="width:18%"></b><i style="left:35%"></i></span><span class="num amb">18<shr>%</shr></span></div>
           </div>
         </div>
       </td>
@@ -234,11 +239,13 @@
         <div class="mline"><span class="lbl">broker</span><span class="num red">-180,180</span></div>
       </td>
       <td>
-        <div class="mline"><span class="lbl">sell flow</span><span class="num">210<rate>/d</rate></span></div>
+        <div class="mline"><span class="lbl">sell flow</span><span class="num">210<rate>u/d</rate></span></div>
+        <div class="corr">A4E &times;1.1 &middot; saw 91%</div>
+        <div class="mline"><span class="lbl">buy flow</span><span class="num">343<rate>u/d</rate></span></div>
         <div class="mline"><span class="lbl">sell share</span><span class="num">38<shr>%</shr></span></div>
         <div class="mline"><span class="lbl">trend</span><span class="num grn">+0.6<rate>%/wk</rate></span></div>
       </td>
-      <td><div class="mline"><span class="num">789,861</span></div>
+      <td><div class="mline"><span class="num">789,861<rate>/slot-d</rate></span></div>
         <div class="mline"><span class="lbl">est</span><span class="num">17.8<rate>d</rate></span></div></td>
     </tr>
     </tbody>
