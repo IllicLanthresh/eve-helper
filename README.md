@@ -358,17 +358,32 @@ columns carried is still on screen.
 | --- | --- | --- |
 | — | tick, or ⚡ for an INSTANT | *(spans both)* |
 | **#** | position in this view | *(spans both)* |
-| **Item** | icon, name, **warning chips** | qty · buy/sell depth |
-| **History** | sparkline | history reference price · sell vs it |
-| **Plan** | INSTANT / LIST / PATIENT / SPLIT | order Δ |
-| **Price** | import price | top buy → best sell · margin |
-| **Flow** | vol/day, regional | ↑ sell u/d · ↓ buy u/d · sell share |
-| **Fill** | fill % — *editable when pricing for a chance* | estimated days |
-| **Net ISK** | expected net | ISK per slot-day |
+| **Item** | icon, full name | `qty` · `buy depth` · `sell depth` · **warning chips** |
+| **History** | sparkline | `hist` · `sell vs hist` |
+| **Plan** | INSTANT / LIST / PATIENT / SPLIT | `vs instant` |
+| **Price** | import price | `top buy` · `best sell` · `margin` |
+| **Flow** | vol/day, regional | `sell side` · `buy side` · `sell share` |
+| **Fill** | fill % — *editable when pricing for a chance* | `est` days |
+| **Net ISK** | expected net | ISK `/slot-day` |
 
-**Warnings moved to the item name**, where the eye already is, rather than sitting past the
-right-hand edge. When a row carries chips and a long name, the chips keep their space and
-the name gives way — the full name is on hover and is still what a click copies.
+**Every figure on line 2 carries its name.** It read `+3.3M · 207k → 210k 1% · —↑ —↓ —`
+for a while, which is legible only to whoever wrote it — you had to remember that the
+arrow meant the buy side and that a bare percentage was a margin. The labels are 10px and
+dim so the numbers still carry the line, and a label and its value are laid out as one
+unit, so a narrow column wraps *between* pairs and never splits one across two lines.
+
+**Nothing is cut off.** Line 2 wraps; it used to be `nowrap` over `overflow:hidden` in a
+fixed-layout table, which clips with no scrollbar to say so — `hist 369k -43.0%` reached
+the screen as `hist 369k -4`. Width is the scarce resource here and height is not.
+
+**Warnings sit under the item name** rather than beside it. Beside it they competed with
+the name for width and the name lost: two rows both reading *Heavy Afocal …* are the same
+row as far as the eye is concerned, which is the one thing a name column must never do.
+Names now wrap instead of truncating.
+
+**The columns scale with the window** — all but the chart, which is a fixed 124px because
+it holds a fixed-width SVG. That column was `auto`, collapsed to 70px, and clipped 46px
+off the right of every sparkline.
 
 **Numbers are shown at their magnitude**: `12.3M`, not `12,328,200`. The exact figure is on
 hover and is what lands on the clipboard, and every export is unchanged. A full-precision
@@ -637,9 +652,15 @@ horizontal markers for the prices the row turns on: the current best sell (cyan)
 competitive list price (amber, drawn only when it differs from the best sell), the patient
 price (violet) and — the one you are actually deciding about — **the price this plan would
 put you in the market at** (green, drawn only when it is not already on the canvas under
-another name). The vertical scale spans the series *and* every marker, so nothing is ever
-off-canvas and "the patient price is above everything this market has done lately" becomes
-a picture rather than a percentage.
+another name).
+
+**The sparkline's scale is the series.** At 116×28 its one job is the *shape* of the
+market. It used to share the expanded chart's rule — the scale spans the series and every
+marker — and a patient price well above the market, or a best sell well below it, then
+squashed 120 days of price into a corner of a 28px box. A marker that falls outside the
+series is drawn as a short stub against the edge it went past, which says *off the bottom*
+without pretending the price is at the bottom. The **expanded chart** still puts everything
+on one shared scale, which is where that belongs.
 
 **Hover a sparkline** to expand the row into a full chart; **click** to pin it open (a
 violet edge marks a pinned chart), click again to let it go. Focus it and press Enter for

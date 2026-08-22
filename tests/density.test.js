@@ -213,7 +213,58 @@ H.run('density', async () => {
       sell.chips.every(c => c.tip.split('\n').every(l => /^[^:]{1,24}: /.test(l) || l.length <= 60)),
       JSON.stringify(sell.chips.map(c => c.tip)));
 
+    /* THE RATCHET THE OWNER ASKED FOR, TWICE. A tooltip line is a label and a value.
+       "the market has never traded there, so the give-up value stops at the floor" passed
+       the old rule by being under 60 characters; it is still a sentence, and sentences on
+       hover are what he asked to stop seeing. A line now either has a colon with a short
+       value after it, or it is a short standalone fact — never a clause. */
+    const VERBS = /\b(is|are|was|were|be|been|will|would|should|could|does|do|did|has|have|had|means|makes|gets|goes|stops|counts|reads|takes|leaves|sits|runs|keeps|carries|spends|claims)\b/i;
+    const sentenceish = [];
+    for (const c of sell.chips){
+      for (const line of String(c.tip || '').split('\n')){
+        const t = line.trim();
+        if (!t) continue;
+        const body = t.includes(': ') ? t.slice(t.indexOf(': ') + 2) : t;
+        if (VERBS.test(body) || body.split(/\s+/).length > 6) sentenceish.push(c.t + ' | ' + t);
+      }
+    }
+    eq('no chip tooltip line is a sentence — label and value only',
+      JSON.stringify(sentenceish), '[]');
+
+    /* ...and every number on the evidence line is NAMED. It read "+3.3M · 207k → 210k 1%
+       · —↑ —↓ —" and was legible only to whoever wrote it. */
+    const unnamed = await s.page.evaluate(() => {
+      const bad = [];
+      for (const tr of document.querySelectorAll('#tblBody tr.b')){
+        [...tr.children].forEach(td => {
+          for (const v of td.querySelectorAll('[data-cell]')){
+            const pair = v.closest('.pg') || td;
+            const label = pair.textContent.replace(v.textContent, '').trim();
+            if (!/[a-z]/i.test(label)) bad.push(v.dataset.cell + ' = "' + v.textContent + '"');
+          }
+        });
+      }
+      return [...new Set(bad)];
+    });
+    eq('every value on the evidence line carries a word saying what it is',
+      JSON.stringify(unnamed), '[]');
+
+    /* Nothing is cut off. tr.b was nowrap over overflow:hidden in a fixed-layout table,
+       which clips with no scrollbar to say so: "hist 369k -43.0%" reached the screen as
+       "hist 369k -4". Width is scarce here and height is not. */
+    const clipped = await s.page.evaluate(() => {
+      const bad = [];
+      for (const tr of document.querySelectorAll('#tblBody tr.a, #tblBody tr.b'))
+        for (const td of tr.children)
+          // a cell with no text has no value to cut in half (the tick, the chart)
+          if (td.textContent.trim() && td.scrollWidth > td.clientWidth + 1)
+            bad.push(td.textContent.trim().slice(0, 40));
+      return bad;
+    });
+    eq('no cell is clipped mid-value', JSON.stringify(clipped), '[]');
+
     check('the plan tooltip is lines, not a paragraph',
+
       sell.planTips.length > 0 && sell.planTips.every(t =>
         t.split('\n').every(l => l.length <= TIP_LINE_MAX) && !/\. [A-Z]/.test(t)),
       JSON.stringify(sell.planTips));

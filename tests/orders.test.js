@@ -449,11 +449,15 @@ H.run('orders', async () => {
        number behind it is now the share of the units expected to sell, and the floor it
        misses no longer merely decorates the row — it takes holding out of the running,
        which is the sentence the tooltip has to carry. */
-    check('...whose tooltip carries the units, the floor it missed, and what that costs it',
-      dDump.reasons.some(r => /fill: \d+% of [\d,]+ u sells at/.test(r.ttl)
-        && /floor: \d+% \("14d · 55%"\)/.test(r.ttl)
-        && /verdict: holding is out of the running/.test(r.ttl)),
+    check('...whose tooltip carries the units, the price, the floor it missed and the cost',
+      dDump.reasons.some(r => /^fill: \d+% of [\d,]+ u$/m.test(r.ttl)
+        && /^at: [\d,]+ in \d+d$/m.test(r.ttl)
+        && /^floor: \d+% \(14d · 55%\)$/m.test(r.ttl)
+        && /^hold: not offered$/m.test(r.ttl)),
       JSON.stringify(dDump.reasons));
+    check('...as key: value lines, with no sentence anywhere in it',
+      dDump.reasons.every(r => r.ttl.split('\n').every(l => /^[^:]{1,18}: .{1,26}$/.test(l))),
+      JSON.stringify(dDump.reasons.map(r => r.ttl)));
     check('...and the chip stays a chip', dDump.reasons.every(r => r.t.length <= 10),
       JSON.stringify(dDump.reasons.map(r => r.t)));
     eq('the window is capped by the days left on the order', dQueue.window, 2);
@@ -481,10 +485,10 @@ H.run('orders', async () => {
         && /^\+[\d.]+%▼$/.test(dSlide.reasons[0].t), JSON.stringify(dSlide.reasons));
     // read defensively: a suite whose earlier claim fails must still reach the ones below
     const slideTtl = (dSlide.reasons[0] || {}).ttl || '';
-    check('...its tooltip naming the gap and the slide that widens it',
-      /above best sell: \+[\d.]+%/.test(slideTtl)
-        && /trend: -[\d.]+%\/wk/.test(slideTtl)
-        && /the gap only widens/.test(slideTtl), slideTtl);
+    check('...its tooltip naming the gap and the trend, and nothing else',
+      /^above best sell: \+[\d.]+%$/m.test(slideTtl)
+        && /^trend: -[\d.]+%\/wk$/m.test(slideTtl)
+        && slideTtl.split('\n').length === 2, slideTtl);
     check('...even though the odds pass the floor and the queue clears in time',
       dSlide.chance > 0.55 && dSlide.daysToFill < dSlide.daysLeft,
       dSlide.chance + ' / ' + dSlide.daysToFill + ' vs ' + dSlide.daysLeft);

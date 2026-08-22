@@ -60,15 +60,21 @@
   #tbl{table-layout:fixed}
   #tbl td,#tbl th{overflow:hidden}
   #tbl tbody tr.a>td{padding:5px 6px 1px;border-bottom:none}
+  /* Line 2 WRAPS. It used to be nowrap over overflow:hidden in a fixed layout, which
+     clips without a scrollbar to say so: "hist 369k -43.0%" arrived on screen as
+     "hist 369k -4". Width is the scarce resource here and height is not, so anything
+     that does not fit goes to a second line instead of being cut in half. */
   #tbl tbody tr.b>td{padding:0 6px 6px;border-bottom:1px solid #1a2233;
-    color:var(--dim);font-size:11px;white-space:nowrap}
-  /* the name may be long and the chips must never be the thing that gets pushed out, so
-     the name is the only part allowed to give way */
-  #tbl tbody tr.a>td.name{white-space:nowrap;display:flex;align-items:center;gap:4px;
+    color:var(--dim);font-size:11px;white-space:normal;line-height:1.45}
+  /* ...and so does the name. Two items called "Heavy Afocal ..." are the same item as far
+     as the eye is concerned, which is the one thing a name column must never do. */
+  #tbl tbody tr.a>td.name{white-space:normal;display:flex;align-items:center;gap:4px;
     padding-right:4px}
-  #tbl td.name .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
-  #tbl td.name .flag{flex:none;margin:0}
+  #tbl td.name .nm{min-width:0;overflow-wrap:anywhere}
   #tbl td.name img.ticon{flex:none}
+  /* the chips sit on line 2 with the rest of the evidence, so they never take the name's
+     space — they are next to it either way */
+  #tbl td.sub .flag{margin:0 0 0 4px}
   #tbl td.plan .badge{padding:1px 5px}
   #tbl input.oddsin{width:52px;padding:1px 3px;font-size:11px;text-align:right;
     background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:3px}
@@ -78,6 +84,9 @@
   #tbl tbody tr.a:hover>td,#tbl tbody tr.a:hover+tr.b>td{background:#141b28}
   #tbl tbody tr.b:hover>td,#tbl tbody tr.b:hover>td{background:#141b28}
   #tbl td.sub .k{color:#5d6a7e;font-size:10px}
+  #tbl td.sub .pg{white-space:nowrap;display:inline-block}
+  #tbl td.sub.num .pg{margin-left:7px}
+  #tbl td.sub:not(.num) .pg{margin-right:7px}
   #tbl td.sub .up{color:var(--cyan)}
   #tbl td.sub .dn{color:#7c8798}
   #tbl td.name .nm{font-weight:600;font-size:12.5px;vertical-align:middle}
@@ -90,12 +99,12 @@
   td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
   td.pos{color:var(--green)}
   td.neg{color:var(--red)}
-  td.name{max-width:352px}
+  td.name{max-width:none}
   /* item icon: sits in the name cell so a row can be matched against the hangar by eye.
      The box is reserved whether or not the image loads, so the names keep one left edge. */
   img.ticon{width:32px;height:32px;vertical-align:middle;margin-right:8px;flex:0 0 auto;
     image-rendering:auto;background:#0f1520;border-radius:3px}
-  tbody tr td.name{line-height:32px}
+  tbody tr.a>td.name{line-height:1.25;min-height:32px}
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
   .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
   .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
@@ -435,13 +444,17 @@
       <thead><tr>
         <th data-key="checked" style="width:26px" title="tick: include in the import list&#10;INSTANT: no price to import — instant checklist instead"></th>
         <th class="num nosort" style="width:26px" title="position in the table as sorted&#10;renumbers when you sort or filter&#10;Tick top N works down this order">#</th>
-        <th data-key="name" style="width:222px" title="the name as EVE spells it&#10;below: units held · buy/sell depth&#10;click a value to copy it">Item</th>
-        <th data-key="trendPctWk" style="width:auto" title="chart: 120d daily average&#10;markers: best sell · list price · patient price&#10;below: history reference price · sell vs it&#10;sort: trend %/wk · click for the full chart">History</th>
-        <th data-key="strategy" style="width:84px" title="recommended disposal · hover a badge for its numbers&#10;below: listing plan net − instant net">Plan</th>
-        <th data-key="exportPrice" class="num" style="width:118px" title="price to import at&#10;below: top buy → best sell · margin">Price</th>
-        <th data-key="volDay" class="num" style="width:104px" title="units traded/day, regional, both sides pooled&#10;over CALENDAR days — a day with no trades counts as zero&#10;below: bought from sell orders ↑ · sold to buy orders ↓ · sell share">Flow</th>
-        <th data-key="fillChance" class="num" style="width:70px" title="share of the listed stack expected to sell inside the patience window&#10;≤ marks an upper bound: ESI regional volume, both sides pooled&#10;below: estimated days to fill">Fill</th>
-        <th data-key="totalNet" class="num" style="width:100px" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given&#10;below: expected net ÷ expected days on the market">Net ISK</th>
+        <!-- Item is the one auto column: it absorbs whatever is left, so a wider window
+             buys longer names rather than wider number columns. Everything else is sized
+             to the labelled line beneath it — the chart column in particular, which was
+             `auto`, collapsed to 70px and clipped 46px off every 116px sparkline. -->
+        <th data-key="name" style="width:26%" title="the name as EVE spells it&#10;below: units held · buy and sell depth · warning chips&#10;click a value to copy it">Item</th>
+        <th data-key="trendPctWk" style="width:124px" title="chart: 120d daily average&#10;markers: best sell · list price · patient price · your price&#10;below: history reference price · sell vs it&#10;sort: trend %/wk · hover for the full chart">History</th>
+        <th data-key="strategy" style="width:10%" title="recommended disposal · hover a badge for its numbers&#10;below: listing plan net − instant net">Plan</th>
+        <th data-key="exportPrice" class="num" style="width:15%" title="price to import at&#10;below: top buy · best sell · margin">Price</th>
+        <th data-key="volDay" class="num" style="width:15%" title="units traded/day, regional, both sides pooled&#10;over CALENDAR days — a day with no trades counts as zero&#10;below: bought from sell orders · sold to buy orders · sell share">Flow</th>
+        <th data-key="fillChance" class="num" style="width:7%" title="share of the listed stack expected to sell inside the patience window&#10;≤ marks an upper bound: ESI regional volume, both sides pooled&#10;below: estimated days to fill">Fill</th>
+        <th data-key="totalNet" class="num" style="width:12%" title="expected ISK in the wallet for the whole stack&#10;net of fees, over the plan the row is given&#10;below: expected net ÷ expected days on the market">Net ISK</th>
       </tr></thead>
       <tbody id="tblBody"></tbody>
     </table>
@@ -2482,7 +2495,7 @@ const boundWord = bound => bound === 'estimate' ? 'estimate' : 'upper bound';
 /* The recency half-life is measured, so it is stated. Reading it: "older prints count
    half from 38d back" — and on a thin item that number runs into the hundreds, which is
    the model saying it had to reach that far to find any trading at all. */
-const halfLifeWord = d => d == null ? '' : ` · older prints halve at ${fmtDays(d)}d`;
+const halfLifeWord = d => d == null ? '' : ` · half-life ${fmtDays(d)}d`;
 
 /* Days to work through the queue at `price`: units already listed at or below it on the
    hub's sell side, divided by the daily traded volume. BOTH halves are approximations and
@@ -2789,36 +2802,34 @@ function rebuild(keepChecks = true){
        row says so: the item is already as cheap as this market has been, and the give-up
        branch is not allowed to project it cheaper. */
     if (decayInfo.at === 'floor') flags.push({ t: 'at floor', cls: 'info',
-      ttl: `range low: ${fmtIsk(decayInfo.lo)} over ${HIT_DAYS}d`
+      ttl: `range low: ${fmtIsk(decayInfo.lo)}`
+        + `\nwindow: ${HIT_DAYS}d`
         + `\ntrend alone: ${fmtIsk(decayInfo.lo / decayInfo.f * decayInfo.raw)} in ${pat.days}d`
-        + '\nnever traded: not at that price, not once'
-        + '\ncase: falling into the bottom, not from the top'
-        + '\ngive-up value: stops at the floor' });
+        + '\ncarry: clamped to range low' });
     /* The correction's size IS the data-quality signal. A x1.2 is a tracker that saw
        most of the trade; a x6 is a rate to distrust, and the row should not let that pass
        without saying it. Under x1.1 there is nothing worth a chip. */
     if (trkCorr && trkCorr.ratio > 1.1) flags.push({
       t: `vol ×${trkCorr.ratio.toFixed(trkCorr.ratio >= 10 ? 0 : 1)}`,
       cls: trkCorr.ratio > 3 ? 'warn' : 'info',
-      ttl: `tracker saw: ${fmt.format(Math.round(trkCorr.a4e))} u over ${trkCorr.days}d`
-        + `\nESI regional: ${fmt.format(Math.round(trkCorr.esi))} u over the same days`
-        + `\ncorrection: ×${trkCorr.ratio.toFixed(2)} on the arrival rate`
-        + '\nnot in it: the sell/buy split, which is a ratio and cancels'
-        + '\nthe gap: cancels read as sales, other stations, sampling misses'
-        + '\nunseparable, so this is an upper correction' });
+      ttl: `tracker: ${fmt.format(Math.round(trkCorr.a4e))} u`
+        + `\nESI region: ${fmt.format(Math.round(trkCorr.esi))} u`
+        + `\ndays: ${trkCorr.days}`
+        + `\ncorrection: ×${trkCorr.ratio.toFixed(2)} on units/day`
+        + '\nsell share: uncorrected' });
     if (decayInfo.at === 'ceiling') flags.push({ t: 'at ceiling', cls: 'info',
-      ttl: `range high: ${fmtIsk(decayInfo.hi)} over ${HIT_DAYS}d`
+      ttl: `range high: ${fmtIsk(decayInfo.hi)}`
+        + `\nwindow: ${HIT_DAYS}d`
         + `\ntrend alone: ${fmtIsk(decayInfo.hi / decayInfo.f * decayInfo.raw)} in ${pat.days}d`
-        + '\nnever traded: not at that price, not once'
-        + '\ngive-up value: stops at the ceiling' });
+        + '\ncarry: clamped to range high' });
     /* The floor blocked something that was worth more. Say so on the row, with the number,
        because the alternative is a plan that silently leaves ISK on the table and never
        mentions it. Raising the floor field is how you disagree. */
     if (floorCost != null) flags.push({ t: `floor ${fmtShort(floorCost)}`, cls: 'warn',
-      ttl: `blocked by the fill floor: listing at ${fmtIsk(floorBest.price)} was worth `
-        + `+${fmtIsk(floorCost)} ISK\nodds: ${pc(floorBest.p)} < ${pc(pat.minFill)} floor`
-        + `\nfee at risk: ${fmtIsk(floorBest.brokerCharge)} ISK, spent whether it fills or not`
-        + '\nlower the fill floor to take the bet' });
+      ttl: `blocked at: ${fmtIsk(floorBest.price)}`
+        + `\nvs plan taken: +${fmtIsk(floorCost)} ISK`
+        + `\nodds: ${pc(floorBest.p)}\nfloor: ${pc(pat.minFill)}`
+        + `\nfee at risk: ${fmtIsk(floorBest.brokerCharge)} ISK` });
     // a SPLIT has two legs: the instant leg (checklist) and the listed remainder (import)
     const instLegNet  = ordFill ? ordFill.proceeds * (1 - tax) : 0;
     const orderLegNet = netOrder != null ? netOrder - instLegNet : null;
@@ -2923,7 +2934,7 @@ function syncControls(){
   const pat = patienceOf();
   $('patNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
   $('patNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
-    + '\nbelow the floor: the plan is INSTANT, and the row says what that cost';
+    + '\nunder the floor: not offered · the row carries what it cost';
   for (const r of document.querySelectorAll('input[name="patPreset"]'))
     r.checked = Number(r.value) === pat.days;
   $('srcHistEcho').textContent =
@@ -2994,10 +3005,9 @@ function skippedTip(r){
   const sk = r.metrics && r.metrics.skipped;
   if (!sk || !sk.length) return '';
   const cheapest = sk.reduce((a, b) => (a.p <= b.p ? a : b));
-  return `\nskipped ${sk.length} absurd sell order${sk.length > 1 ? 's' : ''}`
-    + `, cheapest ${fmtIsk(cheapest.p)}`
-    + `\nunder every daily low this market has printed (${fmtIsk(r.metrics.skipFloor)})`
-    + ' and 3.5 modified z below the book';
+  return `\nskipped: ${sk.length} sell order${sk.length > 1 ? 's' : ''}`
+    + `\ncheapest: ${fmtIsk(cheapest.p)}`
+    + `\nmarket low: ${fmtIsk(r.metrics.skipFloor)}`;
 }
 
 const fmtShort = n => {
@@ -3102,7 +3112,7 @@ function whyText(r){
         ? ` · queue ${fmt.format(Math.round(g.out.queue))} u never clears` : '')
       + (g.out && g.out.capped === 'ceiling' ? ' · above every price the market has paid' : '')
       + (g.hit ? ` · hit ${pc(g.hit.p)} of ${m.window}d windows` : '')
-      + ` · fee ${fmtIsk(g.brokerCharge)} ISK spent either way`);
+      + ` · fee at risk ${fmtIsk(g.brokerCharge)} ISK`);
   if (m.velPctDay > 0.2)
     out.push(`sliding ${m.velPctDay.toFixed(2)}%/day → repricing`
       + (c && c.relists ? ` · ${c.relists} relist${c.relists > 1 ? 's' : ''} @ ${fmtIsk(c.brokerCharge)} ISK priced in` : ''));
@@ -3178,11 +3188,18 @@ function priceScale(vals, markers, top, bottom){
   return { lo, hi, y: v => span > 0 ? bottom - (v - lo) / span * (bottom - top) : (top + bottom) / 2 };
 }
 
+/* At 116x28 the sparkline has one job: the SHAPE of the market. It used to share the
+   expanded chart's rule — the scale spans the series and every marker — and a patient
+   price well above the market, or a best sell well below it, then squashed the series
+   into a corner of a 28px box and left it unreadable. The scale is the series here; a
+   marker that falls outside it is drawn as a stub at the edge it went past, which says
+   "off the top" without pretending the price is at the top. The expanded chart still puts
+   everything on one shared scale, which is where that belongs. */
 function buildSparkline(r, clickable){
   const rows = chartRows(r, SPARK_DAYS);
   if (rows.length < 2) return null;
   const marks = markersOf(r);
-  const sc = priceScale(rows.map(h => h.average), marks, 2, SPARK_H - 2);
+  const sc = priceScale(rows.map(h => h.average), [], 2, SPARK_H - 2);
   const svg = svgEl('svg', { viewBox: `0 0 ${SPARK_W} ${SPARK_H}`, width: SPARK_W, height: SPARK_H,
     role: 'img', preserveAspectRatio: 'none' });
   const x = i => 1 + i * (SPARK_W - 2) / (rows.length - 1);
@@ -3195,10 +3212,15 @@ function buildSparkline(r, clickable){
   svg.setAttribute('aria-label', label);
   svg.appendChild(svgEl('title', {})).textContent =
     label + (clickable === false ? '' : ' — click for the full chart');
-  for (const m of marks)
-    svg.appendChild(svgEl('line', { x1: 0, x2: SPARK_W, y1: sc.y(m.price).toFixed(2), y2: sc.y(m.price).toFixed(2),
-      stroke: m.colour, 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: 0.85,
-      'data-marker': m.key, 'data-price': m.price }));
+  for (const m of marks){
+    const out = m.price > sc.hi ? 'above' : m.price < sc.lo ? 'below' : null;
+    const y = sc.y(out === 'above' ? sc.hi : out === 'below' ? sc.lo : m.price);
+    svg.appendChild(svgEl('line', {
+      x1: 0, x2: out ? 12 : SPARK_W, y1: y.toFixed(2), y2: y.toFixed(2),
+      stroke: m.colour, 'stroke-width': out ? 2 : 1,
+      'stroke-dasharray': out ? null : '2 2', opacity: out ? 1 : 0.85,
+      'data-marker': m.key, 'data-price': m.price, 'data-outside': out }));
+  }
   svg.appendChild(svgEl('path', { d, fill: 'none', 'stroke-width': 1.2, 'stroke-linejoin': 'round',
     stroke: TREND_STROKE[r.dir] || 'var(--dim)', 'data-series': 'avg', 'data-points': rows.length }));
   return svg;
@@ -3504,20 +3526,32 @@ function markImport(){ for (const r of state.rows) r.inImport = r.checked && r.s
 const subCell = (parts, cls) => {
   const td = document.createElement('td');
   td.className = 'sub' + (cls ? ' ' + cls : '');
-  for (const p of parts){
-    if (p == null) continue;
-    if (typeof p === 'string'){ td.appendChild(document.createTextNode(p)); continue; }
+  const put = (p, into) => {
+    if (p == null) return;
+    if (typeof p === 'string'){ into.appendChild(document.createTextNode(p)); return; }
+    if (p.group){                                   // a label and its value, kept together
+      const g = document.createElement('span');
+      g.className = 'pg';
+      for (const q of p.group) put(q, g);
+      into.appendChild(g);
+      return;
+    }
     const sp = document.createElement('span');
     sp.className = p.cls || '';
     sp.textContent = p.t;
     if (p.cell) sp.dataset.cell = p.cell;     // addressable by NAME, never by column index
     if (p.copy) sp.dataset.copy = p.copy;
     if (p.title) sp.title = p.title;
-    td.appendChild(sp);
-  }
+    into.appendChild(sp);
+  };
+  for (const p of parts) put(p, td);
   return td;
 };
 const K = t => ({ t, cls: 'k' });                    // a quiet label, never the value
+/* "buy 207k" is one thing to read, so it is one thing to lay out: the line wraps BETWEEN
+   pairs and never inside one. Without this a narrow column splits a label from its number
+   and puts them on different lines, which is worse than no label at all. */
+const P = (...group) => ({ group });
 
 function render(){
   markImport();
@@ -3565,22 +3599,13 @@ function render(){
     tdPos.textContent = String(pos);
     tr.appendChild(tdPos);
 
-    // name, then the warnings that used to be twenty columns to the right of it
+    // the name, in full — the chips it used to compete with are on line 2 now
     const tdName = document.createElement('td');
     tdName.className = 'name';
     const nm = document.createElement('span');
     nm.className = 'nm'; nm.textContent = r.name; nm.dataset.copy = r.name;
-    nm.title = r.name;          // the chips win the space, so the full name lives here
     tdName.dataset.cell = 'name';
     tdName.appendChild(nm);
-    for (const f of r.flags){
-      const sp = document.createElement('span');
-      sp.className = 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info'
-        : f.cls === 'wait' ? ' wait' : '');
-      sp.textContent = f.t;
-      if (f.ttl) sp.title = f.ttl;
-      tdName.appendChild(sp);
-    }
     prependTypeIcon(tdName, r.typeId, r.name);
     tr.appendChild(tdName);
 
@@ -3655,68 +3680,71 @@ function render(){
       td.appendChild(inp);
     }
 
-    /* ---- line 2: what the decision rests on ---- */
+    /* ---- line 2: what the decision rests on ----
+       EVERY figure carries its name. This line used to read "+3.3M · 207k → 210k 1% ·
+       —↑ —↓ —", which is only legible to whoever wrote it: the reader is left to
+       remember that the arrow means buy side and that a bare percentage is a margin. The
+       labels are 10px and dim so the numbers still carry the line, but there are no
+       unnamed numbers on it. */
     tr2.appendChild(subCell([
-      K('qty '), { cell: 'qty', t: fmtShort(r.qty), copy: String(r.qty), title: exactTip(r.qty) }, '  ', K('depth '),
-      { cell: 'buyDepth', t: fmtShort(r.buyDepth),
-        copy: r.buyDepth == null ? '' : String(r.buyDepth), title: 'units wanted by buy orders covering the hub' },
-      '/',
-      { cell: 'sellDepth', t: fmtShort(r.sellDepth),
-        copy: r.sellDepth == null ? '' : String(r.sellDepth), title: 'units offered by sell orders at the hub' },
+      P(K('qty '), { cell: 'qty', t: fmtShort(r.qty), copy: String(r.qty), title: exactTip(r.qty) }),
+      P(K('buy depth '), { cell: 'buyDepth', t: fmtShort(r.buyDepth),
+        copy: r.buyDepth == null ? '' : String(r.buyDepth), title: 'units wanted by buy orders covering the hub' }),
+      P(K('sell depth '), { cell: 'sellDepth', t: fmtShort(r.sellDepth),
+        copy: r.sellDepth == null ? '' : String(r.sellDepth), title: 'units offered by sell orders at the hub' }),
+      ...r.flags.map(f => ({ t: f.t, title: f.ttl,
+        cls: 'flag' + (f.cls === 'warn' ? ' warn' : f.cls === 'info' ? ' info'
+          : f.cls === 'wait' ? ' wait' : '') })),
     ]));
 
     tr2.appendChild(subCell([
-      K('hist '),
-      { cell: 'hist', t: fmtShort(r.hist), copy: priceCopy(r.hist), title: 'chosen statistic over the region\'s daily averages' },
-      ' ',
-      { cell: 'sellVsHist', t: pct1(r.sellVsHist), cls: signCls(r.sellVsHist),
+      P(K('hist '), { cell: 'hist', t: fmtShort(r.hist), copy: priceCopy(r.hist),
+        title: 'chosen statistic over the region\'s daily averages' }),
+      P(K('sell vs hist '), { cell: 'sellVsHist', t: pct1(r.sellVsHist), cls: signCls(r.sellVsHist),
         copy: r.sellVsHist == null ? '' : r.sellVsHist.toFixed(2),
-        title: '(sell − hist) ÷ hist\ngreen: above history · red: below' },
+        title: '(sell − hist) ÷ hist\ngreen: above history\nred: below' }),
     ]));
 
     tr2.appendChild(subCell([
-      { cell: 'advTotal', t: r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtShort(r.advTotal),
+      P(K('vs instant '), { cell: 'advTotal',
+        t: r.advTotal == null ? '—' : (r.advTotal > 0 ? '+' : '') + fmtShort(r.advTotal),
         cls: signCls(r.advTotal), copy: priceCopy(r.advTotal),
-        title: 'listing plan net − instant net\nnegative: instant is better' },
+        title: 'listing plan net − instant net\nnegative: instant is better' }),
     ]));
 
     tr2.appendChild(subCell([
-      { cell: 'bestBuy', t: fmtShort(r.bestBuy), copy: priceCopy(r.bestBuy), title: 'highest buy order covering the hub' },
-      ' → ',
-      { cell: 'bestSell', t: fmtShort(r.bestSell), copy: priceCopy(r.bestSell),
-        title: 'cheapest sell order at the hub' + skippedTip(r) },
-      ' ',
-      { cell: 'margin', t: r.margin == null ? '—' : r.margin.toFixed(0) + '%', cls: 'k',
+      P(K('top buy '), { cell: 'bestBuy', t: fmtShort(r.bestBuy), copy: priceCopy(r.bestBuy),
+        title: 'highest buy order covering the hub' }),
+      P(K('best sell '), { cell: 'bestSell', t: fmtShort(r.bestSell), copy: priceCopy(r.bestSell),
+        title: 'cheapest sell order at the hub' + skippedTip(r) }),
+      P(K('margin '), { cell: 'margin', t: r.margin == null ? '—' : r.margin.toFixed(0) + '%',
         copy: r.margin == null ? '' : r.margin.toFixed(2),
-        title: '(sell − buy) ÷ buy\nnegative: crossed market' },
+        title: '(sell − buy) ÷ buy\nnegative: crossed market' }),
     ], 'num'));
 
     tr2.appendChild(subCell([
-      // the arrow is a direction mark, not part of the number: it stays outside the value
-      // so the cell's text is the figure and nothing else
-      { cell: 'volSell', t: volCell(r, r.volSell), cls: 'up',
-        copy: r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), title: volTip(r, 'sell') },
-      K('↑ '),
-      { cell: 'volBuy', t: volCell(r, r.volBuy), cls: 'dn',
-        copy: r.volBuy == null ? '' : String(Math.round(r.volBuy * 100) / 100), title: volTip(r, 'buy') },
-      K('↓ '),
-      { cell: 'capture', t: r.capture == null ? (r.volState === 'none' ? VOL_NONE : '—') : Math.round(r.capture * 100) + '%',
-        cls: 'k', copy: r.capture == null ? '' : r.capture.toFixed(4), title: captureTip(r) },
+      P(K('sell side '), { cell: 'volSell', t: volCell(r, r.volSell), cls: 'up',
+        copy: r.volSell == null ? '' : String(Math.round(r.volSell * 100) / 100), title: volTip(r, 'sell') }, K('/d')),
+      P(K('buy side '), { cell: 'volBuy', t: volCell(r, r.volBuy), cls: 'dn',
+        copy: r.volBuy == null ? '' : String(Math.round(r.volBuy * 100) / 100), title: volTip(r, 'buy') }, K('/d')),
+      P(K('sell share '), { cell: 'capture',
+        t: r.capture == null ? (r.volState === 'none' ? VOL_NONE : '—') : Math.round(r.capture * 100) + '%',
+        copy: r.capture == null ? '' : r.capture.toFixed(4), title: captureTip(r) }),
     ], 'num'));
 
     tr2.appendChild(subCell([
-      { cell: 'fillDays', t: r.fillDays == null ? '—' : fmtDays(r.fillDays) + 'd',
+      P(K('est '), { cell: 'fillDays', t: r.fillDays == null ? '—' : fmtDays(r.fillDays) + 'd',
         copy: r.fillDays == null ? '' : r.fillDays.toFixed(2),
         title: r.strategy === 'imm' ? 'INSTANT: nothing is listed'
           : r.fillDays == null ? 'no sell book, or no traded volume to divide by'
           : `queue: ${fmt.format(Math.round(r.fillDays * (r.volDay || 0)))} u at or below ${fmtIsk(r.exportPrice)}`
-            + `\nvol/day: ${fmt.format(r.volDay)} u (regional, both sides — optimistic)` },
+            + `\nvol/day: ${fmt.format(r.volDay)} u` }),
     ], 'num'));
 
     tr2.appendChild(subCell([
-      { cell: 'perSlot', t: fmtShort(r.perSlot), copy: r.perSlot == null ? '' : priceCopy(r.perSlot),
+      P({ cell: 'perSlot', t: fmtShort(r.perSlot), copy: r.perSlot == null ? '' : priceCopy(r.perSlot),
         title: r.strategy === 'imm' ? 'INSTANT: no slot used — not ranked here' : r.why },
-      K('/sd'),
+        K(' /slot-day')),
     ], 'num'));
 
     frag.appendChild(tr);
@@ -4841,7 +4869,7 @@ function syncOrdPatience(){
     b.setAttribute('aria-pressed', String(Number(b.dataset.days) === pat.days));
   $('ordPatNote').textContent = `${pat.days}d window · ${Math.round(pat.minFill * 100)}% floor`;
   $('ordPatNote').title = `window: ${pat.days}d\nfloor: ${Math.round(pat.minFill * 100)}% chance of filling`
-    + '\nunder the floor: that option is not offered';
+    + '\nunder the floor: not offered';
 }
 
 /* ---------- the diagnosis: fetch phase ---------------------------------------------
@@ -5100,9 +5128,10 @@ function diagnoseOne(o, cfg){
 
   if (d.chance < cfg.pat.minFill)
     d.reasons.push({ t: `${pc(d.chance)}<${pc(cfg.pat.minFill)}`,
-      ttl: `fill: ${pc(d.chance)} of ${fmt.format(q)} u sells at ${fmtIsk(o.price)} in ${d.window}d`
-        + `\nfloor: ${pc(cfg.pat.minFill)} ("${cfg.pat.label}")`
-        + '\nverdict: holding is out of the running' });
+      ttl: `fill: ${pc(d.chance)} of ${fmt.format(q)} u`
+        + `\nat: ${fmtIsk(o.price)} in ${d.window}d`
+        + `\nfloor: ${pc(cfg.pat.minFill)} (${cfg.pat.label})`
+        + '\nhold: not offered' });
   if (d.daysToFill != null && daysLeft != null && d.daysToFill > daysLeft)
     d.reasons.push({ t: `q${fmtDays(d.daysToFill)}d>${fmtDays(daysLeft)}d`,
       ttl: `queue: ${fmt.format(Math.round(d.queueAhead))} u at or below your price`
@@ -5110,7 +5139,7 @@ function diagnoseOne(o, cfg){
   if (d.dir === 'falling' && d.aboveBestPct != null && d.aboveBestPct > 0 && d.chance < ORD_COMFORT_CHANCE)
     d.reasons.push({ t: `+${d.aboveBestPct.toFixed(1)}%▼`,
       ttl: `above best sell: +${d.aboveBestPct.toFixed(1)}%`
-        + `\ntrend: ${pctSigned(d.trendPctWk)}/wk\nthe gap only widens` });
+        + `\ntrend: ${pctSigned(d.trendPctWk)}/wk` });
 
   /* THE FLOOR IS A GATE, not a decoration. The Sell mode has always refused to recommend
      a listing whose expected fill is under the patience mode's floor — the fee is spent

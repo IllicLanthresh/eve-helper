@@ -1499,7 +1499,10 @@ H.run('sell', async () => {
         return r.flags.some(f => /absurd|outlier|skip/i.test(f.t));
       })));
     check('...but the price cell says what it skipped, and at what',
-      /skipped 1 absurd sell order, cheapest 1/.test(baitTip.tip || ''), baitTip.tip);
+      /skipped: 1 sell order/.test(baitTip.tip || '') && /cheapest: 1/.test(baitTip.tip || ''),
+      baitTip.tip);
+    check('...and the market low it was measured against',
+      /market low: [\d,.]+/.test(baitTip.tip || ''), baitTip.tip);
 
     section('relist churn is set, not assumed');
     const churnAt = async (tol, max) => {
@@ -1718,7 +1721,7 @@ H.run('sell', async () => {
     check('so it is refused by the guard, not recommended',
       decay.guarded.some(g => g.price === decay.patientPrice), JSON.stringify(decay.guarded));
     check('...and the reason names the fee that would have been burned',
-      /fee [\d,.]+ ISK spent either way/.test(decay.why), decay.why);
+      /fee at risk [\d,.]+ ISK/.test(decay.why), decay.why);
     check('...under the floor it failed to clear, quoting both numbers the owner typed',
       /skip [\d,.]+: \d+% < 55% floor \(14d · 55%\)/.test(decay.why), decay.why);
     eq('the item is still sold — listed at a price the market does pay', decay.strategy, 'ord');
@@ -1778,8 +1781,10 @@ H.run('sell', async () => {
        quietly leaves ISK on the table and never mentions it. */
     const blocked = await p4.evaluate(() => {
       const r = state.rows.find(x => x.name === 'Patience Widget');
-      const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.dataset.key === r.key);
-      const td = tr && tr.querySelector('td.name');
+      // the chips sit on line 2 with the rest of the evidence: on line 1 they competed
+      // with the item name for width, and the name lost
+      const tr = [...document.querySelectorAll('#tblBody tr.b')].find(x => x.dataset.key === r.key);
+      const td = tr && tr.children[0];
       return {
         floorCost: r.metrics.floorCost, netInstant: r.netInstant,
         blockedNet: r.metrics.floorBest ? r.metrics.floorBest.net : null,
@@ -1793,10 +1798,15 @@ H.run('sell', async () => {
     const fc = blocked.chips.find(c => /^floor /.test(c.t));
     check('...and the row says so, in ISK, on a chip', !!fc, JSON.stringify(blocked.chips.map(c => c.t)));
     check('...the chip staying a chip', fc && fc.t.length <= 12, fc && fc.t);
-    check('...with the price, the odds and the floor on its tooltip',
-      fc && /listing at [\d,.]+ was worth \+[\d,.]+ ISK/.test(fc.ttl)
-        && /odds: \d+% < \d+% floor/.test(fc.ttl)
-        && /lower the fill floor/.test(fc.ttl), fc && fc.ttl);
+    /* Facts, one per line, no sentences: the owner asked for named numbers, not prose. */
+    check('...with the price, the gain, the odds and the floor on its tooltip, as bare facts',
+      fc && /^blocked at: [\d,.]+$/m.test(fc.ttl)
+        && /^vs plan taken: \+[\d,.]+ ISK$/m.test(fc.ttl)
+        && /^odds: \d+%$/m.test(fc.ttl)
+        && /^floor: \d+%$/m.test(fc.ttl)
+        && /^fee at risk: [\d,.]+ ISK$/m.test(fc.ttl), fc && fc.ttl);
+    check('...every line of it a key and a value, none of them a sentence',
+      fc && fc.ttl.split('\n').every(l => /^[^:]{1,18}: .{1,26}$/.test(l)), fc && fc.ttl);
 
     await setPatience(p4, 30, 35);
     const patient = await decisionRow(p4, 'Patience Widget');
@@ -2021,20 +2031,19 @@ H.run('sell', async () => {
     // the scale spans the series AND the markers, so a marker is never off-canvas:
     //   lo = 1,000 (today's average)   hi = 2,190 (the oldest day)
     //   y(v) = (H-2) - (v - lo)/(hi - lo) x (H-4)
-    /* The scale spans the series AND every marker — including, now, the price THIS PLAN
-       would put you in the market at. Spark Widget's plan is to dump into a buy book at
-       800, below the series' own low of 1,000, so the floor of the scale is that marker.
-       Deriving it from the markers rather than hard-coding 1,000 is the point: the rule is
-       "nothing is ever off-canvas", not "the series decides". */
-    const scaleLo = Math.min(1000, ...geom.markers.map(m => m.price));
-    const scaleHi = Math.max(2190, ...geom.markers.map(m => m.price));
-    const yOf = v => ((geom.H - 2) - (v - scaleLo) / (scaleHi - scaleLo) * (geom.H - 4)).toFixed(2);
+    /* THE SPARKLINE'S SCALE IS THE SERIES. It used to span the series and every marker,
+       the way the expanded chart still does — and a marker well outside the market then
+       squashed 120 days of price into a corner of a 28px box. At this size the job is the
+       SHAPE of the market; a marker that falls outside is stubbed against the edge it went
+       past, which says "off the bottom" without claiming the price is at the bottom. */
+    const yOf = v => ((geom.H - 2) - (v - 1000) / (2190 - 1000) * (geom.H - 4)).toFixed(2);
     eq('the plan\'s own price is on the chart', geom.markers.filter(m => m.key === 'mine').length, 1);
     eq('...which for this row is the instant sale it recommends', geom.row.strategy, 'imm');
     eq('...at the price it would actually get', geom.markers.find(m => m.key === 'mine').price,
       geom.row.exportPrice);
-    check('...and the scale grew to hold it rather than clipping it',
-      scaleLo <= geom.row.exportPrice, scaleLo + ' vs ' + geom.row.exportPrice);
+    check('...and it is below everything the market has done, so it stubs at the edge',
+      geom.row.exportPrice < 1000 && Number(geom.markers.find(m => m.key === 'mine').x2) === 12,
+      geom.row.exportPrice + ' / ' + geom.markers.find(m => m.key === 'mine').x2);
     eq('the best sell is marked', geom.markers.filter(m => m.key === 'sell').length, 1);
     eq('...at exactly its place on the shared scale',
       geom.markers.find(m => m.key === 'sell').y, yOf(1200));
@@ -2047,7 +2056,12 @@ H.run('sell', async () => {
     check('the list price is not drawn twice when it IS the best sell',
       !geom.markers.some(m => m.key === 'list') && geom.row.L === geom.row.bestSell,
       JSON.stringify(geom.markers));
-    check('markers run the full width', geom.markers.every(m => m.x1 === '0' && Number(m.x2) === geom.W),
+    const inside = geom.markers.filter(m => m.price >= 1000 && m.price <= 2190);
+    check('a marker inside the series runs the full width',
+      inside.length >= 2 && inside.every(m => m.x1 === '0' && Number(m.x2) === geom.W),
+      JSON.stringify(inside));
+    check('...and one outside does not, so the series keeps its own scale',
+      geom.markers.filter(m => m.price < 1000 || m.price > 2190).every(m => Number(m.x2) === 12),
       JSON.stringify(geom.markers));
     eq('a falling market is drawn in red', geom.stroke, 'var(--red)');
     eq('...because that is what the row says it is', geom.row.dir, 'falling');
