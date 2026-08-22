@@ -127,7 +127,7 @@ that is noted.
 | 1 | two typed fields, `patDays` / `patFloor`, presets 7/30/90, default 90/35 |
 | 2 | the `floor 618k` chip: what the block cost, and the one control that changes it |
 | 3 | `reachHalfLife` — as far back as it takes to find one window's worth of trading days |
-| 4 | the history window is the typed one, already so |
+| 4 | the typed history-days field is the ONLY window control: it drives the ESI statistic, the fill model, the recency half-life **and** how much traded volume gets downloaded. I recorded this as "already so" and it was not — a second 30/90/180/365 dropdown was still setting the download depth |
 | 5 | unchanged |
 | 6 | `relistTol` / `relistMax` fields |
 | 7 | already done: the invented 1e6 was gone, the remaining bound is a rule and is named when it bites |

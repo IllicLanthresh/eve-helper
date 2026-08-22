@@ -219,16 +219,33 @@ async function openSell(browser, server, opts) {
   return { context, page, trk, close: () => context.close() };
 }
 
+/* PRICES ONLY. The Fetch prices BUTTON runs both legs now — that is the whole point of
+   it — so the suites below that count tracker requests drive the price leg directly.
+   The button's own two-leg behaviour is pinned in its own section. */
 async function fetchPrices(page) {
   await page.fill('#inv', PASTE);
   await page.dispatchEvent('#inv', 'input');
-  await page.click('#btnEsi');
+  await page.evaluate(() => runEsi());
   await page.waitForFunction(() => !document.getElementById('btnEsi').disabled && !state.esiRunning,
     null, { timeout: 30000 });
 }
 
+/* One window setting for the whole page: the typed history-days field drives both the
+   ESI statistic and how much traded volume gets downloaded. There is no second control. */
+/* the one window control, set the way a person sets it */
+const setWindow = (page, days) => page.evaluate(d => {
+  const el = document.getElementById('histDays');
+  el.value = String(d);
+  el.dispatchEvent(new Event('change'));
+}, days).then(() => page.waitForFunction(d => trkWindowDays() === d, days));
+
 async function refreshVolume(page, windowDays) {
-  await page.selectOption('#trkDays', String(windowDays));
+  await page.evaluate(d => {
+    const el = document.getElementById('histDays');
+    el.value = String(d);
+    el.dispatchEvent(new Event('change'));
+  }, windowDays);
+  await page.waitForFunction(d => trkWindowDays() === d, windowDays);
   await page.waitForFunction(() => !state.trkRunning);
   await page.click('#btnTrk');
   // waits on the run's own flag, never on a clock
@@ -418,7 +435,7 @@ H.run('tracker-model', async () => {
       age: document.getElementById('trkAge').textContent,
       rows: await trkDb.count(),
       cov: await trkDb.meta('coverage'),
-      window: document.getElementById('trkDays').value,
+      window: String(trkWindowDays()),
     }));
     eq('no rows survived the reload', reloaded.rows, 0);
     eq('...nor any record of what was held', reloaded.cov, undefined);
@@ -888,7 +905,7 @@ H.run('tracker-model', async () => {
        FINISHED run, not whichever snapshot happened to resolve last. */
     const s8 = await openSell(browser, server, {});
     await fetchPrices(s8.page);
-    await s8.page.selectOption('#trkDays', '30');
+    await setWindow(s8.page, 30);
     await s8.page.waitForFunction(() => !state.trkRunning);
     await s8.page.click('#btnTrk');
     await s8.page.waitForFunction(() => state.trkRunning === true, null, { timeout: 20000 });
@@ -912,7 +929,7 @@ H.run('tracker-model', async () => {
     section('Clear cancels a refresh in flight');
     const s7 = await openSell(browser, server, {});
     await fetchPrices(s7.page);
-    await s7.page.selectOption('#trkDays', '365');
+    await setWindow(s7.page, 365);
     await s7.page.waitForFunction(() => !state.trkRunning);
     // how many files a year of backfill needs, so "it stopped early" is a real statement
     const planned = await s7.page.evaluate(() =>
@@ -1074,7 +1091,7 @@ H.run('tracker-model', async () => {
        request it was waiting on stayed open. Only a reload escaped. */
     const s13 = await openSell(browser, server, { hang: true });
     await fetchPrices(s13.page);
-    await s13.page.selectOption('#trkDays', '30');
+    await setWindow(s13.page, 30);
     await s13.page.waitForFunction(() => !state.trkRunning);
     await s13.page.click('#btnTrk');
     await s13.page.waitForFunction(() => state.trkRunning === true, null, { timeout: 20000 });
@@ -1112,7 +1129,7 @@ H.run('tracker-model', async () => {
        back, red, "1 failed" — with every other day of the window still landing. */
     const s14 = await openSell(browser, server, { hangFirst: true });
     await fetchPrices(s14.page);
-    await s14.page.selectOption('#trkDays', '30');
+    await setWindow(s14.page, 30);
     await s14.page.waitForFunction(() => !state.trkRunning);
     await s14.page.click('#btnTrk');
     let watchdog = true;
@@ -1189,7 +1206,7 @@ H.run('tracker-model', async () => {
         if (!document.getElementById('btnTrk').disabled) window.__order.push('button');
       }).observe(document.getElementById('btnTrk'), { attributes: true, attributeFilter: ['disabled'] });
     });
-    await s16.page.selectOption('#trkDays', '30');
+    await setWindow(s16.page, 30);
     await s16.page.waitForFunction(() => !state.trkRunning);
     await s16.page.evaluate(() => { window.__order.length = 0; });
     await s16.page.click('#btnTrk');
@@ -1206,15 +1223,66 @@ H.run('tracker-model', async () => {
       String(settledNow));
     await s16.close();
 
+    /* ================= one button, both feeds ======================================== */
+    /* Prices and traded volume are not two errands: the fill model cannot run without the
+       tracker's sell-side rate, so a page fetched with one of the two buttons was a page
+       holding half a model. */
+    section('one button fetches everything the model needs');
+    const s18 = await openSell(browser, server, {});
+    await s18.page.fill('#inv', PASTE);
+    await s18.page.dispatchEvent('#inv', 'input');
+    await setWindow(s18.page, 30);
+    const before18 = s18.trk.urls.length;
+    await s18.page.click('#btnEsi');
+    await s18.page.waitForFunction(() => !state.esiRunning && !state.trkRunning
+      && !document.getElementById('btnEsi').disabled && !document.getElementById('btnTrk').disabled,
+      null, { timeout: 120000 });
+    const got18 = await s18.page.evaluate(() => ({
+      priced: state.esi.size,
+      tracked: state.trk && state.trk.held,
+      rows: state.rows.length,
+      withVol: state.rows.filter(r => r.volState === 'tracker').length,
+    }));
+    check('one press priced the inventory', got18.priced > 0, JSON.stringify(got18));
+    check('...and downloaded traded volume in the same press',
+      s18.trk.urls.length > before18, `${before18} -> ${s18.trk.urls.length}`);
+    check('...so the rows come out with a station-measured rate, not just ESI regional',
+      got18.withVol > 0, JSON.stringify(got18));
+    eq('...and the tracker holds the window the history field asked for', got18.tracked, 30);
+    await s18.close();
+
+    /* A player structure has no Adam4EVE coverage, so the second leg must not fire and
+       spend 20+ MB on data that cannot be used. */
+    section('...and skips the volume leg where there is no coverage to fetch');
+    const s19 = await openSell(browser, server, {});
+    await s19.page.fill('#inv', PASTE);
+    await s19.page.dispatchEvent('#inv', 'input');
+    const before19 = s19.trk.urls.length;
+    await s19.page.evaluate(() => {
+      // pretend the selected market is a structure: the tracker covers NPC hubs only
+      window.hub = () => ({ label: 'Test Structure', region: 10000002, structure: 1234567890,
+                            station: null });
+    });
+    await s19.page.evaluate(() => runFetch().catch(() => {}));
+    await s19.page.waitForFunction(() => !state.esiRunning && !state.trkRunning, null, { timeout: 60000 });
+    eq('no traded-volume request was made for an uncovered market',
+      s19.trk.urls.length, before19);
+    await s19.close();
+
     /* ================= what the download costs, before it is made ==================== */
     section('the page states the size of the download it is about to make');
     const s17 = await openSell(browser, server, {});
+    // the button carries the quote once there is an inventory to fetch for
+    await s17.page.fill('#inv', PASTE);
+    await s17.page.dispatchEvent('#inv', 'input');
+    await s17.page.waitForFunction(() => !document.getElementById('btnEsi').disabled);
     const quoted = await s17.page.evaluate(() => ({
-      window: document.getElementById('trkDays').title,
+      days: trkWindowDays(),
+      fetch: document.getElementById('btnEsi').title,
+      histDays: document.getElementById('histDays').title,
       btn: document.getElementById('btnTrk').title,
       ord: document.getElementById('btnOrdTrk').title,
       feeds: document.querySelector('#trkAge').parentElement.title,
-      opts: [...document.getElementById('trkDays').options].map(o => o.title),
       notes: (() => {
         const c = document.body.cloneNode(true);
         for (const x of c.querySelectorAll('script, style')) x.remove();   // copy, not code
@@ -1231,18 +1299,24 @@ H.run('tracker-model', async () => {
         out[d] = trkMb(trkWireBytes(trkPlanJobs({ v: 1, days: {} }, {}, d, now)));
       return out;
     });
-    check('the window control prices every setting it offers',
-      [30, 90, 180, 365].every(d => quoted.window.includes(`${d}d ${priced[d]} MB`)),
-      quoted.window + ' | ' + JSON.stringify(priced));
+    /* The quote follows the ONE window setting, so it has to be priced for whatever is
+       typed rather than for an enumerated list that no longer exists. */
+    check('the fetch button prices the download it is about to make',
+      quoted.fetch.includes(`${priced[quoted.days]} MB gzipped for ${quoted.days}d`),
+      quoted.fetch + ' | ' + JSON.stringify(priced));
     check('...at the measured size of a gzipped weekly file, not a guess',
       priced[90] >= 55 && priced[90] <= 70 && priced[365] > 200,
       JSON.stringify(priced));
-    check('...and every option carries its own figure',
-      quoted.opts.every(t => / MB gzipped$/.test(t)), JSON.stringify(quoted.opts));
+    check('...and says it fetches both feeds, not just prices',
+      /ESI/.test(quoted.fetch) && /Adam4EVE/.test(quoted.fetch), quoted.fetch);
+    check('the history-days field says it drives the download too',
+      quoted.histDays.includes(`${priced[quoted.days]} MB gzipped for ${quoted.days}d`)
+        && /how far back/.test(quoted.histDays), quoted.histDays);
     check('both Refresh buttons quote the rule behind those figures',
-      /4\.76 MB gzipped per week/.test(quoted.btn) && quoted.btn === quoted.ord, quoted.btn);
+      /per week of history: 4\.76 MB/.test(quoted.btn) && quoted.btn === quoted.ord, quoted.btn);
     check('the feeds line quotes the first run in bytes and rows',
-      quoted.feeds.includes(`${priced[90]} MB`) && /2\.1 M rows/.test(quoted.feeds), quoted.feeds);
+      quoted.feeds.includes(`${priced[quoted.days]} MB`) && /rows: [\d.]+ M/.test(quoted.feeds),
+      quoted.feeds);
     check('the notes state the real row count, not "a few hundred thousand"',
       /2\.1 million rows/.test(quoted.notes) && !/few hundred thousand/.test(quoted.notes),
       (quoted.notes.match(/[^.]*million rows[^.]*/) || ['(absent)'])[0]);

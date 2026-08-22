@@ -79,6 +79,8 @@
   #tbl input.oddsin{width:52px;padding:1px 3px;font-size:11px;text-align:right;
     background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:3px}
   #tbl input.oddsin.pinned{border-color:var(--violet);color:var(--violet)}
+  /* the odds a refused listing missed: the number that explains an INSTANT verdict */
+  #tbl td.blocked{color:var(--amber)}
   #tbl tbody tr.a>td.tick,#tbl tbody tr.a>td.pos{border-bottom:1px solid #1a2233;
     vertical-align:middle;text-align:center}
   #tbl tbody tr.a:hover>td,#tbl tbody tr.a:hover+tr.b>td{background:#141b28}
@@ -326,13 +328,6 @@
       <legend>traded volume</legend>
       <div class="grow">
         <button id="btnTrk" type="button" title="download traded volume from Adam4EVE (no login)&#10;first run: about 4.8 MB gzipped per week of history&#10;measured: 4,756,781 B per weekly file on the wire">Refresh volume</button>
-        <label for="trkDays" style="margin:0">window</label>
-        <select id="trkDays" style="width:70px" title="how much history to hold&#10;more days: a steadier rate&#10;first run: 30d 21 MB · 90d 62 MB · 180d 124 MB · 365d 248 MB">
-          <option value="30">30d</option>
-          <option value="90" selected>90d</option>
-          <option value="180">180d</option>
-          <option value="365">365d</option>
-        </select>
         <span id="trkStatus"></span>
       </div>
       <div class="hint" style="margin-top:4px" title="fed by this data:&#10;Sell u/d · Buy u/d · Sell share&#10;90d first run: 62 MB gzipped, 2.1 M rows, a few minutes">feeds: Sell u/d · Buy u/d · Sell share
@@ -386,12 +381,13 @@
           units bought <i>from sell orders</i> are counted apart from units sold <i>to buy orders</i>, per
           station, per day. Only the first kind fills a sell order you leave up. It is an estimate — good
           on slow markets, weaker on fast ones — and it covers the five NPC hubs only. <b>Refresh volume</b>
-          downloads it into your browser (no login); the line beside the button says how much history is
-          held and how old it is. A first run over 90 days downloads 13 weekly files —
-          about 62 MB gzipped, 2.1 million rows kept at the five hubs — and takes a couple of minutes;
-          closing the tab keeps every day already stored. The window control quotes the download for
-          each setting: 30d 21 MB, 90d 62 MB, 180d 124 MB, 365d 248 MB. Nothing is fetched until you
-          ask for it, and with no cache the page falls back to the regional <b>Vol/day</b> above.</li>
+          comes down with the prices, on the one <b>Fetch prices</b> button (no login); the line beside
+          it says how much history is held and how old it is. How far back is the <b>history days</b>
+          field — one setting for the whole page — and the button's tooltip quotes what pressing it
+          will download before you press it. A first run over 90 days is 13 weekly files, about
+          62 MB gzipped and 2.1 million rows kept at the five hubs, and takes a couple of minutes.
+          A market with no Adam4EVE coverage — any player structure — skips that leg entirely, and
+          the page falls back to the regional <b>Vol/day</b> above.</li>
       <li>Flags, hover any for its numbers: <span class="flag warn">▼x%/wk</span> falling trend ·
           <span class="flag warn">suspect</span> top buy above best sell (thin/odd market) ·
           <span class="flag warn">≫hist</span>/<span class="flag warn">≪hist</span> best sell far from the
@@ -1152,10 +1148,11 @@ async function a4eFetch(url){
   throw new Error('tracker retries exhausted');
 }
 
-const trkWindowDays = () => {
-  const v = parseInt($('trkDays') ? $('trkDays').value : '90', 10);
-  return Number.isFinite(v) && v > 0 ? v : 90;
-};
+/* ONE window setting for the whole page. The traded-volume feed used to carry its own
+   30/90/180/365 dropdown beside the typed history-days field, so the two halves of the
+   same question — how far back does this tool look — were set in two places and could
+   disagree. Decision 4: the number the owner types is the number that gets downloaded. */
+const trkWindowDays = () => currentHistDays();
 
 function trkExpected404(day, now){
   const today = isoDayUTC(now);
@@ -1210,31 +1207,36 @@ const trkMb = b => Math.round(b / 1e6);
 /* What each setting costs, priced by the planner itself against an empty cache, so the
    figures on the controls cannot drift from the constants above or from the rule that
    decides between a weekly file and seven dailies. Written once, at load. */
+/* The quote follows the typed window, so it is recomputed whenever that changes rather
+   than written once at load. It has to be RIGHT rather than decorative: 400 days — which
+   the history field allows — is ~58 weekly files, and the old copy's largest figure was
+   for 365. The one button says what pressing it costs, before it is pressed. */
 function trkQuoteWindows(){
-  const sel = $('trkDays');
-  if (!sel) return;
   const now = new Date();
-  const per = [...sel.options].map(o => {
-    const jobs = trkPlanJobs({ v: 1, days: {} }, {}, +o.value, now);
-    const mb = trkMb(trkWireBytes(jobs));
-    o.title = `first run: about ${mb} MB gzipped`;
-    return `${o.textContent} ${mb} MB`;
-  });
-  sel.title = 'how much history to hold\nmore days: a steadier rate\nfirst run: ' + per.join(' · ');
+  const days = trkWindowDays();
+  const jobs = trkPlanJobs({ v: 1, days: {} }, {}, days, now);
+  const mb = trkMb(trkWireBytes(jobs));
+  const rows = jobs.reduce((n, j) => n + TRK_ROWS_PER_WEEK * j.days.length / 7, 0);
   const weekly = (TRK_WIRE_WEEKLY_B / 1e6).toFixed(2);
+  const cost = `traded volume: about ${mb} MB gzipped for ${days}d`
+    + `\nrows: ${(rows / 1e6).toFixed(1)} M`
+    + `\nper week of history: ${weekly} MB`
+    + '\nsource: Adam4EVE, no login'
+    + '\nhubs: the five NPC stations only';
+  const b = $('btnEsi');
+  if (b) b.title = 'books and history from ESI, then traded volume from Adam4EVE'
+    + '\nno login for either'
+    + `\n${cost}`;
   for (const id of ['btnTrk', 'btnOrdTrk']){
-    const b = $(id);
-    if (b) b.title = 'download traded volume from Adam4EVE (no login)'
-      + `\nmeasured: ${weekly} MB gzipped per week of history`;
+    const t = $(id);
+    if (t) t.title = cost;
   }
+  const hd = $('histDays');
+  if (hd) hd.title = 'how far back everything looks: the ESI history statistic, the fill'
+    + ' model, the recency half-life, and how much traded volume gets downloaded'
+    + `\n${cost}`;
   const feeds = $('trkAge') && $('trkAge').parentElement;
-  if (feeds){
-    const jobs90 = trkPlanJobs({ v: 1, days: {} }, {}, 90, now);
-    const rows = jobs90.reduce((n, j) => n + TRK_ROWS_PER_WEEK * j.days.length / 7, 0);
-    feeds.title = 'fed by this data:\nSell u/d · Buy u/d · Sell share'
-      + `\n90d first run: ${trkMb(trkWireBytes(jobs90))} MB, `
-      + `${(rows / 1e6).toFixed(1)} M rows, a few minutes`;
-  }
+  if (feeds) feeds.title = 'fed by this data:\nSell u/d · Buy u/d · Sell share\n' + cost;
 }
 
 /* ---------- the refresh ------------------------------------------------------------
@@ -2545,7 +2547,8 @@ function rebuild(keepChecks = true){
   state.invCount = inv.size;
   if (!state.esiRunning){
     $('btnEsi').disabled = !inv.size;
-    $('btnEsi').title = inv.size ? '' : 'paste an inventory first';
+    // with something to fetch, the button says what pressing it downloads (trkQuoteWindows)
+    if (inv.size) trkQuoteWindows(); else $('btnEsi').title = 'paste an inventory first';
   }
   const broker = feePct('brokerFee');
   const tax    = feePct('salesTax');
@@ -2695,12 +2698,15 @@ function rebuild(keepChecks = true){
                          { histDays, tracker: trk, volDay })
         : null;
       const p = out ? out.frac : null;
-      // the Fill est. column stays the plain queue-over-volume divide it has always been;
-      // the value below uses the model's own clearing time, which prices the queue level
-      // by level instead of dividing by one pooled rate
-      const fillDays = listQty > 0 ? daysToFillAt(sellLevels, price, volDay) : null;
-      const dFill = out && out.expDays != null ? Math.min(Math.max(out.expDays, 0.5), pat.days)
-        : fillDays != null ? Math.min(Math.max(fillDays, 0.5), pat.days) : pat.days / 2;
+      /* ONE clearing time, not two that contradict each other. The Fill est. column used
+         to be a plain queue ÷ volume divide against ESI's REGIONAL rate (both sides of the
+         book, every station) while the value below used the model's own walk against the
+         tracker's SELL-SIDE rate at this station. On a real Jita row those two differed by
+         28x — the column said "<1d" about a listing the model priced as never filling.
+         The model's own number wins where it exists; the divide is the fallback. */
+      const queueDivide = listQty > 0 ? daysToFillAt(sellLevels, price, volDay) : null;
+      const fillDays = out && out.expDays != null ? out.expDays : queueDivide;
+      const dFill = fillDays != null ? Math.min(Math.max(fillDays, 0.5), pat.days) : pat.days / 2;
       const days = listQty <= 0 ? 0
         : p == null ? (fillDays != null ? Math.max(fillDays, 0.5) : null)
         : p * dFill + (1 - p) * pat.days;
@@ -2790,8 +2796,14 @@ function rebuild(keepChecks = true){
     const totalNet = strategy === 'imm' ? netInstant : chosen.net;
     const exportPrice = strategy === 'imm' ? inst.marginal : chosen.price;
     const advTotal = (netOrder != null) ? netOrder - netInstant : null;
-    const fillDays = chosen ? chosen.fillDays : null;
+    /* THE NUMBER THAT DECIDES A BLOCKED ROW HAS TO BE ON THE ROW. An INSTANT row has no
+       chosen listing, so every chosen-derived cell was an em dash — the row said "the
+       floor blocked something worth 605k" and then hid the odds that missed the floor,
+       which is the one figure that explains the verdict. When a listing was refused, the
+       Fill cell reports ITS odds against the floor instead of going blank. */
+    const fillDays = chosen ? chosen.fillDays : (floorBest ? floorBest.fillDays : null);
     const fillChance = chosen ? chosen.p : null;
+    const blockedP = chosen ? null : (floorBest ? floorBest.p : null);
     const fillBound = chosen ? chosen.bound : null;
     const fillPAny = chosen ? chosen.pAny : null;
     const perSlot = chosen ? chosen.perSlot : null;
@@ -2882,7 +2894,8 @@ function rebuild(keepChecks = true){
       volSell, volBuy, capture, volSrc: trk ? 'tracker' : 'esi',
       volUnitsSell, volUnitsBuy, volHeldDays, volState,
       netInstant, netOrder, strategy, totalNet, exportPrice, advTotal,
-      fillDays, fillChance, fillBound, fillPAny, perSlot, trendPctWk, dir, pctRank, brokerEffPct,
+      fillDays, fillChance, fillBound, fillPAny, perSlot, blockedP, minFill: pat.minFill,
+      trendPctWk, dir, pctRank, brokerEffPct,
       instLegNet, orderLegNet, legMarginal: ordFill ? ordFill.marginal : null,
       splitFill: ordFill ? ordFill.filled : 0, instFill: inst.filled,
       histRows: e.hist || null,
@@ -3647,9 +3660,13 @@ function render(){
       ['exportPrice', 'num', fmtShort(r.exportPrice), priceCopy(r.exportPrice), exactTip(r.exportPrice)],
       ['volDay', 'num', r.volDay == null ? '—' : fmtShort(r.volDay) + '/d',
        r.volDay == null ? '' : String(Math.round(r.volDay * 100) / 100), exactTip(r.volDay)],
-      ['fillChance', 'num', pcBound(r.fillChance, r.fillBound),
-       r.fillChance == null ? '' : (r.fillChance * 100).toFixed(1),
-       r.strategy === 'imm' ? 'INSTANT: nothing is listed' : r.why, r.oddsTarget != null],
+      ['fillChance', 'num',
+       r.fillChance != null ? pcBound(r.fillChance, r.fillBound)
+         : r.blockedP != null ? `${pc(r.blockedP)}<${pc(r.minFill)}` : '—',
+       r.fillChance != null ? (r.fillChance * 100).toFixed(1)
+         : r.blockedP != null ? (r.blockedP * 100).toFixed(1) : '',
+       r.strategy === 'imm' && r.blockedP == null ? 'INSTANT: nothing is listed' : r.why,
+       r.oddsTarget != null, r.fillChance == null && r.blockedP != null ? 'blocked' : ''],
       ['totalNet', 'num', fmtShort(r.totalNet), priceCopy(r.totalNet), exactTip(r.totalNet)],
     ]){
       const td = document.createElement('td'); td.className = cls; td.textContent = text;
@@ -3658,6 +3675,9 @@ function render(){
       if (title) td.title = title;
       tr.appendChild(td);
     }
+    // a refused listing's odds are not this row's fill: they are why it has none
+    if (r.fillChance == null && r.blockedP != null)
+      tr.querySelector('[data-cell="fillChance"]').classList.add('blocked');
     /* Pricing FOR a chance makes the chance the input, so the cell becomes one. Typing a
        number here nudges this row alone; clearing it hands the row back to the global
        target, and the row says which of the two it is on. */
@@ -4174,10 +4194,13 @@ async function fetchHistory(typeId, h){
                           highest: d.highest, lowest: d.lowest, orders: d.order_count }));
 }
 
+/* Returns true when the fetch actually ran. The guards below refuse politely and return
+   false, which is what stops the single button from starting a 60 MB volume download
+   behind a "paste an inventory first". */
 async function runEsi(){
-  if (state.esiRunning) return;
+  if (state.esiRunning) return false;
   const inv = parseInventory($('inv').value);
-  if (!inv.size){ $('esiStatus').textContent = 'paste an inventory first'; $('esiStatus').className = 'err'; return; }
+  if (!inv.size){ $('esiStatus').textContent = 'paste an inventory first'; $('esiStatus').className = 'err'; return false; }
   const withHist = $('histOn').checked;
   const h = hub();
 
@@ -4185,12 +4208,12 @@ async function runEsi(){
     if (!window.EveAuth || !EveAuth.isLoggedIn()){
       $('esiStatus').textContent = "log in with EVE — structure market";
       $('esiStatus').className = 'err';
-      return;
+      return false;
     }
     if (!EveAuth.tokenScopes().includes(STRUCTURE_MARKET_SCOPE)){
       $('esiStatus').textContent = scopeHelp([STRUCTURE_MARKET_SCOPE]);
       $('esiStatus').className = 'err';
-      return;
+      return false;
     }
   }
 
@@ -4274,6 +4297,7 @@ async function runEsi(){
     fill.classList.remove('ind'); fill.style.width = '0%';
     if (token === state.esiToken) rebuild();
   }
+  return true;
 }
 
 
@@ -5510,7 +5534,6 @@ function persist(){
       histMode: $('histMode').value, histDays: $('histDays').value,
       patDays: $('patDays').value, patFloor: $('patFloor').value,
       relistTol: $('relistTol').value, relistMax: $('relistMax').value,
-      trkDays: $('trkDays').value,
       mode: state.mode, ordShowBuy: state.ordShowBuy, relistPct: relistOverride,
       ordFilterVerdict: state.ordFilterVerdict,
       ticked,
@@ -5567,8 +5590,7 @@ function restore(){
     state.ordFilterVerdict = saved.ordFilterVerdict;
     $('ordFltVerdict').value = state.ordFilterVerdict;
   }
-  if (saved.trkDays && [...$('trkDays').options].some(o => o.value === String(saved.trkDays)))
-    $('trkDays').value = String(saved.trkDays);
+  // saved.trkDays is from the era of a second window control; it is simply not read
   /* Old saved state carried a mode name. The window it stood for is still meaningful, so
      it is honoured; the floor that came with it is not, because the floor is now the
      owner's to set and the default is the one they chose. */
@@ -5645,7 +5667,7 @@ if (window.EveStructures) EveStructures.subscribe(ev => {
 });
 
 $('inv').addEventListener('input', () => { rebuild(); trkMemoSoon(); });
-for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'srcOdds', 'oddsTarget', 'histMode', 'histDays',
+for (const id of ['brokerFee', 'salesTax', 'undercut', 'decSep', 'srcSell', 'srcHist', 'srcOdds', 'oddsTarget', 'histMode',
                   'patDays', 'patFloor', 'relistTol', 'relistMax'])
   // patience, fees and the history window re-rank BOTH modes locally, with no refetch
   $(id).addEventListener('change', () => { rebuild(); ordRecompute(); });
@@ -5682,14 +5704,27 @@ $('btnClear').addEventListener('click', () => {
   $('esiStatus').textContent = '';
   rebuild(false);
 });
-$('btnEsi').addEventListener('click', runEsi);
+/* ONE BUTTON. Prices and traded volume are not two errands: the fill model cannot run
+   without the tracker's sell-side rate, so a page fetched with one of the two buttons was
+   a page holding half a model. Fetch prices now runs both, in order, and the tracker leg
+   is SKIPPED where it could not be used anyway — a player structure has no Adam4EVE
+   coverage, so there is nothing to download for it. The separate buttons stay for a
+   volume-only refresh; they are no longer the way to get a working page. */
+async function runFetch(){
+  if (!await runEsi()) return;                          // a guard refused: no prices, no volume
+  if (!TRACKED_HUBS.has(hub().station || 0)) return;    // a structure has no tracker coverage
+  await runTracker();
+}
+$('btnEsi').addEventListener('click', runFetch);
 $('btnTrk').addEventListener('click', runTracker);
 $('btnOrdTrk').addEventListener('click', runTracker);
-/* Shrinking the window does NOT delete rows: they cost nothing to keep and re-downloading
-   them is the expensive part, so it only narrows what the model reads. Growing it makes
-   the extra weeks missing on the next refresh. */
-$('trkDays').addEventListener('change', async () => {
+/* The window is the typed history-days field now, so changing it re-reads the tracker
+   with the new span and re-quotes what a refresh would cost. Shrinking does NOT delete
+   rows — they cost nothing to keep and re-downloading them is the expensive part — so it
+   only narrows what the model reads. Growing makes the extra weeks missing next refresh. */
+$('histDays').addEventListener('change', async () => {
   persist();
+  trkQuoteWindows();
   await loadTrackerMemo();
   rebuild();
   ordRecompute();
