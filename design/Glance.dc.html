@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Glance</title>
+<script src="./support.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .board{padding:20px 22px}
+  .hd{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .hd h1{margin:0;font-size:15px;letter-spacing:.6px;text-transform:uppercase;color:var(--cyan)}
+  .hd .sub{color:var(--dim);font-size:12px}
+  .rule{height:1px;background:var(--line);margin:10px 0 14px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  u1,sig,rate,shr,mul{font-style:normal;font-family:var(--mono);color:var(--dim);font-size:.82em;
+    margin-left:2px;letter-spacing:.2px}
+  .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
+  .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
+  .g{position:relative;width:64px;height:5px;background:#1a2233;border-radius:3px;overflow:visible;display:inline-block;vertical-align:middle}
+  .g>b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--green)}
+  .g>b.no{background:var(--amber)}
+  .g>i{position:absolute;top:-3px;bottom:-3px;width:1px;background:#e7edf7}
+  .g>i::after{content:'';position:absolute;top:-3px;left:-2px;border-left:2.5px solid transparent;
+    border-right:2.5px solid transparent;border-top:3px solid #e7edf7}
+  .board{width:1040px;height:845px;background:var(--bg)}
+  .pair{display:grid;grid-template-columns:400px 34px 1fr;gap:14px;align-items:start;
+    padding:14px 0;border-bottom:1px solid #1a2233}
+  .pair:last-child{border-bottom:none}
+  .caps{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px;margin-bottom:5px}
+  .caps b{color:var(--red);font-weight:600}
+  .caps i{color:var(--green);font-style:normal;font-weight:600}
+  .tip{background:#1b2434;border:1px solid #2e3b52;border-radius:5px;padding:7px 9px;
+    font:11.5px/1.55 var(--mono);color:#c6cfdd;white-space:pre-line}
+  .arrow{align-self:center;text-align:center;color:#3c4a63;font-size:22px;padding-top:18px}
+  .w{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 11px}
+  .w .wt{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+  .w .wn{font-family:var(--mono);font-size:12px}
+  .big{font-family:var(--mono);font-size:26px;line-height:1;font-variant-numeric:tabular-nums}
+  .amb{color:var(--amber)} .grn{color:var(--green)} .red{color:var(--red)} .dimv{color:var(--dim)}
+  .cy{color:var(--cyan)}
+  .gauge{position:relative;height:9px;background:#1a2233;border-radius:4px;margin:9px 0 4px}
+  .gauge>b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--amber)}
+  .gauge>b.ok{background:var(--green)}
+  .gauge>i{position:absolute;top:-4px;bottom:-4px;width:1px;background:#e7edf7}
+  .gauge>i::after{content:'';position:absolute;top:-4px;left:-3px;border-left:3px solid transparent;
+    border-right:3px solid transparent;border-top:4px solid #e7edf7}
+  .gscale{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:#5d6b80}
+  .kv{display:flex;justify-content:space-between;font-size:12px;line-height:1.75}
+  .kv .lbl{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.7px}
+  .kv .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .cov{position:relative;height:18px;background:#1a2233;border-radius:3px;overflow:hidden;margin:6px 0 3px}
+  .cov>b{position:absolute;left:0;top:0;bottom:0;background:#2a5c73}
+  .cov>span{position:absolute;top:0;bottom:0;display:flex;align-items:center;
+    font-family:var(--mono);font-size:10.5px;padding:0 6px}
+  .band{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:9px}
+  .band>i{display:block}
+  .bandlab{display:flex;font-family:var(--mono);font-size:9.5px;color:#5d6b80;margin-top:2px}
+  .marker{position:relative;height:2px;background:#2c3a52;margin:34px 0 30px}
+  .marker>u{position:absolute;top:-5px;width:2px;height:12px;background:var(--cyan);font-style:normal}
+  .marker>u.hi{background:var(--violet)} .marker>u.lo{background:var(--dim)} .marker>u.pat{background:var(--green)}
+  .marker>u>em{position:absolute;left:50%;transform:translateX(-50%);font-style:normal;white-space:nowrap;
+    font-family:var(--mono);font-size:10.5px;color:var(--text);top:-30px;text-align:center;line-height:1.25}
+  .marker>u>em s{display:block;text-decoration:none;color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.7px}
+  .marker>u.dn>em{top:16px}
+  .ends{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:#5d6b80}
+  .minirow{display:flex;gap:6px}
+  .mc{flex:1;border:1px solid var(--line);border-radius:5px;background:#0d121b;padding:5px 6px}
+  .mc.won{border-color:#2a6b4d;background:#0f1b19;box-shadow:inset 3px 0 0 var(--green)}
+  .mc.blk{box-shadow:inset 3px 0 0 #6b571f}
+  .mc .k{display:block;margin-bottom:2px}
+  .mc .p{font-family:var(--mono);font-size:12px}
+  .mc .n{font-family:var(--mono);font-size:11px;color:#aab6c8}
+  .mc .d{font-family:var(--mono);font-size:11px}
+  .split2{display:flex;height:16px;border-radius:3px;overflow:hidden;margin-top:8px}
+  .split2>i{display:flex;align-items:center;justify-content:center;font-family:var(--mono);
+    font-size:10px;color:#0b0e14;font-weight:600;font-style:normal}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="hd"><h1>Tooltips &rarr; glanceable widgets</h1>
+    <span class="sub">same numbers, no reading &mdash; each replacement fits where the chip already sits</span></div>
+  <div class="rule"></div>
+
+  <div class="pair">
+    <div><div class="caps"><b>before</b> &mdash; hover the <span style="font-family:var(--mono)">floor 581k</span> chip</div>
+      <div class="tip">blocked at: 239,000
+vs plan taken: +580,527.08 ISK
+odds: 54%
+floor: 55%
+fee at risk: 82,455 ISK</div></div>
+    <div class="arrow">&rarr;</div>
+    <div><div class="caps"><i>after</i> &mdash; odds against your floor, always visible</div>
+      <div class="w">
+        <div class="wt"><span class="wn"><span class="badge ord">LIST</span> &nbsp;239,000<u1>/u</u1></span>
+          <span class="wn amb">BLOCKED &nbsp;&minus;1 pt</span></div>
+        <div style="display:flex;align-items:flex-end;gap:22px">
+          <div style="flex:1">
+            <div class="gauge"><b style="width:54%"></b><i style="left:55%"></i></div>
+            <div class="gscale"><span>0%</span><span>floor 55%</span><span>100%</span></div>
+          </div>
+          <div style="text-align:right"><div class="big amb">54<shr>%</shr></div>
+            <div class="caps" style="margin:3px 0 0">of 23u sold in 90d</div></div>
+        </div>
+        <div class="kv"><span class="lbl">worth vs plan taken</span><span class="num grn">+581,949<sig>&Sigma;</sig></span></div>
+        <div class="kv"><span class="lbl">broker at risk</span><span class="num red">82,455<sig>&Sigma;</sig></span></div>
+      </div></div>
+  </div>
+
+  <div class="pair">
+    <div><div class="caps"><b>before</b> &mdash; hover the <span style="font-family:var(--mono)">vol &times;2.15</span> chip</div>
+      <div class="tip">tracker: 72,689 u
+ESI region: 156,611 u
+days: 120
+correction: &times;2.15 on units/day
+sell share: uncorrected</div></div>
+    <div class="arrow">&rarr;</div>
+    <div><div class="caps"><i>after</i> &mdash; how much of the trade the tracker actually saw</div>
+      <div class="w">
+        <div class="wt"><span class="wn">tracker coverage &middot; 120<rate>d</rate></span>
+          <span class="big cy">&times;2.15</span></div>
+        <div class="cov"><b style="width:46.4%"></b>
+          <span style="left:0;color:#cfeefb">A4E 72,689<u1>u</u1></span>
+          <span style="right:0;color:var(--dim)">ESI region 156,611<u1>u</u1></span></div>
+        <div class="gscale"><span>saw 46%</span><span>missed 54%</span></div>
+        <div class="band">
+          <i style="width:25%;background:var(--green)"></i><i style="width:25%;background:#3f7a5c"></i>
+          <i style="width:25%;background:var(--amber)"></i><i style="width:25%;background:var(--red)"></i></div>
+        <div class="bandlab"><span style="width:25%">&times;1.0</span><span style="width:25%">&times;1.5</span>
+          <span style="width:25%">&times;3 &#9660; trust falls</span><span style="width:25%;text-align:right">&times;6</span></div>
+        <div class="kv" style="margin-top:5px"><span class="lbl">applied to</span><span class="num">units/day only</span></div>
+        <div class="kv"><span class="lbl">sell share</span><span class="num dimv">uncorrected &mdash; ratio cancels</span></div>
+      </div></div>
+  </div>
+
+  <div class="pair">
+    <div><div class="caps"><b>before</b> &mdash; hover the plan badge</div>
+      <div class="tip">INSTANT 4,618,095.25 ISK net &middot; 23 u &middot; certain &middot; no fee, no slot
+rank: p81 of 60d &middot; trend: +1.0%/wk (flat)
+patient 280,800: 100% of 90d windows carried to today &middot; raw 93% &hellip;
+skip 239,000: 54% &lt; 55% floor (90d &middot; 55%) &middot; 12 of 23 u sells &hellip;
+skip 280,800: 0% &lt; 55% floor (90d &middot; 55%) &middot; 0 of 23 u sells &hellip;</div></div>
+    <div class="arrow">&rarr;</div>
+    <div><div class="caps"><i>after</i> &mdash; the three plans, on the row, no hover</div>
+      <div class="minirow">
+        <div class="mc won"><span class="k">Instant</span><div class="p">207,800<u1>/u</u1></div>
+          <div class="n">4,618,095<sig>&Sigma;</sig></div><div class="d dimv">TAKEN</div></div>
+        <div class="mc blk"><span class="k">List</span><div class="p">239,000<u1>/u</u1></div>
+          <div class="n">5,200,044<sig>&Sigma;</sig></div><div class="d amb">54% &lt; 55%</div></div>
+        <div class="mc blk"><span class="k">Patient</span><div class="p">280,800<u1>/u</u1></div>
+          <div class="n">5,151,589<sig>&Sigma;</sig></div><div class="d amb">0% &lt; 55%</div></div>
+      </div>
+      <div class="caps" style="margin:11px 0 0">and <b style="color:var(--amber)">vs instant +581,949&Sigma;</b> becomes honest &mdash; where the net behind it comes from</div>
+      <div class="split2"><i style="width:55%;background:var(--cyan)">sells 2,868,205&Sigma;</i><i style="width:45%;background:#4d5f7d;color:#dce4f0">give-up 2,414,294&Sigma;</i></div>
+    </div>
+  </div>
+
+  <div class="pair">
+    <div><div class="caps"><b>before</b> &mdash; <span style="font-family:var(--mono)">hist 369k &minus;35.1%</span> and <span style="font-family:var(--mono)">rank p12</span></div>
+      <div class="tip">hist: 369,000
+sell vs hist: &minus;35.1%
+rank: p12 of 60d
+range: 214,000 &ndash; 431,000</div></div>
+    <div class="arrow">&rarr;</div>
+    <div><div class="caps"><i>after</i> &mdash; every price on one axis, 60d traded range</div>
+      <div class="w">
+        <div class="marker">
+          <u class="lo dn" style="left:0%"><em>207,800<s>top buy</s></em></u>
+          <u style="left:11.7%"><em>239,400<s>best sell &middot; p12</s></em></u>
+          <u class="dn" style="left:30.8%"><em>280,800<s>patient anchor</s></em></u>
+          <u style="left:71.4%"><em>369,000<s>hist p50</s></em></u>
+        </div>
+        <div class="ends"><span>214,000<u1>/u</u1> 60d low</span><span>431,000<u1>/u</u1> 60d high</span></div>
+      </div></div>
+  </div>
+</div>
+</body>
+</html>

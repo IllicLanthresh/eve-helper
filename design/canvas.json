@@ -1,0 +1,16 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 690,  "title": "1 · Row, redesigned" },
+    { "file": "Decision.dc.html",   "x": 0,    "y": 830,  "w": 1440, "h": 975,  "title": "2 · Expanded decision ledger" },
+    { "file": "Alternates.dc.html", "x": 0,    "y": 1945, "w": 1440, "h": 640,  "title": "5 · Two alternates" },
+    { "file": "Glance.dc.html",     "x": 1600, "y": 0,    "w": 1040, "h": 845,  "title": "3 · Tooltips → widgets" },
+    { "file": "Spec.dc.html",       "x": 1600, "y": 1100, "w": 1000, "h": 980,  "title": "4 · House rules" }
+  ],
+  "annotations": [
+    { "id": "brief", "x": 0, "y": -230, "w": 700,
+      "text": "THE BRIEF\n\n\"totals mixed with unitary prices · narrative tooltips with a bunch of info that should just be represented at a glance · metrics are just bombarded · I wanna understand, above everything else, the numbers involved in the decisionmaking and the reason it got categorized as x or y or z · ultimately I wanna be able to understand the process so I can catch possible bugs or mistakes when using it\"\n\nStatic mockups, real arithmetic. Every figure below reconciles — substitute and check." },
+    { "id": "reading-order", "x": 1600, "y": -230, "w": 620,
+      "text": "READING ORDER\n\n1 Row, redesigned — what the table looks like\n2 Expanded ledger — the audit trail for one row\n3 Tooltips → widgets — the four you screenshotted\n4 House rules — the rules that make it stay clean\n5 Alternates — two other ways to shape the row\n\nNothing in index.html has changed. Pick a direction first." }
+  ],
+  "launch": { "view": "canvas" }
+}

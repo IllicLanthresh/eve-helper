@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Spec</title>
+<script src="./support.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .board{padding:20px 22px}
+  .hd{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .hd h1{margin:0;font-size:15px;letter-spacing:.6px;text-transform:uppercase;color:var(--cyan)}
+  .hd .sub{color:var(--dim);font-size:12px}
+  .rule{height:1px;background:var(--line);margin:10px 0 14px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  u1,sig,rate,shr,mul{font-style:normal;font-family:var(--mono);color:var(--dim);font-size:.82em;
+    margin-left:2px;letter-spacing:.2px}
+  .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
+  .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
+  .g{position:relative;width:64px;height:5px;background:#1a2233;border-radius:3px;overflow:visible;display:inline-block;vertical-align:middle}
+  .g>b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--green)}
+  .g>b.no{background:var(--amber)}
+  .g>i{position:absolute;top:-3px;bottom:-3px;width:1px;background:#e7edf7}
+  .g>i::after{content:'';position:absolute;top:-3px;left:-2px;border-left:2.5px solid transparent;
+    border-right:2.5px solid transparent;border-top:3px solid #e7edf7}
+  .board{width:1000px;height:980px;background:var(--bg)}
+  .sec{margin-top:15px}
+  .sech{display:flex;align-items:baseline;gap:9px;margin-bottom:7px}
+  .sech .n{font-family:var(--mono);font-size:10px;color:var(--bg);background:var(--cyan);
+    border-radius:3px;padding:0 5px;line-height:15px}
+  .sech h2{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:1.1px;color:var(--text)}
+  .sech .hint{color:var(--dim);font-size:11px}
+  table{border-collapse:collapse;width:956px;table-layout:fixed;font-size:12px}
+  th{text-align:left;padding:5px 8px;background:#182130;border-bottom:1px solid var(--line);
+    font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);font-weight:600}
+  td{padding:6px 8px;border-bottom:1px solid #1a2233;vertical-align:top}
+  td.ex{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+  td.rl{color:var(--dim);font-size:11.5px}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:7px;vertical-align:-1px}
+  .tiers{display:flex;gap:10px}
+  .tier{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 11px}
+  .tier .tn{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px}
+  .tier .tt{font-size:13px;margin:2px 0 6px}
+  .tier ul{margin:0;padding-left:15px;color:#aab6c8;font-size:11.5px;line-height:1.7}
+  .tier.no{box-shadow:inset 3px 0 0 var(--red)}
+  .tier.yes{box-shadow:inset 3px 0 0 var(--green)}
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .rule2{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+  .rule2 .rk{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px}
+  .rule2 .bad{font-family:var(--mono);font-size:11.5px;color:var(--red);text-decoration:line-through;
+    text-decoration-color:#5a2a2f}
+  .rule2 .good{font-family:var(--mono);font-size:11.5px;color:var(--green);margin-top:2px}
+  .dimv{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="hd"><h1>House rules for the redesign</h1>
+    <span class="sub">the four rules the mockups obey &mdash; so a new number has one obvious place to go</span></div>
+  <div class="rule"></div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">1</span><h2>Unit discipline</h2>
+      <span class="hint">a bare number is banned &mdash; every value carries the suffix that says what it is</span></div>
+    <table>
+      <colgroup><col style="width:120px"><col style="width:78px"><col style="width:210px"><col></colgroup>
+      <thead><tr><th>class</th><th>suffix</th><th>example</th><th>rule</th></tr></thead>
+      <tbody>
+        <tr><td>per unit</td><td class="ex"><u1>/u</u1></td><td class="ex">239,000<u1>/u</u1></td>
+          <td class="rl">prices only. Lives in the Book column, never beside a total.</td></tr>
+        <tr><td>stack total</td><td class="ex"><sig>&Sigma;</sig></td><td class="ex">5,200,044<sig>&Sigma;</sig></td>
+          <td class="rl">price &times; qty. Lives in the Outcome column, which has its own background and left rule.</td></tr>
+        <tr><td>rate</td><td class="ex"><rate>/d</rate></td><td class="ex">48.8<rate>u/d</rate> &nbsp; +1.0<rate>%/wk</rate></td>
+          <td class="rl">always names the thing per the time: <span class="ex">u/d</span>, <span class="ex">%/wk</span>, <span class="ex">ISK/slot-d</span>.</td></tr>
+        <tr><td>share</td><td class="ex"><shr>%</shr></td><td class="ex">54<shr>%</shr></td>
+          <td class="rl">gets a bar whenever a threshold exists, with the threshold drawn as a tick.</td></tr>
+        <tr><td>multiplier</td><td class="ex">&times;</td><td class="ex">&times;2.15</td>
+          <td class="rl">gets a confidence band when it is a data-quality signal.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">2</span><h2>Colour carries one meaning each</h2>
+      <span class="hint">no decorative colour anywhere</span></div>
+    <table>
+      <colgroup><col style="width:170px"><col style="width:330px"><col></colgroup>
+      <tbody>
+        <tr><td><span class="sw" style="background:var(--green)"></span>green</td><td class="rl">the plan taken &middot; a gate passed</td>
+          <td class="rl">also the only colour a positive &Delta; may use</td></tr>
+        <tr><td><span class="sw" style="background:var(--amber)"></span>amber</td><td class="rl">blocked &middot; a threshold missed &middot; distrust</td>
+          <td class="rl">never means "bad", means "you set a rule and it bit"</td></tr>
+        <tr><td><span class="sw" style="background:var(--red)"></span>red</td><td class="rl">money leaving: tax, broker, a negative &Delta;</td>
+          <td class="rl">reserved for outflow, never for warnings</td></tr>
+        <tr><td><span class="sw" style="background:var(--cyan)"></span>cyan</td><td class="rl">measured this run &middot; the sells branch</td>
+          <td class="rl">the fetched, verifiable half of any figure</td></tr>
+        <tr><td><span class="sw" style="background:var(--violet)"></span>violet</td><td class="rl">your setting, not the market's</td>
+          <td class="rl">so a number you can change is visibly yours</td></tr>
+        <tr><td><span class="sw" style="background:#4d5f7d"></span>slate</td><td class="rl">the give-up branch &middot; modelled, not observed</td>
+          <td class="rl">deliberately dull: it is the half you did not earn yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">3</span><h2>Three tiers, and hover is not one of them</h2>
+      <span class="hint">nothing that decides a verdict may live behind a pointer</span></div>
+    <div class="tiers">
+      <div class="tier yes"><div class="tn">tier 1 &middot; the row</div><div class="tt">always on screen</div>
+        <ul><li>verdict badge</li><li>all candidates: price, net, odds</li><li>the gate line: floor &rarr; passed &rarr; ranked &rarr; margin</li><li>book, outcome, market, rank</li></ul></div>
+      <div class="tier yes"><div class="tn">tier 2 &middot; expanded</div><div class="tt">one click, scrolls</div>
+        <ul><li>measured inputs with sources</li><li>your settings</li><li>candidate ledger, full width</li><li>branch bars and the evaluated formula</li><li>the gate, step by step</li><li>the chart</li></ul></div>
+      <div class="tier no"><div class="tn">tier 3 &middot; hover</div><div class="tt">exact values only</div>
+        <ul><li>the unrounded figure behind a short one: <span class="ex" style="font-family:var(--mono)">4.62M &rarr; 4,618,095.25</span></li><li>a full item name that was truncated</li><li class="dimv">nothing else. Ever.</li></ul></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">4</span><h2>No sentences</h2>
+      <span class="hint">every string is <span style="font-family:var(--mono)">label + value + unit</span> or <span style="font-family:var(--mono)">a &lt; b</span></span></div>
+    <div class="rules">
+      <div class="rule2"><div class="rk">the floor blocked a listing</div>
+        <div class="bad">54% &lt; 55% floor (90d &middot; 55%) &middot; 12 of 23 u sells</div>
+        <div class="good">odds 54% &nbsp;&#9660;&nbsp; floor 55% &nbsp;&middot;&nbsp; 12/23<u1>u</u1></div></div>
+      <div class="rule2"><div class="rk">why the patient price is worth anything</div>
+        <div class="bad">100% of 90d windows carried to today &middot; raw 93% (the gap is the decay)</div>
+        <div class="good">carry &times;1.1365 &nbsp;&middot;&nbsp; raw 93% &rarr; 100%</div></div>
+      <div class="rule2"><div class="rk">the tracker undercounts</div>
+        <div class="bad">correction: &times;2.15 on units/day &middot; sell share: uncorrected</div>
+        <div class="good">&times;2.15 on u/d &nbsp;&middot;&nbsp; share uncorrected</div></div>
+      <div class="rule2"><div class="rk">the buy book cannot absorb the stack</div>
+        <div class="bad">buy book absorbs: 14 of 23 units</div>
+        <div class="good">depth 14/23<u1>u</u1></div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Decision</title>
+<script src="./support.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .board{padding:20px 22px}
+  .hd{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .hd h1{margin:0;font-size:15px;letter-spacing:.6px;text-transform:uppercase;color:var(--cyan)}
+  .hd .sub{color:var(--dim);font-size:12px}
+  .rule{height:1px;background:var(--line);margin:10px 0 14px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  u1,sig,rate,shr,mul{font-style:normal;font-family:var(--mono);color:var(--dim);font-size:.82em;
+    margin-left:2px;letter-spacing:.2px}
+  .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
+  .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
+  .g{position:relative;width:64px;height:5px;background:#1a2233;border-radius:3px;overflow:visible;display:inline-block;vertical-align:middle}
+  .g>b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--green)}
+  .g>b.no{background:var(--amber)}
+  .g>i{position:absolute;top:-3px;bottom:-3px;width:1px;background:#e7edf7}
+  .g>i::after{content:'';position:absolute;top:-3px;left:-2px;border-left:2.5px solid transparent;
+    border-right:2.5px solid transparent;border-top:3px solid #e7edf7}
+  .board{width:1440px;height:975px;background:var(--bg)}
+  .sec{margin-top:14px}
+  .sech{display:flex;align-items:baseline;gap:9px;margin-bottom:7px}
+  .sech .n{font-family:var(--mono);font-size:10px;color:var(--bg);background:var(--cyan);
+    border-radius:3px;padding:0 5px;line-height:15px}
+  .sech h2{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:1.1px;color:var(--text)}
+  .sech .hint{color:var(--dim);font-size:11px}
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .fact{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px}
+  .fact.set{border-color:#3f3466;background:#141122}
+  .fact .fk{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.8px}
+  .fact .fv{font-family:var(--mono);font-size:15px;margin:1px 0 1px;font-variant-numeric:tabular-nums}
+  .fact .fs{color:#5d6b80;font-size:10px;font-family:var(--mono)}
+  .fact.set .fv{color:var(--violet)}
+  table.ct{border-collapse:collapse;width:1396px;table-layout:fixed;font-size:12px}
+  table.ct th{text-align:right;padding:5px 8px;background:#182130;border-bottom:1px solid var(--line);
+    font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);font-weight:600;white-space:nowrap}
+  table.ct th.l,table.ct td.l{text-align:left}
+  table.ct td{text-align:right;padding:6px 8px;border-bottom:1px solid #1a2233;font-family:var(--mono);
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  table.ct tr.won td{background:#0f1b19}
+  table.ct tr.blk td{background:#161307}
+  table.ct td.st{text-align:center;font-family:inherit}
+  .pill{display:inline-block;font-size:10px;letter-spacing:.6px;padding:1px 7px;border-radius:9px}
+  .pill.ok{color:var(--green);background:#14332a;border:1px solid #2a6b4d}
+  .pill.no{color:var(--amber);background:#3a2f14;border:1px solid #6b571f}
+  .bars{display:grid;grid-template-columns:118px 1fr;gap:6px 12px;align-items:center}
+  .bwrap{display:flex;align-items:center;height:26px;width:100%}
+  .seg{height:22px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);
+    font-size:11px;color:#0b0e14;font-weight:600}
+  .seg.sell{background:var(--cyan)}
+  .seg.give{background:#4d5f7d;color:#dce4f0}
+  .seg.fee{background:var(--red)}
+  .seg.zero{background:#1a2233;color:var(--dim);font-weight:400}
+  .blab{font-family:var(--mono);font-size:12px;color:var(--text);text-align:right}
+  .blegend{display:flex;gap:22px;margin-top:8px;font-size:11px;color:var(--dim);font-family:var(--mono)}
+  .blegend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+  .fx{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px 12px;overflow:hidden}
+  .fx table{border-collapse:collapse;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums}
+  .fx td{padding:2px 7px;white-space:nowrap;text-align:center}
+  .fx tr.term td{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
+  .fx tr.val td{font-size:13px}
+  .fx tr.sum td{color:var(--dim);font-size:11px;padding-top:1px}
+  .fx .op{color:#3c4a63}
+  .fx .grp{border-top:1px solid #3c4a63}
+  .fx .cy{color:var(--cyan)} .fx .gy{color:#93a2ba} .fx .rd{color:var(--red)} .fx .vi{color:var(--violet)}
+  .fx .tot{color:var(--green);font-size:15px}
+  .gates{display:flex;gap:10px;align-items:stretch}
+  .gbox{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:8px 11px}
+  .gbox .gn{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px;margin-bottom:3px}
+  .gbox .gr{font-family:var(--mono);font-size:12px;margin-bottom:4px}
+  .gbox .gio{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .gbox .gio b{color:var(--text);font-weight:400}
+  .gbox.fail{box-shadow:inset 3px 0 0 var(--amber)}
+  .gbox.pass{box-shadow:inset 3px 0 0 var(--green)}
+  .concl{margin-top:10px;display:flex;align-items:center;gap:34px;background:#161307;
+    border:1px solid #6b571f;border-radius:7px;padding:9px 13px}
+  .concl .num{font-size:14px}
+  .concl .cl{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px;display:block}
+  .amb{color:var(--amber)} .grn{color:var(--green)} .red{color:var(--red)} .dimv{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="hd"><h1>Expanded row &middot; decision ledger</h1>
+    <span class="sub">Heavy Afocal Maser I &middot; <span class="num">23</span><u1>u</u1> &middot; Jita IV-4 &mdash;
+      every number the verdict was computed from, in the order it was used</span></div>
+  <div class="rule"></div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">1</span><h2>Measured</h2><span class="hint">fetched this run &mdash; nothing here is a constant</span></div>
+    <div class="facts">
+      <div class="fact"><div class="fk">top buy</div><div class="fv">207,800<u1>/u</u1></div><div class="fs">ESI book &middot; 23u deep</div></div>
+      <div class="fact"><div class="fk">best sell</div><div class="fv">239,400<u1>/u</u1></div><div class="fs">ESI book</div></div>
+      <div class="fact"><div class="fk">history p50</div><div class="fv">369,000<u1>/u</u1></div><div class="fs">ESI region &middot; 90d</div></div>
+      <div class="fact"><div class="fk">patient anchor</div><div class="fv">280,800<u1>/u</u1></div><div class="fs">A4E sell-side &middot; 90d high</div></div>
+      <div class="fact"><div class="fk">sell flow</div><div class="fv">48.8<rate>u/d</rate></div><div class="fs">A4E &times;2.15 corrected</div></div>
+      <div class="fact"><div class="fk">sell share</div><div class="fv">31<shr>%</shr></div><div class="fs">A4E &middot; uncorrected</div></div>
+      <div class="fact"><div class="fk">trend</div><div class="fv">+1.0<rate>%/wk</rate></div><div class="fs">Theil&ndash;Sen 60d &middot; flat</div></div>
+      <div class="fact"><div class="fk">carry over 90d</div><div class="fv">&times;1.1365</div><div class="fs">1.010^(90/7) &middot; inside range</div></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">2</span><h2>Your settings</h2><span class="hint">change one and the ledger below recomputes</span></div>
+    <div class="facts">
+      <div class="fact set"><div class="fk">patience window</div><div class="fv">90<rate>d</rate></div><div class="fs">give-up horizon</div></div>
+      <div class="fact set"><div class="fk">fill floor</div><div class="fv">55<shr>%</shr></div><div class="fs">min share of stack sold</div></div>
+      <div class="fact set"><div class="fk">broker</div><div class="fv">1.50<shr>%</shr></div><div class="fs">min 100 ISK/order</div></div>
+      <div class="fact set"><div class="fk">sales tax</div><div class="fv">3.375<shr>%</shr></div><div class="fs">Accounting V</div></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">3</span><h2>Candidates the engine built</h2>
+      <span class="hint">one line per plan &middot; prices are <u1>/u</u1>, money is <sig>&Sigma;</sig> over 23u</span></div>
+    <table class="ct">
+      <thead><tr>
+        <th class="l" style="width:112px">plan</th>
+        <th style="width:104px">price /u</th>
+        <th style="width:82px">listed u</th>
+        <th style="width:74px">odds</th>
+        <th style="width:88px">vs floor</th>
+        <th style="width:110px">broker &Sigma;</th>
+        <th style="width:126px">sells branch &Sigma;</th>
+        <th style="width:132px">give-up branch &Sigma;</th>
+        <th style="width:128px">net &Sigma;</th>
+        <th style="width:84px">days</th>
+        <th style="width:116px">ISK/slot-d</th>
+        <th style="width:110px">state</th>
+        <th style="width:130px">vs taken &Sigma;</th>
+      </tr></thead>
+      <tbody>
+        <tr class="won"><td class="l"><span class="badge imm">&#9889; INSTANT</span></td>
+          <td>207,800</td><td class="dimv">0</td><td class="grn">100%</td><td class="dimv">n/a</td>
+          <td class="dimv">0</td><td>4,618,095</td><td class="dimv">0</td><td class="grn">4,618,095</td>
+          <td class="dimv">0.0</td><td class="dimv">no slot</td>
+          <td class="st"><span class="pill ok">TAKEN</span></td><td class="dimv">baseline</td></tr>
+        <tr class="blk"><td class="l"><span class="badge ord">LIST</span></td>
+          <td>239,000</td><td>23</td><td class="amb">54%</td><td class="amb">&minus;1 pt</td>
+          <td class="red">&minus;82,455</td><td>+2,868,205</td><td>+2,414,294</td><td>5,200,044</td>
+          <td>63.5</td><td>81,839</td>
+          <td class="st"><span class="pill no">BLOCKED</span></td><td class="grn">+581,949</td></tr>
+        <tr class="blk"><td class="l"><span class="badge pat">PATIENT</span></td>
+          <td>280,800</td><td>23</td><td class="amb">0%</td><td class="amb">&minus;55 pt</td>
+          <td class="red">&minus;96,876</td><td class="dimv">+0</td><td>+5,248,465</td><td>5,151,589</td>
+          <td>90.0</td><td>57,240</td>
+          <td class="st"><span class="pill no">BLOCKED</span></td><td class="grn">+533,494</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">4</span><h2>Where each net comes from</h2>
+      <span class="hint">a plan that never sells can still score well &mdash; the bar says which half you are being paid for &nbsp;&middot;&nbsp; <span style="font-family:var(--mono)">scale 0 &rarr; 5,400,000&Sigma;</span></span></div>
+    <div class="bars">
+      <div class="k" style="text-align:right">INSTANT</div>
+      <div class="bwrap"><div class="seg sell" style="width:85.5%">4,618,095</div></div>
+      <div class="k" style="text-align:right">LIST 239,000</div>
+      <div class="bwrap"><div class="seg sell" style="width:53.1%">2,868,205 &middot; 55%</div><div class="seg give" style="width:44.7%">2,414,294 &middot; 46%</div><div class="seg fee" style="width:1.5%"></div></div>
+      <div class="k" style="text-align:right">PATIENT 280,800</div>
+      <div class="bwrap"><div class="seg give" style="width:97.2%">5,248,465 &middot; 102%</div><div class="seg fee" style="width:1.8%"></div></div>
+    </div>
+    <div class="blegend">
+      <span><i style="background:var(--cyan)"></i>sells = p &times; listed value &times; (1 &minus; tax)</span>
+      <span><i style="background:#4d5f7d"></i>give-up = (1 &minus; p) &times; instant net &times; carry &mdash; you dump it on day 90 anyway</span>
+      <span><i style="background:var(--red)"></i>broker = charged on listing, never refunded</span>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">5</span><h2>The blocked plan, evaluated</h2><span class="hint">LIST at 239,000 &mdash; substitute and check</span></div>
+    <div class="fx">
+      <table>
+        <tr class="term"><td>leg now</td><td></td><td>broker</td><td></td><td>churn</td><td></td><td>p</td><td></td><td>listed value</td><td></td><td>1 &minus; tax</td><td></td><td>1 &minus; p</td><td></td><td>instant net</td><td></td><td>carry</td><td></td><td></td></tr>
+        <tr class="val"><td class="dimv">0</td><td class="op">&minus;</td><td class="rd">82,455</td><td class="op">&minus;</td><td class="dimv">0</td><td class="op">+</td><td class="cy">0.54</td><td class="op">&times;</td><td class="cy">5,497,000</td><td class="op">&times;</td><td class="cy">0.96625</td><td class="op">+</td><td class="gy">0.46</td><td class="op">&times;</td><td class="gy">4,618,095</td><td class="op">&times;</td><td class="gy">1.1365</td><td class="op">=</td><td class="tot">5,200,044<sig>&Sigma;</sig></td></tr>
+        <tr class="sum"><td></td><td></td><td></td><td></td><td></td><td></td><td colspan="5" class="grp cy">2,868,205 &Sigma;</td><td></td><td colspan="5" class="grp gy">2,414,294 &Sigma;</td><td></td><td></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sech"><span class="n">6</span><h2>The gate that produced INSTANT</h2><span class="hint">three steps, in order</span></div>
+    <div class="gates">
+      <div class="gbox fail"><div class="gn">step 1 &middot; fee guard</div>
+        <div class="gr">keep odds &ge; <span class="num">55<shr>%</shr></span></div>
+        <div class="gio">in <b>2</b> &rarr; out <b class="amb">0</b><br>dropped LIST <b>54%</b> &middot; PATIENT <b>0%</b></div></div>
+      <div class="gbox fail"><div class="gn">step 2 &middot; rank survivors</div>
+        <div class="gr">max ISK/slot-day</div>
+        <div class="gio">in <b class="amb">0</b> &rarr; out <b class="amb">0</b><br>nothing to rank</div></div>
+      <div class="gbox fail"><div class="gn">step 3 &middot; beat instant</div>
+        <div class="gr">net &gt; <span class="num">4,618,095<sig>&Sigma;</sig></span></div>
+        <div class="gio">challengers <b class="amb">0</b><br>INSTANT stands unopposed</div></div>
+      <div class="gbox pass"><div class="gn">result</div>
+        <div class="gr"><span class="badge imm">&#9889; INSTANT</span></div>
+        <div class="gio">net <b>4,618,095<sig>&Sigma;</sig></b> &middot; <b>0</b> slot-days<br>certain, no broker fee</div></div>
+    </div>
+    <div class="concl">
+      <span><span class="cl">verdict reached by</span><span class="num amb">walkover &mdash; 0 of 2 listings survived the floor</span></span>
+      <span><span class="cl">best disqualified plan</span><span class="num">LIST 239,000<u1>/u</u1></span></span>
+      <span><span class="cl">it was worth</span><span class="num grn">+581,949<sig>&Sigma;</sig></span></span>
+      <span><span class="cl">it missed by</span><span class="num amb">1 pt &nbsp;&mdash;&nbsp; floor 55% &rarr; 54% takes it</span></span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Alternates</title>
+<script src="./support.js"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --panel2:#0e131d; --line:#232c3d;
+    --text:#d5dce8; --dim:#8b96a8;
+    --cyan:#5bc8e8; --amber:#e8b45b; --green:#6fd08c; --red:#e06c75; --violet:#b48ce8;
+    --mono:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .board{padding:20px 22px}
+  .hd{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .hd h1{margin:0;font-size:15px;letter-spacing:.6px;text-transform:uppercase;color:var(--cyan)}
+  .hd .sub{color:var(--dim);font-size:12px}
+  .rule{height:1px;background:var(--line);margin:10px 0 14px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  u1,sig,rate,shr,mul{font-style:normal;font-family:var(--mono);color:var(--dim);font-size:.82em;
+    margin-left:2px;letter-spacing:.2px}
+  .k{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.9px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+  .badge.imm{background:#3a2f14;color:var(--amber);border:1px solid #6b571f}
+  .badge.ord{background:#12303c;color:var(--cyan);border:1px solid #23566b}
+  .badge.split{background:#2b1f3c;color:var(--violet);border:1px solid #533c74}
+  .badge.pat{background:#14332a;color:var(--green);border:1px solid #2a6b4d}
+  .g{position:relative;width:64px;height:5px;background:#1a2233;border-radius:3px;overflow:visible;display:inline-block;vertical-align:middle}
+  .g>b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--green)}
+  .g>b.no{background:var(--amber)}
+  .g>i{position:absolute;top:-3px;bottom:-3px;width:1px;background:#e7edf7}
+  .g>i::after{content:'';position:absolute;top:-3px;left:-2px;border-left:2.5px solid transparent;
+    border-right:2.5px solid transparent;border-top:3px solid #e7edf7}
+  .board{width:1440px;height:640px;background:var(--bg)}
+  .alt{margin-top:16px}
+  .alth{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}
+  .alth .tag{font-family:var(--mono);font-size:10px;color:var(--bg);background:var(--dim);
+    border-radius:3px;padding:0 6px;line-height:16px}
+  .alth .tag.pick{background:var(--green)}
+  .alth h2{margin:0;font-size:12px;letter-spacing:.5px}
+  .alth .trade{color:var(--dim);font-size:11.5px}
+  table{border-collapse:collapse;width:1396px;table-layout:fixed;font-size:12.5px}
+  thead th{text-align:left;padding:5px 8px;background:#182130;border-bottom:1px solid var(--line);
+    font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);font-weight:600}
+  thead th .unit{color:#5d6b80;font-family:var(--mono);text-transform:none;letter-spacing:0;margin-left:5px}
+  thead th.stackcol{background:#1b2536;border-left:1px solid #2c3a52}
+  tbody td{padding:7px 8px;border-bottom:1px solid #1a2233;vertical-align:middle}
+  tbody td.stackcol{background:#0d121b;border-left:1px solid #2c3a52}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .nm{font-size:12.5px}
+  .qt{color:var(--dim);font-size:11px}
+  .g{position:relative;width:80px;height:6px;background:#1a2233;border-radius:3px;display:inline-block;vertical-align:middle}
+  .g>b{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--green)}
+  .g>b.no{background:var(--amber)}
+  .g>i{position:absolute;top:-3px;bottom:-3px;width:1px;background:#e7edf7}
+  .inl{display:flex;gap:11px;align-items:center;flex-wrap:wrap}
+  .inl .lbl{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.7px;margin-right:3px}
+  .amb{color:var(--amber)} .grn{color:var(--green)} .red{color:var(--red)} .dimv{color:var(--dim)}
+  .track{position:relative;height:8px;background:#141a26;border-radius:4px;margin:20px 0 16px}
+  .track>b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:#1d4536;border-right:2px solid var(--green)}
+  .track>u{position:absolute;top:-4px;width:2px;height:16px;background:var(--amber);font-style:normal}
+  .track>u>em{position:absolute;left:50%;transform:translateX(-50%);font-style:normal;white-space:nowrap;
+    font-family:var(--mono);font-size:10.5px;top:-18px;color:var(--amber);text-align:center}
+  .track>u.dn>em{top:16px}
+  .track>u.e0>em{left:0;transform:none;text-align:left}
+  .track>u.e1>em{left:auto;right:0;transform:none;text-align:right}
+  .track>span{position:absolute;top:-18px;font-family:var(--mono);font-size:10.5px;color:var(--green);white-space:nowrap}
+  .bandrow{display:flex;align-items:stretch;gap:0}
+  .bandcell{padding:0 16px;border-right:1px solid #232c3d}
+  .bandcell:first-child{padding-left:0}
+  .bandcell:last-child{border-right:none}
+  .bandcell.tot{background:#0d121b}
+  .bandcell .bk{color:var(--dim);font-size:9.5px;text-transform:uppercase;letter-spacing:.9px;margin-bottom:2px}
+  .bandcell .bv{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:nowrap}
+  .bandcell .bv em{font-style:normal;color:var(--dim);font-size:10px;text-transform:uppercase;
+    letter-spacing:.6px;display:inline-block;width:96px}
+</style>
+</head>
+<body>
+<div class="board">
+  <div class="hd"><h1>Two alternates for the collapsed row</h1>
+    <span class="sub">same rules, different amount of the decision left on the row</span></div>
+  <div class="rule"></div>
+
+  <div class="alt">
+    <div class="alth"><span class="tag pick">PRIMARY</span><h2>Candidate strip &mdash; see the Main artboard</h2>
+      <span class="trade">all three plans on the row &middot; ~96px per row &middot; nothing to click to know why</span></div>
+  </div>
+
+  <div class="alt">
+    <div class="alth"><span class="tag">ALT A</span><h2>One line &mdash; verdict, margin, odds</h2>
+      <span class="trade">~34px per row, roughly 3&times; the items on screen &middot; the losing plans move into the expanded panel &middot;
+        keeps the near-miss, loses what it was worth without a click</span></div>
+    <table>
+      <colgroup><col style="width:240px"><col style="width:104px"><col style="width:224px"><col style="width:170px">
+        <col style="width:270px"><col style="width:266px"><col style="width:122px"></colgroup>
+      <thead><tr><th>Item</th><th>Plan</th><th>Gate</th><th>Odds</th>
+        <th class="stackcol">Net <span class="unit">&Sigma; &nbsp;&middot;&nbsp; &Delta; vs best alternative</span></th><th>Book <span class="unit">ISK/u</span></th>
+        <th>Rank <span class="unit">/slot-d</span></th></tr></thead>
+      <tbody>
+        <tr><td><span class="nm">Heavy Afocal Maser I</span> <span class="qt num">23<u1>u</u1></span></td>
+          <td><span class="badge imm">&#9889; INSTANT</span></td>
+          <td class="num"><span class="amb">0/2</span> passed floor 55<shr>%</shr></td>
+          <td><span class="g"><b class="no" style="width:54%"></b><i style="left:55%"></i></span>
+            <span class="num amb">&nbsp;54<shr>%</shr></span></td>
+          <td class="stackcol num">4,618,095 <span class="amb">&nbsp;&nbsp;&minus;581,949</span></td>
+          <td class="num">207,800 &middot; 239,400 &middot; 369,000</td>
+          <td class="num dimv">no slot</td></tr>
+        <tr><td><span class="nm">Republic Fleet EMP L</span> <span class="qt num">1,240<u1>u</u1></span></td>
+          <td><span class="badge ord">LIST</span></td>
+          <td class="num"><span class="grn">1/1</span> passed floor 35<shr>%</shr></td>
+          <td><span class="g"><b style="width:92%"></b><i style="left:35%"></i></span>
+            <span class="num grn">&nbsp;92<shr>%</shr></span></td>
+          <td class="stackcol num">152,975 <span class="grn">&nbsp;&nbsp;+11,593</span></td>
+          <td class="num">118.4 &middot; 131.0 &middot; 127.2</td>
+          <td class="num">13,844</td></tr>
+        <tr><td><span class="nm">Caldari Navy Mjolnir Torpedo</span> <span class="qt num">4,800<u1>u</u1></span></td>
+          <td><span class="badge split">SPLIT</span></td>
+          <td class="num"><span class="grn">1/2</span> passed floor 35<shr>%</shr></td>
+          <td><span class="g"><b style="width:71%"></b><i style="left:35%"></i></span>
+            <span class="num grn">&nbsp;71<shr>%</shr></span></td>
+          <td class="stackcol num">14,051,633 <span class="grn">&nbsp;&nbsp;+383,007</span></td>
+          <td class="num">3,150 &middot; 3,380 &middot; 3,610</td>
+          <td class="num">789,861</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="alt">
+    <div class="alth"><span class="tag">ALT B</span><h2>Value track &mdash; the three nets on one scale</h2>
+      <span class="trade">the comparison becomes spatial: how far apart the plans actually were, and that the taken one
+        can be the lowest &middot; ~130px per row &middot; costs the per-candidate odds</span></div>
+    <table>
+      <colgroup><col style="width:250px"><col style="width:104px"><col style="width:1042px"></colgroup>
+      <thead><tr><th>Item</th><th>Plan</th><th>Value track <span class="unit">net &Sigma;, scaled per row</span> &nbsp;+&nbsp; banded numbers</th></tr></thead>
+      <tbody>
+        <tr><td><span class="nm">Heavy Afocal Maser I</span> <span class="qt num">23<u1>u</u1></span></td>
+          <td><span class="badge imm">&#9889; INSTANT</span></td>
+          <td>
+            <div class="track"><b style="width:2.8%"></b>
+              <span style="left:0">4,618,095&Sigma; taken</span>
+              <u class="dn" style="left:84.9%"><em>PATIENT 5,151,589 &middot; 0%</em></u>
+              <u style="left:92.3%"><em>LIST 5,200,044 &middot; 54%</em></u>
+            </div>
+            <div class="bandrow">
+              <div class="bandcell"><div class="bk">book ISK/u</div>
+                <div class="bv"><em>top buy</em>207,800</div><div class="bv"><em>best sell</em>239,400</div></div>
+              <div class="bandcell tot"><div class="bk">outcome &Sigma;</div>
+                <div class="bv"><em>net</em>4,618,095</div><div class="bv"><em>tax</em><span class="red">&minus;161,305</span></div></div>
+              <div class="bandcell"><div class="bk">market</div>
+                <div class="bv"><em>flow</em>48.8<rate>u/d</rate></div><div class="bv"><em>trend</em>+1.0<rate>%/wk</rate></div></div>
+            </div>
+          </td></tr>
+        <tr><td><span class="nm">Caldari Navy Mjolnir Torpedo</span> <span class="qt num">4,800<u1>u</u1></span></td>
+          <td><span class="badge split">SPLIT</span></td>
+          <td>
+            <div class="track"><b style="width:65.5%"></b>
+              <span style="left:52%">14,051,633&Sigma; taken</span>
+              <u class="dn e0" style="left:0%"><em>INSTANT 13,668,626</em></u>
+              <u class="e1" style="left:100%"><em>PATIENT 14,253,263 &middot; 18%</em></u>
+            </div>
+            <div class="bandrow">
+              <div class="bandcell"><div class="bk">book ISK/u</div>
+                <div class="bv"><em>top buy</em>3,150</div><div class="bv"><em>list at</em>3,080</div></div>
+              <div class="bandcell tot"><div class="bk">outcome &Sigma;</div>
+                <div class="bv"><em>now 900u</em>2,739,319</div><div class="bv"><em>listed 3,900u</em>11,312,314</div></div>
+              <div class="bandcell"><div class="bk">market</div>
+                <div class="bv"><em>flow</em>210<rate>u/d</rate></div><div class="bv"><em>trend</em>+0.6<rate>%/wk</rate></div></div>
+            </div>
+          </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
