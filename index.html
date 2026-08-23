@@ -881,6 +881,23 @@ const HUBS = {
   rens:    { label: 'Rens VI-8 · Heimatar',         region: 10000030, system: 30002510, station: 60004588 },
   hek:     { label: 'Hek VIII-12 · Metropolis',     region: 10000042, system: 30002053, station: 60005686 },
 };
+/* PLEX is not sold in any of those regions. CCP moved it to a GLOBAL market — one book
+   every character in New Eden sees — and the hub regions went quiet the same day:
+   /markets/10000002/orders/?type_id=44992 returns [] and its history series stops on
+   2025-07-07, while /markets/19000001/ carries a live book and history through today.
+   Asked for it, The Forge answers honestly that it has nothing, so nothing errors and
+   the row used to fall through to "no book, no history" as though PLEX did not exist.
+
+   The id is measured, not guessed: /universe/regions/ lists 114 regions and 19000001
+   (GPMR-01) is the only one at or above 19000000 — 19000002 and 19000003 are 404 — and
+   the whole region holds exactly one type_id today, 44992, which is also the only entry
+   in market group 1923 and in group 1875. That makes it a region id of the same kind as
+   the ones in HUBS, and it is baked the same way.
+
+   What is deliberately NOT baked is which types live there. A type is only asked of this
+   region after its own hub region has answered with an empty book, so the day CCP moves a
+   second type across, the fallback picks it up with no code change. */
+const GLOBAL_MARKET_REGION = 19000001;
 const UNSELLABLE = [/^expired\s/i, /ice storm filament/i];
 const LS_KEY = 'eveSellHelper.v2';
 
@@ -2623,7 +2640,12 @@ function rebuild(keepChecks = true){
       ? (bestSell - hist) / hist * 100 : null;
 
     if (bestBuy == null && bestSell == null && hist == null){
-      unpriced.push({ name: i.name, qty: i.qty, reason: 'no book, no history', unsellable });
+      /* Naming the market is the whole point: "no book, no history" alone reads as
+         "this item does not exist", when what it means is "the market you asked had
+         nothing". That is how the PLEX case hid — the answer was truthful and the
+         question was wrong. */
+      unpriced.push({ name: i.name, qty: i.qty,
+                      reason: 'no book, no history · ' + hub().label, unsellable });
       continue;
     }
 
@@ -4194,11 +4216,15 @@ async function fetchBook(typeId, h, structBook){
   // the sell side is kept level by level too: "how many units are already listed at or
   // below my price" is the queue a new order has to wait behind (see daysToFillAt)
   const sells = [];
+  // counted separately from the structure book below: a structure that holds sells of its
+  // own would otherwise hide the fact that the region itself returned nothing
+  let regionalOrders = 0;
   for (;;){
     const res = await esiFetch(`${ESI}/markets/${h.region}/orders/?datasource=tranquility&order_type=all&type_id=${typeId}&page=${page}`);
     const data = await res.json();
     for (const o of data){
       if (!orderCoversHub(o, h)) continue;
+      regionalOrders++;
       if (o.is_buy_order) buys.set(o.order_id ?? 'x' + unk++, { p: o.price, v: o.volume_remain, minv: o.min_volume || 1 });
       else if (!h.structure && o.location_id === h.station)
         sells.push({ p: o.price, v: o.volume_remain, id: o.order_id ?? null });
@@ -4222,7 +4248,7 @@ async function fetchBook(typeId, h, structBook){
   const sellLevels = sells.sort((a, b) => a.p - b.p);
   const bestSell = sellLevels.length ? sellLevels[0].p : null;
   const sellDepth = sellLevels.reduce((t, lv) => t + lv.v, 0);
-  return { buyLevels, sellLevels, bestSell, sellDepth };
+  return { buyLevels, sellLevels, bestSell, sellDepth, regionalOrders };
 }
 
 // the structure endpoint has no type_id filter: pull the WHOLE book once, index by type
@@ -4320,16 +4346,29 @@ async function runEsi(){
         const j = todo.shift();
         if (!j || token !== state.esiToken) return;
         try{
-          const book = await fetchBook(j.typeId, h);
+          let region = h.region;
+          let book = await fetchBook(j.typeId, h);
+          /* An empty regional feed is the signal that the type may not live in this
+             region at all. Ask the global market before giving up — one extra request,
+             and only for a type that was otherwise about to be called unsellable. The
+             hub is carried over unchanged, so the sell side still narrows to this
+             station and a structure hub still keeps its own book. */
+          if (!book.regionalOrders && h.region !== GLOBAL_MARKET_REGION){
+            const g = { ...h, region: GLOBAL_MARKET_REGION };
+            const gBook = await fetchBook(j.typeId, g);
+            if (gBook.regionalOrders){ book = gBook; region = g.region; }
+          }
           let hist = null;
           if (withHist){
-            try{ hist = await fetchHistory(j.typeId, h); }
+            // the history has to come from the region that actually held the book:
+            // The Forge still serves a PLEX series, frozen on the day of the move
+            try{ hist = await fetchHistory(j.typeId, { ...h, region }); }
             catch(_e){ /* history missing for some types — non-fatal */ }
           }
           if (token !== state.esiToken) return;
           // the region is recorded so "My orders" can reuse this history instead of
           // refetching it for an order at the same market
-          state.esi.set(j.key, { ...book, hist, typeId: j.typeId, region: h.region, status: 'ok' });
+          state.esi.set(j.key, { ...book, hist, typeId: j.typeId, region, status: 'ok' });
         }catch(_e){
           if (token !== state.esiToken) return;
           failed++;
