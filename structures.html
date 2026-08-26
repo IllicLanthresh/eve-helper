@@ -81,6 +81,10 @@
   .grp>.gh{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--cyan);margin-bottom:6px}
   .rig{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px;flex-wrap:wrap}
   .rig select{width:420px;max-width:100%;font-size:12px;padding:3px 6px}
+  .scanrow{display:flex;gap:8px;align-items:flex-start;margin-top:6px;flex-wrap:wrap}
+  .scanrow textarea{width:420px;max-width:100%;height:120px;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:6px;padding:6px;font:11px/1.45 var(--mono);white-space:pre;resize:vertical}
+  .scanrow .col{display:flex;flex-direction:column;gap:6px;align-items:flex-start;max-width:340px}
   .acts label{display:inline-flex;gap:5px;margin:0 14px 0 0;color:var(--text);font-size:12px;align-items:center}
   .used{font-size:12px;color:var(--dim);margin-top:10px}
   .used b{color:var(--text)}
@@ -148,7 +152,8 @@
     <ul class="plain">
       <li><b>Identity</b> — name, hull, system, security, region — comes from ESI, refreshed by
         <b>re-resolve</b> on each record. Never hand-edited here.</li>
-      <li><b>Fittings</b> are not in ESI, not even for the owner. Pick rigs from the real Standup catalog, or
+      <li><b>Fittings</b> are not in ESI, not even for the owner. Pick rigs from the real Standup catalog,
+        paste a <b>ship scan</b> of the structure (the scanner reads a fit without ownership), or
         derive them with <b>infer rigs…</b> from the numbers the in-game industry window shows anyone who can
         use the structure.</li>
       <li><b>Owner-set rates</b> — market broker % and facility job tax % — have no ESI endpoint at all. Read
@@ -248,6 +253,56 @@ function rigEffText(rig, rec){
   if (rig.unk) parts.push('⚠ unmapped scope — inert');
   const acts = rig.act.every(a => a === 'man' || a === 'rea') ? '' : ` [${rig.act.join('/')}]`;
   return parts.length ? `→ ${parts.join(' · ')}${acts} here` : '→ no effect here';
+}
+
+/* ---------- ship-scan paste (the scanner reads a structure's fit without ownership) ----------
+   The scanner's readout is section headers over bare type names:
+     High Power Slots / Medium Power Slots / Low Power Slots / Rig Slots / Service Slots
+   Only the Rig Slots section drives anything here. Services are counted and reported, not
+   applied: which activities a service module enables is not data this page holds, and a
+   guessed mapping is exactly the kind of invented rule this project refuses. */
+function scanSectionOf(line){
+  const l = line.toLowerCase().replace(/\s+/g, ' ');
+  if (l === 'rig slots') return 'rig';
+  if (l === 'service slots') return 'service';
+  return (l === 'high power slots' || l === 'medium power slots' || l === 'low power slots'
+       || l === 'subsystem slots') ? 'other' : null;
+}
+function parseStructureScan(text){
+  const rigs = [], services = [], loose = [];
+  let cur = null, sections = 0;
+  for (const raw of String(text || '').split(/\r?\n/)){
+    const line = raw.trim();
+    if (!line) continue;
+    const sec = scanSectionOf(line);
+    if (sec){ cur = sec; sections++; continue; }
+    if (cur === 'rig') rigs.push(line);
+    else if (cur === 'service') services.push(line);
+    else loose.push(line);
+  }
+  // no headers at all: the paste is taken to be the rig list on its own
+  return { rigs: sections ? rigs : loose, services, headerless: !sections };
+}
+/* Names to rig type ids, against the loaded catalog. The reprocessing rigs are
+   deliberately NOT in that catalog — the record keeps them as a tier — so their names
+   are read for the trailing mark instead: … I is the T1 rig, … II the T2. */
+function matchScanRigs(lines){
+  const byName = new Map();
+  if (D && D.rigs)
+    for (const [tid, r] of Object.entries(D.rigs))
+      byName.set(r.n.toLowerCase().replace(/\s+/g, ' '), Number(tid));
+  const rigs = [], unknown = [];
+  let repro = null;
+  for (const line of lines){
+    const tid = byName.get(line.toLowerCase().replace(/\s+/g, ' '));
+    if (tid != null){ if (!rigs.includes(tid)) rigs.push(tid); continue; }
+    if (/^standup\b/i.test(line) && /reprocessing|ore grading/i.test(line)){
+      const m = /\s(II?)$/.exec(line);
+      if (m){ repro = m[1] === 'II' ? 't2' : 't1'; continue; }
+    }
+    unknown.push(line);
+  }
+  return { rigs, repro, unknown };
 }
 
 /* ---------- where a structure is currently used (named in the remove confirm) ---------- */
@@ -559,7 +614,58 @@ function fillBody(body, rec){
     wiz.addEventListener('click', () => openRigWizard(rec));
     rigCtl.appendChild(wiz);
   }
+  const scanBtn = document.createElement('button');
+  scanBtn.className = 'mini scan-open'; scanBtn.type = 'button'; scanBtn.textContent = 'paste scan…';
+  scanBtn.title = 'ship-scan the structure in game, copy the result, paste it here\n'
+    + 'the Rig Slots section replaces the rigs on this record';
+  rigCtl.appendChild(scanBtn);
   rigBox.appendChild(rigCtl);
+
+  // the scan paste row: parse on every keystroke, write only on apply
+  const scanRow = document.createElement('div');
+  scanRow.className = 'scanrow';
+  scanRow.hidden = true;
+  const scanTa = document.createElement('textarea');
+  scanTa.placeholder = 'ship-scan readout, e.g.\n\nRig Slots\nStandup XL-Set Ship Manufacturing Efficiency I\n…';
+  const scanCol = document.createElement('div');
+  scanCol.className = 'col';
+  const scanApply = document.createElement('button');
+  scanApply.className = 'mini scan-apply'; scanApply.type = 'button';
+  scanApply.textContent = 'apply to this structure';
+  scanApply.disabled = true;
+  const scanStat = document.createElement('span');
+  scanStat.className = 'hint scan-stat';
+  let scanMatch = null;
+  scanBtn.addEventListener('click', () => {
+    scanRow.hidden = !scanRow.hidden;
+    if (!scanRow.hidden) scanTa.focus();
+  });
+  scanTa.addEventListener('input', () => {
+    const p = parseStructureScan(scanTa.value);
+    scanMatch = matchScanRigs(p.rigs);
+    const bits = [];
+    if (scanMatch.rigs.length) bits.push(`${scanMatch.rigs.length} rig${scanMatch.rigs.length === 1 ? '' : 's'} matched`);
+    if (scanMatch.repro) bits.push(`reprocessing rig ${scanMatch.repro === 't2' ? 'T2' : 'T1'}`);
+    if (p.services.length) bits.push(`${p.services.length} service${p.services.length === 1 ? '' : 's'} (not applied)`);
+    // an unmatched line only means anything once the paste looks like a scan — section
+    // headers, or something that DID match. On its own, "3 not in the catalog" would be
+    // claiming a shopping list held rigs.
+    if ((bits.length || !p.headerless) && scanMatch.unknown.length)
+      bits.push(`${scanMatch.unknown.length} not in the industry catalog`);
+    scanStat.textContent = bits.length ? bits.join(' · ')
+      : scanTa.value.trim() ? 'nothing recognized — expecting the scanner\u2019s readout' : '';
+    scanApply.disabled = !scanMatch || !(scanMatch.rigs.length || scanMatch.repro);
+  });
+  scanApply.addEventListener('click', () => {
+    const upd = {};
+    if (scanMatch.rigs.length) upd.rigs = scanMatch.rigs;
+    if (scanMatch.repro) upd.reproRig = scanMatch.repro;
+    S.update(rec.id, upd);
+    redraw();
+  });
+  scanCol.append(scanApply, scanStat);
+  scanRow.append(scanTa, scanCol);
+  rigBox.appendChild(scanRow);
 
   // the reprocessing rig is its own tier (the Standup reprocessing rigs are not part of
   // the industry catalog) — the Mine tool's refine yield reads it from here
