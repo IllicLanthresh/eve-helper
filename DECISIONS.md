@@ -174,3 +174,45 @@ different kind of number.
 
 Two of the original twenty-six died with the cache: the staleness threshold and the storage
 guard.
+
+## The row redesign (decided on the design canvas, 2026-08-26)
+
+The owner's brief, verbatim: *"totals mixed with unitary prices · narrative tooltips with
+a bunch of info that should just be represented at a glance · metrics are just bombarded
+· I wanna understand, above everything else, the numbers involved in the decisionmaking
+and the reason it got categorized as x or y or z · ultimately I wanna be able to
+understand the process so I can catch possible bugs or mistakes when using it."*
+
+Decided on the canvas (five artboards, three review rounds of owner comments), primary
+direction approved:
+
+- **The row carries the whole decision.** Verdict badge + a gate line
+  (`floor → pass → rank → won by`) + all candidate plans as cards, each with price `/u`,
+  net `Σ`, Δ vs the plan taken, and a labelled fill bar with the floor drawn as a tick.
+  Card states: TAKEN / LOST (passed the floor, lost the rank) / BLOCKED (missed the
+  floor; its odds stay visible) / SKIPPED (never built; the comparison that skipped it
+  is on the card).
+- **Unit discipline.** A bare number is banned. `/u` per unit (Book column only),
+  `Σ` stack total (Outcome column only, own background + left rule), rates name the
+  thing per the time (`u/d`, `%/wk`, `ISK/slot-d`), shares get a bar when a threshold
+  exists, multipliers get context. Totals and unit prices never share a column.
+- **One meaning per colour.** green = taken/passed · amber = a rule the owner set bit ·
+  red = money leaving · cyan = measured this run / the sells branch · violet = the
+  owner's own setting · slate = the modelled give-up branch.
+- **Three tiers, hover is not one of them.** Tier 1 the row; tier 2 the expanded
+  decision ledger (measured inputs with sources, the owner's settings, the candidate
+  table, sells-vs-give-up branch bars, the formula evaluated with the real values, the
+  gate step by step, the chart); tier 3 hover = the unrounded figure behind a rounded
+  one and full names, nothing else. Narrative tooltips are dead.
+- **No sentences.** Every string is `label + value + unit` or `a < b`.
+- **Demand vs supply as one glance** (owner interview): sell and buy flow are a pair
+  with a split bar whose divide IS the sell share; the tracker correction is a
+  provenance line under the flow it corrects, amber only when big enough to distrust.
+- The sparkline column leaves the collapsed row; the chart lives in the ledger.
+
+## Ship-scan paste (owner request, 2026-08-26)
+
+The scanner reads a structure's fit without ownership. The Structure Manager takes the
+readout verbatim; only the Rig Slots section is applied (exact catalog names, replace
+not append; reprocessing rigs become the tier by their trailing mark). Services are
+reported, never applied — mapping services to activities would be an invented rule.
