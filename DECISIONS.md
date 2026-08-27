@@ -198,10 +198,10 @@ direction approved:
   exists, multipliers get context. Totals and unit prices never share a column.
 - **One meaning per colour.** green = taken/passed · amber = a rule the owner set bit ·
   red = money leaving · cyan = measured this run / the sells branch · violet = the
-  owner's own setting · slate = the modelled give-up branch.
+  owner's own setting · slate = the modelled if-unsold branch.
 - **Three tiers, hover is not one of them.** Tier 1 the row; tier 2 the expanded
   decision ledger (measured inputs with sources, the owner's settings, the candidate
-  table, sells-vs-give-up branch bars, the formula evaluated with the real values, the
+  table, if-it-sells vs if-unsold branch bars, the formula evaluated with the real values, the
   gate step by step, the chart); tier 3 hover = the unrounded figure behind a rounded
   one and full names, nothing else. Narrative tooltips are dead.
 - **No sentences.** Every string is `label + value + unit` or `a < b`.
@@ -222,7 +222,7 @@ reported, never applied — mapping services to activities would be an invented 
 ## The row shows real outcomes, not the blend (owner call, 2026-08-27)
 
 The owner caught the label overstating: a listing plan's "net" is not realized money,
-it is the odds-weighted score `p × sells branch + (1−p) × give-up branch − fees` that
+it is the odds-weighted score `p × if-it-sells + (1−p) × if-unsold − fees` that
 the engine ranks by. An `E` prefix was tried and rejected the same day — his call:
 "a single number … the non-reduced value + an 'at X% prob'". So the row now shows the
 REAL if-it-sells total (net of fees) with its odds beside it — cards read `458kΣ at
@@ -231,3 +231,23 @@ with the price by arithmetic anyone can check. The blend never appears on the ro
 it lives on hover (`if unsold · odds-weighted`) and in the ledger's candidate table
 as `E net Σ`, still the sort key and the basis of every Δ, `won by`, and `vs instant`
 margin, which the tooltips say. The instant plan's net stays plain — it is realized.
+
+## Two follow-ups the owner's questions forced (2026-08-27)
+
+**"Wtf is that give-up branch stuff?"** It was house jargon for the plain thing it
+models: the units that do not sell get dumped into the buy book when the patience
+window runs out. Every visible string now says `if unsold` against `if it sells`
+(ledger sections 3 and 4, the bar legend, the My Orders verdict line); only code
+comments keep the old shorthand.
+
+**"The fill % doesn't change when I change the target."** True, and the row said
+nothing about it. `priceForOdds` returns the HIGHEST price whose odds still clear the
+target, so that one price answers every target at or below the odds it actually
+delivers — on a liquid row the odds sit near 100% right up to the price ceiling and
+cliff to zero above it, so the control is inert across its whole range. A price tick
+coarser than the odds curve is steep does the same thing more locally. The row now
+carries an amber `not binding` marker whenever the odds delivered beat the target by
+more than 2 points, with the ceiling, what you asked, what you get, the threshold
+where the price would start moving, and which of the two limits pinned it. A test
+sweeps every row between a 40% and a 90% target: any row whose price does not move
+must disclose why.

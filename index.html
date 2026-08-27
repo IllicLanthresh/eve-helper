@@ -126,7 +126,10 @@
   #tbl .fsplitlab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:#5d6b80}
   #tbl .fsplitlab b{color:var(--cyan);font-weight:400}
   #tbl td.dec .badge{padding:1px 6px}
-  #tbl .oddsrow{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--dim)}
+  #tbl .oddsrow{display:flex;align-items:center;gap:6px;row-gap:2px;margin-top:7px;font-size:10.5px;
+    color:var(--dim);flex-wrap:wrap}
+  /* the target did not set this price: the same amber every other "a limit bit" carries */
+  #tbl .oddsrow .capd{color:var(--amber);cursor:help;white-space:nowrap}
   #tbl input.oddsin{width:52px;padding:1px 3px;font-size:11px;text-align:right;
     background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:3px}
   #tbl input.oddsin.pinned{border-color:var(--violet);color:var(--violet)}
@@ -2587,7 +2590,16 @@ function priceForOdds(e, comp, qty, windowDays, target, opts){
   // the cheapest ask must clear the target, or nothing in the bracket will
   const loFrac = at(lo0);
   if (loFrac == null || loFrac < target) return null;
-  if ((at(hi0) || 0) >= target) return round4sig(hi0);
+  /* Where the target lands is worth reporting: on a liquid item the odds still clear it
+     at the top of the bracket, so the price stops at the ceiling and the target stops
+     doing anything — moving it changes nothing at all. The row says so rather than
+     leaving a control that looks live and is not. */
+  const rep = opts && opts.report;
+  const hiFrac = at(hi0) || 0;
+  if (hiFrac >= target){
+    if (rep){ rep.atCeiling = true; rep.ceiling = hi0; rep.frac = hiFrac; }
+    return round4sig(hi0);
+  }
   let lo = lo0, hi = hi0;
   for (let i = 0; i < ODDS_STEPS; i++){
     const mid = (lo + hi) / 2;
@@ -2598,7 +2610,15 @@ function priceForOdds(e, comp, qty, windowDays, target, opts){
   // for, which would quietly return worse odds than the ones asked for
   const t = tickFor(lo);
   const px = Math.floor(lo / t + 1e-9) * t;
-  return px > 0 ? Number(px.toFixed(2)) : null;
+  if (px <= 0) return null;
+  const out = Number(px.toFixed(2));
+  /* The odds this price actually delivers, which is the whole story behind "I moved the
+     target and nothing happened": this price is the answer for EVERY target at or below
+     that number, so the control only starts biting once it is asked for more. Two things
+     make the gap wide — a ceiling the price cannot climb past, and a price tick coarser
+     than the odds curve is steep. */
+  if (rep){ rep.ceiling = hi0; rep.frac = at(out); rep.atCeiling = out + t >= hi0 - 1e-9; }
+  return out;
 }
 
 // an upper bound is not an estimate, and the two never get to look alike on screen
@@ -2743,9 +2763,10 @@ function rebuild(keepChecks = true){
     let L = null, lFlag = null;
     // a row can be nudged off the global target without moving anything else
     const rowTarget = state.oddsRow.has(key) ? state.oddsRow.get(key) : oddsTarget;
+    const oddsReport = {};
     if (priceSrc === 'odds'){
       L = priceForOdds(e, sellLevels, i.qty, pat.days, rowTarget,
-                       { histDays, tracker: trk, volDay, floor: bestBuy });
+                       { histDays, tracker: trk, volDay, floor: bestBuy, report: oddsReport });
       if (L == null){
         // no price in the bracket reaches those odds: say which, and fall back to the
         // competitive price rather than leaving the row without a plan
@@ -2997,6 +3018,11 @@ function rebuild(keepChecks = true){
       key, name: i.name, qty: i.qty, volPerUnit: i.volPerUnit, typeId: e.typeId ?? null,
       oddsTarget: priceSrc === 'odds' ? rowTarget : null,
       oddsPinned: priceSrc === 'odds' && state.oddsRow.has(key),
+      /* the target is not binding: this same price answers every target up to the odds
+         it already delivers, so moving the number below that changes nothing */
+      oddsCapped: oddsReport.frac != null && oddsReport.frac - rowTarget > 0.02,
+      oddsGot: oddsReport.frac ?? null, oddsCeiling: oddsReport.ceiling ?? null,
+      oddsAtCeiling: !!oddsReport.atCeiling,
       bestBuy, bestSell, hist, L, volDay, buyDepth, sellDepth, margin, sellVsHist,
       volSell, volBuy, capture, volSrc: trk ? 'tracker' : 'esi',
       volUnitsSell, volUnitsBuy, volHeldDays, volState,
@@ -3625,8 +3651,13 @@ function buildLedger(r){
   if (m.fees){
     const d = sec(2, 'Your settings', 'the violet numbers are yours, not the market\u2019s');
     const g = el('div', 'facts');
-    fact(g, 'patience window', `${m.window}d`, 'give-up horizon', true);
+    fact(g, 'patience window', `${m.window}d`, 'then dump the rest', true);
     fact(g, 'fill floor', pc(m.minFill), 'min share of stack sold', true);
+    if (r.oddsTarget != null)
+      fact(g, 'target odds', '≥ ' + pc(r.oddsTarget),
+        r.oddsCapped ? `not binding — this price answers up to ${pc(r.oddsGot)}`
+          : 'a minimum, not a dial',
+        true);
     fact(g, 'broker', (m.fees.broker * 100).toFixed(2) + '%',
       `min ${MIN_BROKER_FEE_ISK} ISK/order`, true);
     fact(g, 'sales tax', (m.fees.tax * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + '%',
@@ -3651,7 +3682,7 @@ function buildLedger(r){
     const t = el('table', 'ct');
     const hrow = el('tr');
     for (const [h, l] of [['plan', 1], ['price /u', 0], ['listed u', 0], ['odds', 0],
-      ['vs floor', 0], ['broker Σ', 0], ['sells branch Σ', 0], ['give-up branch Σ', 0],
+      ['vs floor', 0], ['broker Σ', 0], ['if it sells Σ', 0], ['if unsold Σ', 0],
       ['E net Σ', 0], ['days', 0], ['ISK/slot-d', 0], ['state', 0], ['vs taken Σ', 0]]){
       const th = el('th', l ? 'l' : '', h);
       hrow.appendChild(th);
@@ -3706,7 +3737,7 @@ function buildLedger(r){
         return br ? br.sells + br.give + br.fee : c.net;
       }));
       const d = sec(4, 'Where each net comes from',
-        `a plan that never sells can still score — the bar says which half pays · scale 0 → ${fmtCompact(scale)}Σ`);
+        `two futures, blended by the odds · scale 0 → ${fmtCompact(scale)}Σ`);
       const bars = el('div', 'bars');
       for (const c of withNet){
         const br = branchOf(c);
@@ -3722,15 +3753,16 @@ function buildLedger(r){
           if (v / scale > 0.12)
             sg.textContent = fmtCompact(v) + (c.p != null && cls === 'sell' && c.key !== 'inst'
               ? ` · ${pc(c.p)}` : '');
-          sg.title = `${cls === 'sell' ? 'sells branch' : cls === 'give' ? 'give-up branch' : 'broker + relists'}: ${fmtIsk(v)} ISK`;
+          sg.title = `${cls === 'sell' ? 'if it sells'
+            : cls === 'give' ? `if unsold — dumped at day ${m.window}` : 'broker + relists'}: ${fmtIsk(v)} ISK`;
           w.appendChild(sg);
         }
         bars.appendChild(w);
       }
       d.appendChild(bars);
       const lg = el('div', 'blegend');
-      for (const [color, txt] of [['var(--cyan)', 'sells = leg now + p × listed value × (1 − tax)'],
-        ['#4d5f7d', 'give-up = (1 − p) × instant net × carry — dumped at the window\u2019s end'],
+      for (const [color, txt] of [['var(--cyan)', 'if it sells = leg now + p × listed value × (1 − tax)'],
+        ['#4d5f7d', `if unsold = (1 − p) × dumped into the buy book on day ${m.window} × carry`],
         ['var(--red)', 'broker + relists — charged on listing, never refunded']]){
         const e = el('em', '');
         e.style.fontStyle = 'normal';
@@ -3774,8 +3806,8 @@ function buildLedger(r){
       put('instant net', fmtIsk(Math.max(0, r.netInstant - o.legNet)), 'gy', '×');
       put('carry', dec.toFixed(4), 'gy', '=');
       put('net', fmtIsk(o.net) + 'Σ', 'tot', null);
-      /* the underline row: the sells branch spans p × listed value × (1 − tax), the
-         give-up branch spans (1 − p) × instant net × carry — 19 columns in all */
+      /* the underline row: the if-it-sells branch spans p × listed value × (1 − tax), the
+         if-unsold branch spans (1 − p) × instant net × carry — 19 columns in all */
       const sums = row('sum');
       for (let i = 0; i < 6; i++) sums.appendChild(el('td', ''));
       const sSells = el('td', 'grp cy', fmtIsk(o.p * o.listValue * (1 - tax)) + ' Σ');
@@ -4320,7 +4352,8 @@ function render(){
       inp.title = (r.oddsPinned ? 'this row only — clear to follow the global target'
                                 : 'following the global target — type to pin this row')
         + `\nhighest price still clearing it: ${fmtIsk(r.exportPrice)}`
-        + '\nthe card shows the odds AT that price';
+        + '\nthe card shows the odds AT that price'
+        + (r.oddsCapped ? `\nthis row: not binding below ${pc(r.oddsGot)}` : '');
       inp.addEventListener('change', () => {
         const v = parseFloat(inp.value);
         if (Number.isFinite(v) && v >= 1 && v <= 99) state.oddsRow.set(r.key, v / 100);
@@ -4331,6 +4364,19 @@ function render(){
       solved.className = 'num';
       solved.textContent = '→ ' + fmtShort(r.exportPrice);
       orow.append(ok, inp, solved);
+      /* The control is inert on this row and saying nothing about that is how a setting
+         gets blamed for a number it never touched. */
+      if (r.oddsCapped){
+        const cap = document.createElement('span');
+        cap.className = 'capd';
+        cap.textContent = 'not binding';
+        cap.title = `you asked: ≥ ${pc(r.oddsTarget)}`
+          + `\nyou get: ${pcBound(r.oddsGot, 'upper')}`
+          + `\nprice moves only above: ${pc(r.oddsGot)}`
+          + `\nceiling: ${fmtIsk(r.oddsCeiling)} ISK`
+          + (r.oddsAtCeiling ? '\nreason: at the ceiling' : '\nreason: one price tick');
+        orow.appendChild(cap);
+      }
       tdDec.appendChild(orow);
     }
     tr.appendChild(tdDec);
@@ -5926,7 +5972,7 @@ function verdictWhy(o, d, cfg){
     : 'CANCEL & DUMP');
   out.push(`hold: ${fmtIsk(d.valueHold)} ISK · ${pc(d.chance)} of ${fmt.format(q)} u × ${fmtIsk(o.price)} `
     + `−${(tax * 100).toFixed(2)}% tax = ${fmtIsk(d.chance * q * o.price * (1 - tax))} · + `
-    + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} give-up at day ${d.window}`
+    + `${pc(1 - d.chance)} × ${fmtIsk(d.giveUp)} if unsold at day ${d.window}`
     + (Math.abs(d.decay - 1) > 0.005
       ? ` (${fmtIsk(d.dumpNow)} today, carried ${pctSigned((d.decay - 1) * 100)} by the trend)` : ''));
   if (d.valueReprice != null)

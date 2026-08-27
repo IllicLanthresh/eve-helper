@@ -1709,6 +1709,57 @@ H.run('sell', async () => {
     check('no other row moved by more than rounding',
       pinned.othersMax < 0.01, String(pinned.othersMax));
 
+    /* THE RATCHET FOR A CONTROL THAT LOOKS LIVE AND IS NOT. On a liquid row the odds sit
+       at ~100% right up to the price ceiling and cliff to zero above it, so every target
+       solves to the same tick and moving the number changes nothing — the owner spent a
+       session convinced the fill percentage was ignoring him. A row whose price does not
+       move between a 40% and a 90% target MUST say why: the ceiling marker, or the
+       already-existing "unreachable" chip. */
+    await p4.evaluate(() => { state.oddsRow.clear(); });
+    const priceAt = t => p4.evaluate(v => {
+      document.getElementById('oddsTarget').value = String(v);
+      rebuild();
+      return state.rows.map(r => ({
+        name: r.name, px: r.exportPrice, target: r.oddsTarget, capped: !!r.oddsCapped,
+        got: r.oddsGot, unreachable: (r.flags || []).some(f => /%\?$/.test(f.t)),
+      }));
+    }, t);
+    const lo40 = await priceAt(40), hi90 = await priceAt(90);
+    const was = new Map(lo40.map(r => [r.name, r]));
+    const inert = [], undisclosed = [], overclaimed = [];
+    for (const r of hi90){
+      const l = was.get(r.name);
+      if (!l || l.target == null || r.target == null || !(r.px > 0) || !(l.px > 0)) continue;
+      const same = Math.abs(r.px - l.px) <= Math.max(r.px, l.px) * 0.001;
+      if (same){
+        inert.push(r.name);
+        if (!r.capped && !r.unreachable) undisclosed.push(r.name);
+      }
+      // the marker's own claim: this price already delivers more than was asked for
+      if (r.capped && !(r.got > r.target + 0.02)) overclaimed.push(r.name);
+    }
+    check('the sweep actually moved some prices — the fixture can tell the cases apart',
+      inert.length < hi90.filter(r => r.target != null).length, JSON.stringify(inert));
+    eq('a row the target cannot move says so, every time',
+      JSON.stringify(undisclosed), '[]');
+    eq('...and the marker never claims slack the odds do not have',
+      JSON.stringify(overclaimed), '[]');
+    const capMark = await p4.evaluate(() => {
+      const tr = [...document.querySelectorAll('#tblBody tr.a')]
+        .find(x => x.querySelector('.oddsrow .capd'));
+      if (!tr) return null;
+      const c = tr.querySelector('.oddsrow .capd');
+      return { t: c.textContent, tip: c.title };
+    });
+    if (capMark){
+      check('the marker states what was asked and what it gets',
+        /you asked: /.test(capMark.tip) && /you get: /.test(capMark.tip), capMark.tip);
+      check('...and where the price would start moving again',
+        /price moves only above: /.test(capMark.tip), capMark.tip);
+      check('...and which of the two limits pinned it',
+        /reason: (at the ceiling|one price tick)/.test(capMark.tip), capMark.tip);
+    }
+
     await p4.check('#srcSell');
     await p4.waitForFunction(() => state.rows.every(r => r.oddsTarget == null));
 
@@ -2224,8 +2275,14 @@ H.run('sell', async () => {
       await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
     await setPatience(p7, 14, 55);
     await p7.click('#tblBody tr.open td.spark');
+    /* The pointer is still resting on the sparkline it just clicked, and hovering a
+       sparkline is what OPENS the chart — so leaving it there races the close against a
+       legitimate re-open. Step off the row before asking whether it closed. */
+    await p7.mouse.move(0, 0);
     await p7.waitForFunction(() => document.querySelectorAll('#tblBody tr.detail').length === 0);
     eq('clicking again closes it', await p7.evaluate(() => state.openDetail), null);
+    eq('...and unpins it, so a later hover is free to open it again',
+      await p7.evaluate(() => state.detailPinned), false);
     eq('...and unpins it', await p7.evaluate(() => !!state.detailPinned), false);
 
     /* ---------- hover opens it, a click pins it ---------- */
