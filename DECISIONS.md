@@ -218,3 +218,12 @@ The scanner reads a structure's fit without ownership. The Structure Manager tak
 readout verbatim; only the Rig Slots section is applied (exact catalog names, replace
 not append; reprocessing rigs become the tier by their trailing mark). Services are
 reported, never applied — mapping services to activities would be an invented rule.
+
+## E marks a forecast (owner question, 2026-08-27)
+
+The owner caught the label overstating: a listing plan's "net" is not realized money,
+it is the odds-weighted forecast `p × sells branch + (1−p) × give-up branch − fees` —
+the score the engine ranks by, denominated in ISK so it stays comparable to instant.
+So forecast money now carries an `E` prefix (cards' nets, the Outcome column on
+listing rows, the ledger's candidate table) and realized money stays plain (the
+instant plan, the tax/broker lines). Hovering a card's E net shows the branch split.

@@ -61,19 +61,21 @@
   #tbl{table-layout:fixed}
   #tbl td,#tbl th{overflow:hidden}
   #tbl > thead th.outc{background:#1b2536;border-left:1px solid #2c3a52}
-  #tbl tbody tr.a>td{padding:14px 7px;border-bottom:1px solid #1a2233;vertical-align:top}
+  #tbl tbody tr.a>td{padding:10px 7px;border-bottom:1px solid #1a2233;vertical-align:top}
   #tbl tbody tr.a>td.outc{background:#0d121b;border-left:1px solid #2c3a52}
   #tbl .un{font-family:var(--mono);color:var(--dim);font-size:.82em;margin-left:2px;letter-spacing:.2px}
+  /* E marks an odds-weighted forecast — a plain money figure is realized */
+  #tbl .ee{font-family:var(--mono);color:var(--dim);font-size:.82em;margin-right:3px;letter-spacing:.2px}
   #tbl tbody tr.a>td.name{white-space:normal;padding-right:4px}
   #tbl td.name .head{display:flex;align-items:center;gap:4px;min-height:32px}
   #tbl td.name .nm{min-width:0;overflow-wrap:anywhere;font-weight:600;font-size:12.5px}
   #tbl td.name img.ticon{flex:none}
-  #tbl td.name .rmeta{margin-top:7px;color:var(--dim);font-size:11px;white-space:normal;line-height:1.75}
+  #tbl td.name .rmeta{margin-top:5px;color:var(--dim);font-size:11px;white-space:normal;line-height:1.65}
   #tbl td.name .rmeta .k{color:#5d6a7e;font-size:10px}
   #tbl td.name .rmeta .pg{white-space:nowrap;display:inline-block;margin-right:7px}
   #tbl td.name .flag{margin:0 4px 2px 0}
   /* the gate line: what ran, in order — floor → pass → rank → won by */
-  #tbl .gate{display:flex;align-items:center;gap:5px;row-gap:4px;font-size:10.5px;flex-wrap:wrap;margin:8px 0 10px}
+  #tbl .gate{display:flex;align-items:center;gap:5px;row-gap:3px;font-size:10.5px;flex-wrap:wrap;margin:6px 0 8px}
   #tbl .gate .gk,#tbl .gate .num{white-space:nowrap}
   #tbl .gate .gk{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.7px}
   #tbl .gate .arw{color:#3c4a63}
@@ -81,27 +83,27 @@
   #tbl .gate .warn{color:var(--amber)}
   /* candidate cards: TAKEN green edge · BLOCKED amber edge · SKIPPED dimmed */
   #tbl .cands{display:flex;gap:6px}
-  #tbl .cand{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:8px 8px 9px}
+  #tbl .cand{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:7px 8px}
   #tbl .cand.won{border-color:#2a6b4d;background:#0f1b19;box-shadow:inset 3px 0 0 var(--green)}
   #tbl .cand.blk{box-shadow:inset 3px 0 0 #6b571f}
   #tbl .cand.na{opacity:.55}
-  #tbl .cand .ctop{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:2px 4px;flex-wrap:wrap}
+  #tbl .cand .ctop{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:2px 4px;flex-wrap:wrap}
   #tbl .cand .ck{font-size:10px;letter-spacing:.9px;color:var(--dim);text-transform:uppercase}
   #tbl .cand .cst{font-size:9.5px;letter-spacing:.6px;padding:0 4px;border-radius:3px;white-space:nowrap}
   #tbl .cand .cst.ok{color:var(--green);background:#14332a}
   #tbl .cand .cst.no{color:var(--amber);background:#3a2f14}
   #tbl .cand .cst.sk{color:var(--dim);background:#1a2233}
-  #tbl .cand .cprice{font-family:var(--mono);font-size:12.5px;color:var(--text);line-height:1.6}
+  #tbl .cand .cprice{font-family:var(--mono);font-size:12.5px;color:var(--text);line-height:1.5}
   #tbl .cand .cprice>span{white-space:nowrap}
   #tbl .cand .cprice .k{color:#5d6a7e;font-size:9.5px}
-  #tbl .cand .cnet{font-family:var(--mono);font-size:11.5px;color:#aab6c8;line-height:1.6}
+  #tbl .cand .cnet{font-family:var(--mono);font-size:11.5px;color:#aab6c8;line-height:1.5}
   #tbl .cand .cnet>span{white-space:nowrap}
-  #tbl .cand .cdel{font-family:var(--mono);font-size:11px;line-height:1.6}
+  #tbl .cand .cdel{font-family:var(--mono);font-size:11px;line-height:1.5}
   #tbl .cand .cdel.pos{color:var(--green)}
   #tbl .cand .cdel.neg{color:var(--red)}
   #tbl .cand .cdel.mut,#tbl .cand .cdel{color:var(--dim)}
   #tbl .cand .cdel.pos{color:var(--green)}
-  #tbl .cand .codds{display:flex;align-items:center;gap:5px;margin-top:7px}
+  #tbl .cand .codds{display:flex;align-items:center;gap:5px;margin-top:5px}
   #tbl .cand .codds .gk{color:var(--dim);font-size:9.5px;text-transform:uppercase;letter-spacing:.7px}
   #tbl .cand .codds .num{font-family:var(--mono);font-size:11px}
   #tbl .cand .codds .num.blkd{color:var(--amber)}
@@ -113,7 +115,7 @@
   #tbl .obar>i::after{content:'';position:absolute;top:-3px;left:-2px;border-left:2.5px solid transparent;
     border-right:2.5px solid transparent;border-top:3px solid #e7edf7}
   /* labelled value lines for the Book / Outcome / Market / Rank cells */
-  #tbl .mline{display:flex;justify-content:space-between;gap:2px 8px;font-size:12px;line-height:1.6;flex-wrap:wrap;padding:2.5px 0}
+  #tbl .mline{display:flex;justify-content:space-between;gap:2px 8px;font-size:12px;line-height:1.55;flex-wrap:wrap;padding:1.5px 0}
   #tbl .mline .lbl{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.7px;white-space:nowrap}
   #tbl .mline .mval{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
   #tbl .mline .mval .dep{color:#5d6a7e;font-size:10px;margin-left:4px}
@@ -121,12 +123,12 @@
   #tbl .corr{color:#5d6b80;font-family:var(--mono);font-size:9.5px;text-align:right;margin:0 0 2px}
   #tbl .corr.warn{color:var(--amber)}
   /* the sell/buy split bar: the divide IS the sell share */
-  #tbl .fsplit{position:relative;height:5px;background:#4d5f7d;border-radius:3px;overflow:hidden;margin:7px 0 2px}
+  #tbl .fsplit{position:relative;height:5px;background:#4d5f7d;border-radius:3px;overflow:hidden;margin:5px 0 2px}
   #tbl .fsplit>b{position:absolute;left:0;top:0;bottom:0;background:var(--cyan)}
   #tbl .fsplitlab{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:#5d6b80}
   #tbl .fsplitlab b{color:var(--cyan);font-weight:400}
   #tbl td.dec .badge{padding:1px 6px}
-  #tbl .oddsrow{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:10.5px;color:var(--dim)}
+  #tbl .oddsrow{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--dim)}
   #tbl input.oddsin{width:52px;padding:1px 3px;font-size:11px;text-align:right;
     background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:3px}
   #tbl input.oddsin.pinned{border-color:var(--violet);color:var(--violet)}
@@ -160,7 +162,7 @@
   .tablewrap{max-height:max(520px, calc(100vh - 230px));overflow:auto;border:1px solid var(--line);border-radius:8px}
   #preview{height:200px}
   /* price history: a sparkline per row, and the chart it opens into */
-  #tbl tbody tr.a>td.spark{padding:12px 6px;cursor:zoom-in;width:124px}
+  #tbl tbody tr.a>td.spark{padding:8px 6px;cursor:zoom-in;width:124px}
   #tbl td.spark svg{width:100%;height:auto;display:block}
   tr.detail.pinned td{box-shadow:inset 2px 0 0 var(--violet)}
   td.spark svg{display:block}
@@ -540,9 +542,9 @@
              `auto`, collapsed to 70px and clipped 46px off every 116px sparkline. -->
         <th data-key="name" style="width:16%" title="the name as EVE spells it&#10;below: units held · warning chips&#10;click a value to copy it">Item</th>
         <th data-key="trendPctWk" style="width:124px" title="chart: 120d daily average&#10;markers: best sell · list price · patient price · your price&#10;sort: trend %/wk · hover: the decision ledger + full chart">History</th>
-        <th data-key="strategy" style="width:30%" title="the whole decision on the row&#10;gate: floor → pass → rank → won by&#10;cards: every plan built — price /u · net Σ · Δ vs taken · fill odds&#10;TAKEN · LOST: outranked · BLOCKED: missed your floor · SKIPPED: never built">Decision</th>
+        <th data-key="strategy" style="width:30%" title="the whole decision on the row&#10;gate: floor → pass → rank → won by&#10;cards: every plan built — price /u · E net Σ: odds-weighted · Δ vs taken · fill odds&#10;TAKEN · LOST: outranked · BLOCKED: missed your floor · SKIPPED: never built">Decision</th>
         <th data-key="bestSell" class="num" style="width:10%" title="prices at this hub, ISK per unit&#10;top buy · best sell · history reference · margin&#10;small figures beside a price: book depth in units">Book</th>
-        <th data-key="totalNet" class="num outc" style="width:12%" title="the taken plan's money, ISK over the whole stack&#10;net of fees · legs · broker at risk · vs instant">Outcome</th>
+        <th data-key="totalNet" class="num outc" style="width:12%" title="the taken plan's money, ISK over the whole stack&#10;net of fees · legs · broker at risk · vs instant&#10;E net: odds-weighted forecast · plain net: realized">Outcome</th>
         <th data-key="volSell" class="num" style="width:14%" title="traded flow, units per day&#10;sell side: units bought from sell orders · buy side: units sold to buy orders&#10;the bar's divide: sell share&#10;region: ESI both sides pooled — the no-tracker fallback">Market</th>
         <th data-key="perSlot" class="num" style="width:9%" title="expected net ÷ expected days on a market slot&#10;INSTANT uses no slot — not ranked&#10;est: expected days to fill">Rank</th>
       </tr></thead>
@@ -3652,7 +3654,7 @@ function buildLedger(r){
     const hrow = el('tr');
     for (const [h, l] of [['plan', 1], ['price /u', 0], ['listed u', 0], ['odds', 0],
       ['vs floor', 0], ['broker Σ', 0], ['sells branch Σ', 0], ['give-up branch Σ', 0],
-      ['net Σ', 0], ['days', 0], ['ISK/slot-d', 0], ['state', 0], ['vs taken Σ', 0]]){
+      ['E net Σ', 0], ['days', 0], ['ISK/slot-d', 0], ['state', 0], ['vs taken Σ', 0]]){
       const th = el('th', l ? 'l' : '', h);
       hrow.appendChild(th);
     }
@@ -4115,16 +4117,23 @@ function candCard(c, r){
   const net = document.createElement('div');
   net.className = 'cnet';
   if (c.net != null){
+    // the net is odds-weighted, so a dearer price can score lower: mark it E and say
+    // which branch pays — the instant plan's number is realized, so it stays plain
+    if (c.key !== 'inst'){
+      const ee = document.createElement('span');
+      ee.className = 'ee'; ee.textContent = 'E';
+      net.appendChild(ee);
+    }
     const nv = document.createElement('span');
     nv.textContent = fmtShort(c.net);
     let ntip = exactTip(c.net);
-    // the net is odds-weighted, so a dearer price can score lower: say which branch pays
     if (c.cand && c.cand.p != null){
       const o = c.cand, mm = r.metrics, tax = mm.fees ? mm.fees.tax : 0;
       const sells = o.legNet + o.p * o.listValue * (1 - tax);
       const give = (1 - o.p) * Math.max(0, r.netInstant - o.legNet)
         * (mm.decay != null ? mm.decay : 1);
-      ntip += `\nsells branch: ${fmtCompact(sells)}Σ`
+      ntip += '\nE: odds-weighted forecast'
+        + `\nsells branch: ${fmtCompact(sells)}Σ`
         + `\ngive-up branch: ${fmtCompact(give)}Σ`
         + `\nbroker + relists: −${fmtCompact(o.brokerCharge + o.churn)}Σ`;
     }
@@ -4349,8 +4358,10 @@ function render(){
     /* ---- Outcome: the taken plan's money, stack totals only ---- */
     const tdOut = document.createElement('td');
     tdOut.className = 'num outc';
-    tdOut.appendChild(mline('net', { t: fmtShort(r.totalNet), cell: 'totalNet',
-      copy: priceCopy(r.totalNet), title: exactTip(r.totalNet), un: 'Σ' }));
+    tdOut.appendChild(mline(r.strategy === 'imm' ? 'net' : 'E net',
+      { t: fmtShort(r.totalNet), cell: 'totalNet',
+        copy: priceCopy(r.totalNet), title: exactTip(r.totalNet)
+          + (r.strategy === 'imm' ? '' : '\nE: odds-weighted forecast'), un: 'Σ' }));
     const m = r.metrics;
     if (r.strategy === 'imm'){
       const proceeds = m.inst ? m.inst.proceeds : null;
