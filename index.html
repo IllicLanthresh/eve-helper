@@ -64,8 +64,6 @@
   #tbl tbody tr.a>td{padding:10px 7px;border-bottom:1px solid #1a2233;vertical-align:top}
   #tbl tbody tr.a>td.outc{background:#0d121b;border-left:1px solid #2c3a52}
   #tbl .un{font-family:var(--mono);color:var(--dim);font-size:.82em;margin-left:2px;letter-spacing:.2px}
-  /* E marks an odds-weighted forecast — a plain money figure is realized */
-  #tbl .ee{font-family:var(--mono);color:var(--dim);font-size:.82em;margin-right:3px;letter-spacing:.2px}
   #tbl tbody tr.a>td.name{white-space:normal;padding-right:4px}
   #tbl td.name .head{display:flex;align-items:center;gap:4px;min-height:32px}
   #tbl td.name .nm{min-width:0;overflow-wrap:anywhere;font-weight:600;font-size:12.5px}
@@ -95,7 +93,7 @@
   #tbl .cand .cst.sk{color:var(--dim);background:#1a2233}
   #tbl .cand .cprice{font-family:var(--mono);font-size:12.5px;color:var(--text);line-height:1.5}
   #tbl .cand .cprice>span{white-space:nowrap}
-  #tbl .cand .cprice .k{color:#5d6a7e;font-size:9.5px}
+  #tbl .cand .k{color:#5d6a7e;font-size:9.5px}
   #tbl .cand .cnet{font-family:var(--mono);font-size:11.5px;color:#aab6c8;line-height:1.5}
   #tbl .cand .cnet>span{white-space:nowrap}
   #tbl .cand .cdel{font-family:var(--mono);font-size:11px;line-height:1.5}
@@ -542,9 +540,9 @@
              `auto`, collapsed to 70px and clipped 46px off every 116px sparkline. -->
         <th data-key="name" style="width:16%" title="the name as EVE spells it&#10;below: units held · warning chips&#10;click a value to copy it">Item</th>
         <th data-key="trendPctWk" style="width:124px" title="chart: 120d daily average&#10;markers: best sell · list price · patient price · your price&#10;sort: trend %/wk · hover: the decision ledger + full chart">History</th>
-        <th data-key="strategy" style="width:30%" title="the whole decision on the row&#10;gate: floor → pass → rank → won by&#10;cards: every plan built — price /u · E net Σ: odds-weighted · Δ vs taken · fill odds&#10;TAKEN · LOST: outranked · BLOCKED: missed your floor · SKIPPED: never built">Decision</th>
+        <th data-key="strategy" style="width:30%" title="the whole decision on the row&#10;gate: floor → pass → rank → won by&#10;cards: every plan built — price /u · Σ if it sells, at its odds · Δ vs taken&#10;TAKEN · LOST: outranked · BLOCKED: missed your floor · SKIPPED: never built">Decision</th>
         <th data-key="bestSell" class="num" style="width:10%" title="prices at this hub, ISK per unit&#10;top buy · best sell · history reference · margin&#10;small figures beside a price: book depth in units">Book</th>
-        <th data-key="totalNet" class="num outc" style="width:12%" title="the taken plan's money, ISK over the whole stack&#10;net of fees · legs · broker at risk · vs instant&#10;E net: odds-weighted forecast · plain net: realized">Outcome</th>
+        <th data-key="totalNet" class="num outc" style="width:12%" title="the taken plan's money, ISK over the whole stack&#10;if sells: the real total at the shown odds, net of fees&#10;hover: if unsold · odds-weighted&#10;sort: odds-weighted net">Outcome</th>
         <th data-key="volSell" class="num" style="width:14%" title="traded flow, units per day&#10;sell side: units bought from sell orders · buy side: units sold to buy orders&#10;the bar's divide: sell share&#10;region: ESI both sides pooled — the no-tracker fallback">Market</th>
         <th data-key="perSlot" class="num" style="width:9%" title="expected net ÷ expected days on a market slot&#10;INSTANT uses no slot — not ranked&#10;est: expected days to fill">Rank</th>
       </tr></thead>
@@ -4026,9 +4024,14 @@ function candList(r){
     state: r.strategy === 'imm' ? 'taken' : inst.filled === 0 ? 'skipped' : 'lost',
     reason: inst.filled === 0 ? 'no buy book' : null,
     price: instAvg, priceNote: 'avg', net: inst.filled > 0 ? r.netInstant : null,
+    netSold: inst.filled > 0 ? r.netInstant : null, netUnsold: null,
     p: inst.filled > 0 ? 1 : null, bound: null, days: 0, cand: null,
   });
   const guarded = m.guarded || [];
+  /* net stays the odds-weighted figure the engine ranks by (the ledger shows it);
+     netSold/netUnsold are the two REAL outcomes it blends, both net of fees */
+  const tax = m.fees ? m.fees.tax : 0;
+  const decay = m.decay != null ? m.decay : 1;
   const mk = (o) => ({
     key: o.kind === 'patient' ? 'pat' : 'list',
     label: o === m.chosen && r.strategy === 'split' ? 'Split'
@@ -4038,6 +4041,11 @@ function candList(r){
     price: o.price,
     priceNote: o.legQty > 0 ? `+${fmtCompact(o.legQty)}u now` : null,
     net: o.net, p: o.p, bound: o.bound, days: o.days,
+    netSold: o.p == null ? o.net
+      : o.legNet + o.listValue * (1 - tax) - o.brokerCharge - o.churn,
+    netUnsold: o.p == null ? null
+      : o.legNet + Math.max(0, (r.netInstant != null ? r.netInstant : 0) - o.legNet) * decay
+        - o.brokerCharge - o.churn,
     brokerCharge: o.brokerCharge, floor: m.minFill, cand: o,
   });
   if (m.comp && m.comp.listQty > 0) out.push(mk(m.comp));
@@ -4117,32 +4125,25 @@ function candCard(c, r){
   const net = document.createElement('div');
   net.className = 'cnet';
   if (c.net != null){
-    // the net is odds-weighted, so a dearer price can score lower: mark it E and say
-    // which branch pays — the instant plan's number is realized, so it stays plain
-    if (c.key !== 'inst'){
-      const ee = document.createElement('span');
-      ee.className = 'ee'; ee.textContent = 'E';
-      net.appendChild(ee);
-    }
+    // the money shown is the REAL if-it-sells total with its odds beside it — the
+    // odds-weighted blend the engine ranks by lives on hover and in the ledger
+    const shown = c.netSold != null ? c.netSold : c.net;
     const nv = document.createElement('span');
-    nv.textContent = fmtShort(c.net);
-    let ntip = exactTip(c.net);
-    if (c.cand && c.cand.p != null){
-      const o = c.cand, mm = r.metrics, tax = mm.fees ? mm.fees.tax : 0;
-      const sells = o.legNet + o.p * o.listValue * (1 - tax);
-      const give = (1 - o.p) * Math.max(0, r.netInstant - o.legNet)
-        * (mm.decay != null ? mm.decay : 1);
-      ntip += '\nE: odds-weighted forecast'
-        + `\nsells branch: ${fmtCompact(sells)}Σ`
-        + `\ngive-up branch: ${fmtCompact(give)}Σ`
-        + `\nbroker + relists: −${fmtCompact(o.brokerCharge + o.churn)}Σ`;
-    }
+    nv.textContent = fmtShort(shown);
+    let ntip = exactTip(shown);
+    if (c.netUnsold != null) ntip += `\nif unsold: ${fmtCompact(c.netUnsold)}Σ`;
+    if (c.cand) ntip += `\nodds-weighted: ${fmtCompact(c.net)}Σ`;
     nv.title = ntip;
-    nv.dataset.copy = fmtExport(c.net);
+    nv.dataset.copy = fmtExport(shown);
     net.appendChild(nv);
     const u = document.createElement('span');
     u.className = 'un'; u.textContent = 'Σ';
     net.appendChild(u);
+    if (c.cand && c.p != null){
+      const at = document.createElement('span');
+      at.className = 'k'; at.textContent = ` at ${pcBound(c.p, c.bound)}`;
+      net.appendChild(at);
+    }
   } else net.textContent = '—';
   d.appendChild(net);
 
@@ -4151,6 +4152,7 @@ function candCard(c, r){
   del.textContent = c.state === 'taken' ? (c.key === 'inst' ? 'certain · no fee' : 'baseline')
     : c.delta != null ? (c.delta > 0 ? '+' : '') + fmtShort(c.delta) + 'Σ'
     : c.reason || '—';
+  if (c.delta != null) del.title = 'Δ vs taken: odds-weighted';
   d.appendChild(del);
 
   const odds = document.createElement('div');
@@ -4355,14 +4357,28 @@ function render(){
         title: '(sell − buy) ÷ buy\nnegative: crossed market' }));
     tr.appendChild(tdBook);
 
-    /* ---- Outcome: the taken plan's money, stack totals only ---- */
+    /* ---- Outcome: the taken plan's money, stack totals only. The headline is the
+       REAL if-it-sells total at its odds; the odds-weighted figure the engine ranks
+       by (r.totalNet) rides on hover and in the ledger. ---- */
     const tdOut = document.createElement('td');
     tdOut.className = 'num outc';
-    tdOut.appendChild(mline(r.strategy === 'imm' ? 'net' : 'E net',
-      { t: fmtShort(r.totalNet), cell: 'totalNet',
-        copy: priceCopy(r.totalNet), title: exactTip(r.totalNet)
-          + (r.strategy === 'imm' ? '' : '\nE: odds-weighted forecast'), un: 'Σ' }));
     const m = r.metrics;
+    if (r.strategy !== 'imm' && m.chosen && m.chosen.p != null){
+      const o = m.chosen, otax = m.fees ? m.fees.tax : 0;
+      const odecay = m.decay != null ? m.decay : 1;
+      const soldTotal = o.legNet + o.listValue * (1 - otax) - o.brokerCharge - o.churn;
+      const unsoldTotal = o.legNet
+        + Math.max(0, (r.netInstant != null ? r.netInstant : 0) - o.legNet) * odecay
+        - o.brokerCharge - o.churn;
+      tdOut.appendChild(mline('if sells', { t: fmtShort(soldTotal), cell: 'totalNet',
+        copy: priceCopy(soldTotal), title: exactTip(soldTotal)
+          + `\nif unsold: ${fmtCompact(unsoldTotal)}Σ`
+          + `\nodds-weighted: ${fmtCompact(r.totalNet)}Σ`, un: 'Σ' },
+        [{ t: 'at ' + pcBound(o.p, o.bound), title: 'odds inside the window' }]));
+    } else {
+      tdOut.appendChild(mline('net', { t: fmtShort(r.totalNet), cell: 'totalNet',
+        copy: priceCopy(r.totalNet), title: exactTip(r.totalNet), un: 'Σ' }));
+    }
     if (r.strategy === 'imm'){
       const proceeds = m.inst ? m.inst.proceeds : null;
       if (proceeds != null && r.netInstant != null)
@@ -4383,7 +4399,7 @@ function render(){
       tdOut.appendChild(mline('vs instant', { t: r.advTotal == null ? '—'
           : (r.advTotal > 0 ? '+' : '') + fmtShort(r.advTotal),
         cell: 'advTotal', cls: signCls(r.advTotal), copy: priceCopy(r.advTotal),
-        title: 'listing plan net − instant net', un: r.advTotal == null ? '' : 'Σ' }));
+        title: 'odds-weighted: listing − instant', un: r.advTotal == null ? '' : 'Σ' }));
     }
     tr.appendChild(tdOut);
 

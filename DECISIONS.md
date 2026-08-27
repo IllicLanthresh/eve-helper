@@ -219,11 +219,15 @@ readout verbatim; only the Rig Slots section is applied (exact catalog names, re
 not append; reprocessing rigs become the tier by their trailing mark). Services are
 reported, never applied — mapping services to activities would be an invented rule.
 
-## E marks a forecast (owner question, 2026-08-27)
+## The row shows real outcomes, not the blend (owner call, 2026-08-27)
 
 The owner caught the label overstating: a listing plan's "net" is not realized money,
-it is the odds-weighted forecast `p × sells branch + (1−p) × give-up branch − fees` —
-the score the engine ranks by, denominated in ISK so it stays comparable to instant.
-So forecast money now carries an `E` prefix (cards' nets, the Outcome column on
-listing rows, the ledger's candidate table) and realized money stays plain (the
-instant plan, the tax/broker lines). Hovering a card's E net shows the branch split.
+it is the odds-weighted score `p × sells branch + (1−p) × give-up branch − fees` that
+the engine ranks by. An `E` prefix was tried and rejected the same day — his call:
+"a single number … the non-reduced value + an 'at X% prob'". So the row now shows the
+REAL if-it-sells total (net of fees) with its odds beside it — cards read `458kΣ at
+74%`, the Outcome column reads `if sells 458kΣ at 74%` — and the number reconciles
+with the price by arithmetic anyone can check. The blend never appears on the row:
+it lives on hover (`if unsold · odds-weighted`) and in the ledger's candidate table
+as `E net Σ`, still the sort key and the basis of every Δ, `won by`, and `vs instant`
+margin, which the tooltips say. The instant plan's net stays plain — it is realized.
