@@ -208,7 +208,9 @@ direction approved:
 - **Demand vs supply as one glance** (owner interview): sell and buy flow are a pair
   with a split bar whose divide IS the sell share; the tracker correction is a
   provenance line under the flow it corrects, amber only when big enough to distrust.
-- The sparkline column leaves the collapsed row; the chart lives in the ledger.
+- The sparkline column STAYS on the collapsed row, deviating from the canvas: it is
+  the ledger's entry point (hover to open, click to pin — decision 18) and the
+  trend at a glance. The full chart and the ledger live in the expanded row.
 
 ## Ship-scan paste (owner request, 2026-08-26)
 

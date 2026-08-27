@@ -190,6 +190,12 @@ H.run('density', async () => {
         cells,
         chips: [...document.querySelectorAll('#tblBody .flag')].map(f => ({ t: f.textContent, tip: f.title })),
         planTips: [...document.querySelectorAll('#tblBody .badge')].map(b => b.title),
+        outcomeLines: [...document.querySelectorAll('#tblBody td.outc .mline')].map(d => ({
+          v: (d.querySelector('.mval span') || {}).textContent || '',
+          un: (d.querySelector('.un') || {}).textContent || null })),
+        cardUnits: [...document.querySelectorAll('#tblBody .cand')].map(c => ({
+          price: ((c.querySelector('.cprice .un') || {}).textContent) ?? null,
+          net: ((c.querySelector('.cnet .un') || {}).textContent) ?? null })),
         summary: document.getElementById('summary').textContent,
         statLabels: [...document.querySelectorAll('#summary .stat span')].map(x => x.textContent),
         fltCount: document.getElementById('fltCount').textContent,
@@ -263,11 +269,21 @@ H.run('density', async () => {
     });
     eq('no cell is clipped mid-value', JSON.stringify(clipped), '[]');
 
-    check('the plan tooltip is lines, not a paragraph',
-
-      sell.planTips.length > 0 && sell.planTips.every(t =>
-        t.split('\n').every(l => l.length <= TIP_LINE_MAX) && !/\. [A-Z]/.test(t)),
+    /* RETIRED with the redesign, and inverted: the plan badge carried a six-line
+       narrative tooltip. The gate line and the candidate cards put those numbers ON
+       the row, so a badge with a tooltip would be a fact hidden twice. */
+    check('the plan badge is mute — its numbers live on the row',
+      sell.planTips.length > 0 && sell.planTips.every(t => t === ''),
       JSON.stringify(sell.planTips));
+    /* Unit discipline: a bare number is banned. Money in the Outcome column carries Σ,
+       a candidate card's price carries /u and its net carries Σ. */
+    check('every Outcome money line carries its Σ',
+      sell.outcomeLines.length > 0 && sell.outcomeLines.every(x => x.un === 'Σ' || x.v === '—'),
+      JSON.stringify(sell.outcomeLines));
+    check('every candidate price carries /u and every candidate net carries Σ',
+      sell.cardUnits.length > 0 && sell.cardUnits.every(x =>
+        (x.price === null || x.price === '/u') && (x.net === null || x.net === 'Σ')),
+      JSON.stringify(sell.cardUnits));
     for (const [what, txt] of [['the summary', sell.summary], ['the filter count', sell.fltCount],
       ['the import echo', sell.impEcho], ['the fetch status', sell.esiStatus],
       ['the unpriced list', sell.unpriced]])

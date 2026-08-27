@@ -260,14 +260,10 @@ const rowOf = (page, name) => page.evaluate(n => {
   if (!r) return null;
   const head = [...document.querySelectorAll('#tblBody tr.a')]
     .find(x => x.querySelector('.nm') && x.querySelector('.nm').textContent === n);
-  const pair = head ? [head, head.nextElementSibling] : [];
   const cellOf = k => {
-    for (const tr of pair){
-      if (!tr) continue;
-      const el = tr.querySelector(`[data-cell="${k}"]`);
-      if (el) return { text: el.textContent, tip: el.title, copy: el.dataset.copy || '' };
-    }
-    return { text: '(no such column)', tip: '', copy: '' };
+    const el = head && head.querySelector(`[data-cell="${k}"]`);
+    return el ? { text: el.textContent, tip: el.title, copy: el.dataset.copy || '' }
+              : { text: '(no such column)', tip: '', copy: '' };
   };
   return { volDay: r.volDay, volSell: r.volSell, volBuy: r.volBuy, capture: r.capture,
     volSrc: r.volSrc, volState: r.volState, volHeldDays: r.volHeldDays,
@@ -539,10 +535,17 @@ H.run('tracker-model', async () => {
     }
     const bigCorr = corrRows.find(r => r.c.ratio > 1.1);
     if (bigCorr){
-      check('a correction worth noticing is on the row as a chip',
-        bigCorr.flags.some(t => /^vol ×/.test(t)), JSON.stringify(bigCorr.flags));
+      const corrLine = await s2.page.evaluate(n => {
+        const tr = [...document.querySelectorAll('#tblBody tr.a')]
+          .find(x => x.querySelector('.nm') && x.querySelector('.nm').textContent === n);
+        const el = tr && tr.querySelector('.corr');
+        return el ? el.textContent : null;
+      }, bigCorr.name);
+      check('a correction worth noticing is on the row, under the flow it corrects',
+        corrLine != null && /^A4E ×[\d.]+ · saw \d+%$/.test(corrLine), JSON.stringify(corrLine));
     } else {
-      check('a correction worth noticing is on the row as a chip', false, 'no row corrected past 1.1');
+      check('a correction worth noticing is on the row, under the flow it corrects',
+        false, 'no row corrected past 1.1');
     }
     /* volUnitsSell/Buy are the RAW counts — what the tracker saw, uncorrected. The share
        computed from them has to equal the share on the row, which is the whole claim: a
@@ -637,7 +640,7 @@ H.run('tracker-model', async () => {
 
     section('the split is a column, not a number with the split hidden on hover');
     const cols = await s2.page.evaluate(() => {
-      const th = [...document.querySelectorAll('#tbl thead th')];
+      const th = [...document.querySelectorAll('#tbl > thead th')];
       const ord = [...document.querySelectorAll('#ordTbl thead th')];
       const tsv = fullTsv().split('\n');
       return {
@@ -658,8 +661,7 @@ H.run('tracker-model', async () => {
     const flow = await s2.page.evaluate(() => {
       const tr = [...document.querySelectorAll('#tblBody tr.a')]
         .find(x => x.querySelector('.nm').textContent === 'Tritanium');
-      const pair = [tr, tr.nextElementSibling];
-      const get = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`)).find(Boolean);
+      const get = k => tr.querySelector(`[data-cell="${k}"]`);
       const cell = k => { const e = get(k); return e && { text: e.textContent, tip: e.title,
         td: e.closest('td').dataset.cell || e.closest('td').className }; };
       const s = get('volSell'), b2 = get('volBuy'), c = get('capture');
@@ -667,8 +669,8 @@ H.run('tracker-model', async () => {
         sameCell: s.closest('td') === b2.closest('td') && b2.closest('td') === c.closest('td'),
         order: s.compareDocumentPosition(b2) & Node.DOCUMENT_POSITION_FOLLOWING
              && b2.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING,
-        flowHead: [...document.querySelectorAll('#tbl thead th')]
-          .find(x => x.dataset.key === 'volDay').title };
+        flowHead: [...document.querySelectorAll('#tbl > thead th')]
+          .find(x => x.dataset.key === 'volSell').title };
     });
     check('the sell side is rendered text, not a tooltip',
       flow.sell && flow.sell.text && flow.sell.text !== '', JSON.stringify(flow.sell));
@@ -676,7 +678,7 @@ H.run('tracker-model', async () => {
       JSON.stringify(flow.buy));
     check('...and the per-item share', flow.cap && flow.cap.text && flow.cap.text !== '',
       JSON.stringify(flow.cap));
-    check('all three sit together under the regional figure they qualify', flow.sameCell);
+    check('all three sit together in the Market cell', flow.sameCell);
     check('...in the order sell, buy, share', !!flow.order);
     check('each still explains itself on hover, without the hover carrying the number',
       [flow.sell, flow.buy, flow.cap].every(c => c.tip && c.tip.split('\n').every(l => l.length <= 130)),
@@ -997,9 +999,7 @@ H.run('tracker-model', async () => {
       const r = state.rows.find(x => x.name === 'Tritanium');
       const head = [...document.querySelectorAll('#tblBody tr.a')]
         .find(x => x.querySelector('.nm').textContent === 'Tritanium');
-      const pair = [head, head.nextElementSibling];
-      const tip = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`))
-        .find(Boolean).title.split('\n')[0];
+      const tip = k => head.querySelector(`[data-cell="${k}"]`).title.split('\n')[0];
       return {
         sell: tip('volSell'), buy: tip('volBuy'),
         held: `sell side: ${fmt.format(Math.round(r.volUnitsSell))} u over ${r.volHeldDays}d held`,

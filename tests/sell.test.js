@@ -592,17 +592,17 @@ H.run('sell', async () => {
 
     const sortState = await s3.page.evaluate(() => {
       const before = { k: state.sortKey, d: state.sortDir };
-      document.querySelector('#tbl thead th.nosort').click();
+      document.querySelector('#tbl > thead th.nosort').click();
       return { before: before, after: { k: state.sortKey, d: state.sortDir } };
     });
     eq('# is not a sort key — clicking it changes nothing',
       JSON.stringify(sortState.after), JSON.stringify(sortState.before));
     eq('...and it does not offer a sort cursor either',
-      await s3.page.$eval('#tbl thead th.nosort', el => getComputedStyle(el).cursor), 'default');
+      await s3.page.$eval('#tbl > thead th.nosort', el => getComputedStyle(el).cursor), 'default');
 
     section('every column in the Sell table says what it is');
     const heads = await s3.page.evaluate(() =>
-      [...document.querySelectorAll('#tbl thead th')].map(th => ({ t: th.textContent, tip: th.title })));
+      [...document.querySelectorAll('#tbl > thead th')].map(th => ({ t: th.textContent, tip: th.title })));
     const mute = heads.filter(h => !h.tip.trim()).map(h => h.t);
     eq('no header is left unexplained', JSON.stringify(mute), '[]');
     const hashTip = heads.find(h => h.t === '#').tip;
@@ -619,8 +619,8 @@ H.run('sell', async () => {
     const rateTip = await s3.page.evaluate(() => ({
       unrated: state.rows.filter(r => r.strategy !== 'imm' && r.perSlot == null).length,
       total: state.rows.length,
-      // ISK/slot-day shares the Net ISK column now, so its heading carries the count
-      tip: document.querySelector('#tbl thead th[data-key="totalNet"]').title,
+      // ISK/slot-day is the Rank column now, so its own heading carries the count
+      tip: document.querySelector('#tbl > thead th[data-key="perSlot"]').title,
     }));
     check('this fixture is fetched without history, so there are no rates',
       rateTip.unrated > 0, JSON.stringify(rateTip));
@@ -862,7 +862,7 @@ H.run('sell', async () => {
 
     section('the exports come out in the order on screen');
     await s3.page.click('#btnAll');
-    await s3.page.click('#tbl thead th[data-key="name"]');
+    await s3.page.click('#tbl > thead th[data-key="name"]');
     await s3.page.waitForFunction(() => state.sortKey === 'name');
     const ordered = await s3.page.evaluate(() => ({
       view: [...document.querySelectorAll('#tblBody tr.a')]
@@ -1487,7 +1487,7 @@ H.run('sell', async () => {
       String(bait.exportPrice));
     const baitTip = await p4.evaluate(() => {
       const r = state.rows.find(x => x.name === 'Bait Trinket');
-      const tr = [...document.querySelectorAll('#tblBody tr.b')].find(x => x.dataset.key === r.key);
+      const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.dataset.key === r.key);
       const td = tr && tr.querySelector('[data-cell="bestSell"]');
       return { text: td ? td.textContent : null, tip: td ? td.title : null,
                skipped: (r.metrics.skipped || []).map(x => x.p) };
@@ -1781,32 +1781,37 @@ H.run('sell', async () => {
        quietly leaves ISK on the table and never mentions it. */
     const blocked = await p4.evaluate(() => {
       const r = state.rows.find(x => x.name === 'Patience Widget');
-      // the chips sit on line 2 with the rest of the evidence: on line 1 they competed
-      // with the item name for width, and the name lost
-      const tr = [...document.querySelectorAll('#tblBody tr.b')].find(x => x.dataset.key === r.key);
-      const td = tr && tr.children[0];
+      // a refused listing is a CARD on the row now: its price, its Δ vs the plan taken
+      // and its odds against the floor are visible without any hover at all
+      const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.dataset.key === r.key);
+      const card = tr && [...tr.querySelectorAll('.cand.blk')][0];
       return {
         floorCost: r.metrics.floorCost, netInstant: r.netInstant,
         blockedNet: r.metrics.floorBest ? r.metrics.floorBest.net : null,
-        chips: td ? [...td.querySelectorAll('.flag')].map(c => ({ t: c.textContent, ttl: c.title })) : [],
+        minFill: r.minFill,
+        card: card ? {
+          state: card.querySelector('.cst').textContent,
+          delta: card.querySelector('.cdel').textContent,
+          odds: card.querySelector('[data-cell="blockedP"]')
+            ? card.querySelector('[data-cell="blockedP"]').textContent : null,
+          tick: card.querySelector('.obar>i') ? card.querySelector('.obar>i').style.left : null,
+        } : null,
       };
     });
     check('the blocked listing was worth more than the plan that was taken',
       blocked.floorCost > 0, String(blocked.floorCost));
     near('...by exactly the difference between the two', blocked.floorCost,
       blocked.blockedNet - blocked.netInstant, 1e-9);
-    const fc = blocked.chips.find(c => /^floor /.test(c.t));
-    check('...and the row says so, in ISK, on a chip', !!fc, JSON.stringify(blocked.chips.map(c => c.t)));
-    check('...the chip staying a chip', fc && fc.t.length <= 12, fc && fc.t);
-    /* Facts, one per line, no sentences: the owner asked for named numbers, not prose. */
-    check('...with the price, the gain, the odds and the floor on its tooltip, as bare facts',
-      fc && /^blocked at: [\d,.]+$/m.test(fc.ttl)
-        && /^vs plan taken: \+[\d,.]+ ISK$/m.test(fc.ttl)
-        && /^odds: \d+%$/m.test(fc.ttl)
-        && /^floor: \d+%$/m.test(fc.ttl)
-        && /^fee at risk: [\d,.]+ ISK$/m.test(fc.ttl), fc && fc.ttl);
-    check('...every line of it a key and a value, none of them a sentence',
-      fc && fc.ttl.split('\n').every(l => /^[^:]{1,18}: .{1,26}$/.test(l)), fc && fc.ttl);
+    check('...and the row shows it as a BLOCKED card', blocked.card
+      && blocked.card.state === 'BLOCKED', JSON.stringify(blocked.card));
+    check('...whose Δ is the ISK the floor left on the table',
+      blocked.card && blocked.card.delta.startsWith('+')
+        && blocked.card.delta.endsWith('Σ'), blocked.card && blocked.card.delta);
+    check('...with its odds visible, not hidden behind a hover',
+      blocked.card && /%/.test(blocked.card.odds || ''), blocked.card && blocked.card.odds);
+    check('...and the floor drawn on the odds bar as a tick',
+      blocked.card && blocked.card.tick === Math.round(blocked.minFill * 100) + '%',
+      blocked.card && blocked.card.tick);
 
     await setPatience(p4, 30, 35);
     const patient = await decisionRow(p4, 'Patience Widget');
@@ -1875,14 +1880,13 @@ H.run('sell', async () => {
 
     section('the new columns are exported and copyable');
     const cols = await p4.evaluate(() => {
-      const heads = [...document.querySelectorAll('#tbl thead th')].map(th => th.textContent.trim());
+      const heads = [...document.querySelectorAll('#tbl > thead th')].map(th => th.textContent.trim());
       const tr = [...document.querySelectorAll('#tblBody tr.a')].find(x => x.querySelector('.nm').textContent === 'Steady Trinket');
-      const pair = [tr, tr.nextElementSibling];
-      const at = k => pair.map(t => t && t.querySelector(`[data-cell="${k}"]`)).find(Boolean);
+      const at = k => tr.querySelector(`[data-cell="${k}"]`);
       const tsv = fullTsv().split('\n');
       return {
         heads,
-        keys: [...document.querySelectorAll('#tbl thead th')].map(th => th.dataset.key),
+        keys: [...document.querySelectorAll('#tbl > thead th')].map(th => th.dataset.key),
         chance: at('fillChance').textContent,
         slot: at('perSlot').dataset.copy,
         fill: at('fillDays').dataset.copy,
@@ -1908,8 +1912,10 @@ H.run('sell', async () => {
       cols.heads[3] + '/' + cols.keys[3]);
     // PATIENT, not LIST-PATIENT: the long form wrapped to two lines in a 74px column
     check('the plan cell reads as an action', /PATIENT/.test(cols.planCell), cols.planCell);
-    check('...and hovering it gives the numbers behind it',
-      /ISK\/slot-day/.test(cols.planTitle) && /% in \d+d/.test(cols.planTitle), cols.planTitle);
+    check('...and the numbers behind it sit ON the row, not behind a hover: the badge is mute',
+      cols.planTitle === '', JSON.stringify(cols.planTitle));
+    check('...the gate line naming the floor and what the verdict won by',
+      /floor/i.test(cols.planCell) && /won by/i.test(cols.planCell), cols.planCell.slice(0, 120));
     check('the chance cell shows a percentage', /%$/.test(cols.chance), cols.chance);
     check('the slot-day cell copies its raw value', Number(cols.slot) > 0, cols.slot);
     check('the fill cell copies its raw value', Number(cols.fill) >= 0, cols.fill);
@@ -2093,7 +2099,7 @@ H.run('sell', async () => {
       return {
         openKey: state.openDetail,
         colSpan: d.querySelector('td').colSpan,
-        headers: document.querySelectorAll('#tbl thead th').length,
+        headers: document.querySelectorAll('#tbl > thead th').length,
         points: Number(svg.querySelector('[data-series]').dataset.points),
         band: !!svg.querySelector('[data-band]'),
         bars: svg.querySelectorAll('[data-vol]').length,
@@ -2101,9 +2107,13 @@ H.run('sell', async () => {
         zeroHeight: [...svg.querySelectorAll('[data-vol]')].every(rc => Number(rc.getAttribute('height')) > 0),
         markers: [...svg.querySelectorAll('[data-marker]')].map(l => l.dataset.marker),
         labels: [...svg.querySelectorAll('[data-marker-label]')].map(t => t.textContent),
-        nums: [...d.querySelectorAll('.chart-nums div')].map(x => x.querySelector('span').textContent),
-        values: [...d.querySelectorAll('.chart-nums b')].map(x => x.textContent),
-        why: d.querySelector('.chart-why').textContent,
+        ledgerSecs: [...d.querySelectorAll('.ledger .lsech h4')].map(x => x.textContent),
+        ledgerFacts: [...d.querySelectorAll('.ledger .fact .fk')].map(x => x.textContent),
+        ledgerSet: [...d.querySelectorAll('.ledger .fact.set .fk')].map(x => x.textContent),
+        candRows: d.querySelectorAll('.ledger table.ct tbody tr').length,
+        candStates: [...d.querySelectorAll('.ledger table.ct .pill')].map(x => x.textContent),
+        fxNet: d.querySelector('.ledger .fx .tot') ? d.querySelector('.ledger .fx .tot').textContent : null,
+        gateBoxes: d.querySelectorAll('.ledger .gates .gbox').length,
         aria: svg.getAttribute('aria-label'),
         expanded: document.querySelector('#tblBody tr.open td.spark').getAttribute('aria-expanded'),
         rows: document.querySelectorAll('#tblBody tr.detail').length,
@@ -2123,11 +2133,23 @@ H.run('sell', async () => {
       det.markers.includes('sell') && det.markers.includes('patient')
       && det.labels.some(t => /best sell/.test(t)) && det.labels.some(t => /patient price/.test(t)),
       JSON.stringify(det.labels));
-    // REWRITTEN with the column it restates: the odds cell is a share of the stack now
-    eq('the row’s decision numbers are restated under the chart',
-      det.nums.join(','), 'plan,net ISK,fill est. d,fill,ISK/slot-day');
-    check('...with real values', det.values.every(v => v && v !== ''), JSON.stringify(det.values));
-    check('...and the same key: value why', /^(INSTANT|LIST) /.test(det.why), det.why);
+    /* REWRITTEN: the chart footer is the decision LEDGER now — the narrative why-block
+       became sections a reader can check: measured inputs with their sources, the
+       owner's settings in violet, one line per candidate with its state, and the gate. */
+    check('the ledger opens with the measured inputs and the settings',
+      det.ledgerSecs.includes('Measured') && det.ledgerSecs.includes('Your settings'),
+      det.ledgerSecs.join('|'));
+    check('...every measured fact named', ['top buy', 'best sell', 'history ref', 'trend']
+      .every(k => det.ledgerFacts.includes(k)), det.ledgerFacts.join('|'));
+    check('...the settings marked as the owner\u2019s, not the market\u2019s',
+      ['patience window', 'fill floor', 'broker', 'sales tax']
+        .every(k => det.ledgerSet.includes(k)), det.ledgerSet.join('|'));
+    check('every candidate the engine built is a ledger line with a state',
+      det.candRows >= 3 && det.candStates.length === det.candRows
+      && det.candStates.includes('TAKEN'),
+      det.candRows + ' rows · ' + det.candStates.join('|'));
+    check('the gate runs in steps and ends in a result', det.gateBoxes === 4,
+      String(det.gateBoxes));
     check('the chart is labelled for a screen reader',
       /days of price history/.test(det.aria) && /daily traded volume/.test(det.aria), det.aria);
 
@@ -2197,7 +2219,7 @@ H.run('sell', async () => {
     await setPatience(p7, 30, 35);
     eq('a re-rank keeps the chart open on the same row',
       await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
-    await p7.click('#tbl thead th[data-key=name]');
+    await p7.click('#tbl > thead th[data-key=name]');
     eq('...and so does a re-sort',
       await p7.evaluate(() => document.querySelectorAll('#tblBody tr.detail').length), 1);
     await setPatience(p7, 14, 55);
