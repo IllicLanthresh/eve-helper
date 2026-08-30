@@ -518,6 +518,11 @@ function fillBody(body, rec){
       'the owner-set job tax — no ESI endpoint\nread it off the in-game industry window'
       + '\nused by the Industry tool for every job run here',
       v => { S.update(rec.id, { facilityTax: v }); redraw(); }),
+    numField('reproTaxPct', 'reprocessing tax %', f.reproTaxPct,
+      'the owner-set reprocessing tax — no ESI endpoint\nread it off the in-game reprocess window'
+      + '\nused by the Industry tool to cost minerals sourced from compressed ore'
+      + '\nunset: that tool keeps ore sourcing OFF rather than assume 0',
+      v => { S.update(rec.id, { reproTaxPct: v }); redraw(); }),
   );
   const rHint = document.createElement('span');
   rHint.className = 'hint';
@@ -758,7 +763,8 @@ function fillBody(body, rec){
   actHint.title = 'what the structure can run'
     + '\nwhich activities a profile routes here, and for which products, stays in that profile'
     + '\nreprocessing: not an industry job — no blueprint, no slot, no ME/TE'
-    + '\nit comes from the refinery hull plus the rig above, read by the Mine tool';
+    + '\nit lives on this record instead: hull + rig + reprocessing tax'
+    + '\nread by the Mine tool (refine yield) and the Industry tool (minerals via compressed ore)';
   actBox.appendChild(actHint);
   body.appendChild(actBox);
 

@@ -11,7 +11,7 @@ const ORDER = ['industry.test.js', 'fees.test.js', 'sell.test.js', 'orders.test.
   'tracker-mock.test.js', 'tracker-model.test.js',
   'auth.test.js', 'structures.test.js', 'structures-manager.test.js', 'industry-ui.test.js',
   'density.test.js', 'sde.test.js', 'global-market.test.js', 'structure-scan.test.js',
-  'refine.test.js', 'industry-reproc.test.js'];
+  'refine.test.js', 'industry-reproc.test.js', 'industry-repro-ui.test.js'];
 
 const found = fs.readdirSync(__dirname).filter(f => f.endsWith('.test.js'));
 const suites = ORDER.filter(f => found.includes(f)).concat(found.filter(f => !ORDER.includes(f)));

@@ -143,6 +143,18 @@
   .invpanel td:first-child,.invpanel th:first-child{text-align:left;font-family:inherit}
   .invpanel tr.pick td{color:var(--cyan)}
   .dsummary.batchpanel{border-top:1px dashed var(--line);padding-top:7px}
+  /* the ore-sourcing panel: the mix bought, the basket covered, the excess left over */
+  .srcpanel{border-top:1px dashed var(--line);padding-top:7px;margin-bottom:8px;font-size:12px}
+  .srcpanel .srchead{color:var(--text);margin-bottom:5px}
+  .srcpanel .srchead b{font-family:var(--mono)}
+  .srcpanel table{border-collapse:collapse;margin:4px 18px 6px 0;display:inline-table;vertical-align:top}
+  .srcpanel th{color:var(--dim);font-weight:400;text-align:left;padding:1px 12px 1px 0;font-size:11px}
+  .srcpanel td{padding:1px 12px 1px 0;font-family:var(--mono)}
+  .srcpanel td.r,.srcpanel th.r{text-align:right}
+  .srcpanel .foot{color:var(--dim);font-size:11px;margin-top:3px}
+  .srcpanel .warn{color:var(--warn)}
+  .oretag{display:inline-block;margin-left:5px;padding:0 4px;border-radius:3px;font-size:10px;
+    background:#14332a;color:var(--ok, #6fcf97);cursor:help}
   .thinflag{cursor:help}
   .refflag{cursor:help;font-size:11px}
   #copyPad{position:fixed;left:-9999px;top:0;width:10px;height:10px}
@@ -230,6 +242,29 @@
       <div class="grow"><span id="roleWarn" class="hint warn"></span></div>
     </fieldset>
     <fieldset class="grp">
+      <legend>reprocessing</legend>
+      <div class="grow">
+        <label class="inl" title="price each plan's mineral basket via compressed ore refined at your structure&#10;adopted only when it beats buying the minerals — losing routes are still shown in the drilldown">
+          <input type="checkbox" id="rpOn"> source minerals via compressed ore</label>
+      </div>
+      <div class="grow">
+        <label class="inl">refinery <button id="rpPick" type="button" class="mini">pick…</button>
+          <span id="rpFac" class="hint"></span></label>
+      </div>
+      <div class="grow">
+        <label class="inl" title="whose skills refine — Reprocessing, Efficiency and the per-ore skills&#10;an ore whose exact skill is untrained is excluded: the game will not reprocess it">reprocessor
+          <select id="roleRepro" class="roleSel" style="width:150px"></select></label>
+        <label class="inl" title="clone implants are not in ESI — set by hand">implant
+          <select id="rpImp" style="width:70px">
+            <option value="0">none</option><option value="1">+1%</option>
+            <option value="2">+2%</option><option value="4">+4%</option>
+          </select></label>
+        <label class="inl" title="used ONLY when the reprocessor's skills are unavailable — typing a value turns flat-yield mode on&#10;flat mode applies one yield to every ore and skips the per-ore skill check">flat %
+          <input id="rpFlat" type="number" step="0.1" min="0" max="100" style="width:70px" placeholder="off"></label>
+      </div>
+      <div class="grow"><span id="rpNote" class="hint"></span></div>
+    </fieldset>
+    <fieldset class="grp">
       <legend>shipping (per direction)</legend>
       <div class="grow">
         <label class="inl">base <input id="shipBase" type="number" step="1000" min="0" style="width:110px"></label>
@@ -313,7 +348,7 @@
         <th data-key="name">Item</th>
         <th data-key="cat">Category</th>
         <th data-key="meta">Meta</th>
-        <th data-key="cost" class="num" title="materials + job fees + shipping both ways&#10;invention amortized">Cost/Item</th>
+        <th data-key="cost" class="num" title="materials + job fees + shipping both ways&#10;invention amortized&#10;an ·ore· tag: minerals sourced via compressed-ore reprocessing — the drilldown shows the mix">Cost/Item</th>
         <th data-key="rev" class="num" title="net of broker + sales tax at Jita">Revenue/Item</th>
         <th data-key="profit" class="num">Profit/Item</th>
         <th data-key="margin" class="num" title="profit ÷ revenue">Margin %</th>
@@ -384,6 +419,7 @@
 <textarea id="copyPad" tabindex="-1" aria-hidden="true"></textarea>
 <script src="auth.js"></script>
 <script src="structures.js"></script>
+<script src="refine.js"></script>
 <script src="industry-engine.js"></script>
 <script src="sde.js"></script>
 <script>
@@ -504,13 +540,25 @@ async function readStatic(){
     return null;
   }
 }
+/* Ore yields for the reprocessing sourcing — through SDE.load like everything else, so
+   a refreshed SDE serves BOTH blobs from the same local record and the two can never
+   skew (decision 20). Failure here never touches #sdeStatus: the feature reports its
+   own absence in the reprocessing fieldset instead. */
+let oresBlob = null, oresErr = null;
+async function readOres(){
+  try{
+    const got = await SDE.load('ores');
+    if (!got.data || !got.data.ores) throw new Error('unexpected ore data shape');
+    oresBlob = got; oresErr = null;
+  }catch(e){ oresBlob = null; oresErr = e.message || String(e); }
+}
 async function loadStatic(){
   sdeBar = SDE.mountStatus($('sdeStatus'), {
     summary: () => D
       ? `${fmt0.format(Object.keys(D.blueprints).length)} blueprints · `
         + `${fmt0.format(Object.keys(D.types).length)} types · ${fmt0.format(PRODUCTS.length)} products`
       : '',
-    onUpdated: readStatic,
+    onUpdated: async got => { await readOres(); clearEngines(); markStale(); return readStatic(got); },
   });
   sdeBar.ready(await readStatic());
 }
@@ -864,7 +912,7 @@ function defaultProfile(name){
     facilities: [],
     market: { auto: true, inputSide: 'sell', outputSide: 'sellOrder',
               brokerPct: 3, taxPct: 7.5, buyerBrokerPct: 3,
-              buyerChar: act, sellerChar: act, manufChar: act },
+              buyerChar: act, sellerChar: act, manufChar: act, reproChar: act },
     shipping: { base: 10000000, perM3: 653.4, collateralPct: 1, roundUp: true, inbound: true, outbound: true },
     assumptions: { ownedBpoMe: 10, ownedBpoTe: 20, decryptor: 'auto', sccPct: 4 },
     planning: { capital: null, slots: { man: null, science: null, reaction: null },
@@ -876,7 +924,15 @@ function defaultProfile(name){
 function normalizeProfile(p){
   const m = p.market || (p.market = {});
   if (m.buyerBrokerPct == null) m.buyerBrokerPct = m.brokerPct != null ? m.brokerPct : 3;
-  for (const k of ['buyerChar', 'sellerChar', 'manufChar']) if (m[k] === undefined) m[k] = null;
+  for (const k of ['buyerChar', 'sellerChar', 'manufChar', 'reproChar']) if (m[k] === undefined) m[k] = null;
+  // ore sourcing ships off, flat yield ships NULL: absent skills then REFUSE rather
+  // than assume — no guessed yield may ever steer a displayed cost
+  if (!p.repro || typeof p.repro !== 'object')
+    p.repro = { enabled: false, ref: null, implantPct: 0, flatPct: null };
+  if (p.repro.enabled === undefined) p.repro.enabled = false;
+  if (p.repro.ref === undefined) p.repro.ref = null;
+  if (p.repro.implantPct == null) p.repro.implantPct = 0;
+  if (p.repro.flatPct === undefined) p.repro.flatPct = null;
   const pl = p.planning || (p.planning = {});
   if (pl.capital === undefined) pl.capital = null;
   pl.slots = Object.assign({ man: null, science: null, reaction: null }, pl.slots || {});
@@ -1474,7 +1530,7 @@ function fillDecOptions(){
    sell-order broker, MANUFACTURER's skills drive job times / invention / slots and
    their owned blueprints win merge ties. A selected character that logged out falls
    back to the active (else first) logged-in character, with an inline warning. ----- */
-const ROLE_KEYS = { roleBuyer: 'buyerChar', roleSeller: 'sellerChar', roleManuf: 'manufChar' };
+const ROLE_KEYS = { roleBuyer: 'buyerChar', roleSeller: 'sellerChar', roleManuf: 'manufChar', roleRepro: 'reproChar' };
 function roleCharId(key){
   const chars = window.EveAuth ? EveAuth.characters() : [];
   if (!chars.length) return null;
@@ -1491,6 +1547,87 @@ function roleCharName(key){
 function manufAllSkills(){
   const id = roleCharId('manufChar');
   return window.EveAuth && EveAuth.allSkills ? EveAuth.allSkills(id != null ? id : undefined) : null;
+}
+
+/* ---------- ore sourcing: page-side state ----------
+   The page owns every yield number: candidates are built with EveRefine (the ONE refine
+   model), skill-gated per ore, and handed to the engine as finished pcts. Anything
+   missing turns the feature OFF with a named chip — never a guessed value. */
+const reproSkillsTried = new Set();
+function reproSkills(){
+  const id = roleCharId('reproChar');
+  if (id == null) return null;
+  const sk = window.EveAuth && EveAuth.skills ? EveAuth.skills(id) : null;
+  if (sk && sk.groups && Object.keys(sk.groups).length) return sk;
+  if (window.EveAuth && EveAuth.fetchSkills && !reproSkillsTried.has(id)){
+    reproSkillsTried.add(id);
+    EveAuth.fetchSkills(id)
+      .catch(e => console.error('reprocessor skills fetch failed:', e))
+      .finally(() => { clearEngines(); renderReproNote(); markStale(); });
+  }
+  return sk && sk.groups && Object.keys(sk.groups).length ? sk : null;
+}
+function reproState(){
+  const p = activeProfile();
+  const pr = p.repro || { enabled: false };
+  if (!pr.enabled) return { cfg: null, off: [], enabled: false };
+  const off = [];
+  if (!oresBlob) off.push('no ore data' + (oresErr ? ` (${oresErr})` : ''));
+  else if (D && D.build && oresBlob.build && D.build !== oresBlob.build)
+    off.push('ore data from a different SDE build — refresh via the status bar');
+  const rec = pr.ref != null && window.EveStructures ? EveStructures.get(pr.ref) : null;
+  if (pr.ref == null) off.push('no refinery picked');
+  else if (!rec) off.push('refinery record gone — re-pick, or restore it in the manager');
+  const facts = rec && window.EveStructures ? EveStructures.facts(rec.id) : null;
+  if (rec && !rec.refinery) off.push('not a refinery hull — an Athanor or Tatara refines');
+  if (rec && rec.security == null) off.push('security unknown — refresh the record in the manager');
+  if (facts && facts.reproTaxPct == null)
+    off.push('reprocessing tax unset — set it on the structure record (0 is never assumed)');
+  const sk = reproSkills();
+  const flat = pr.flatPct;
+  if (!sk && flat == null) off.push('skills not fetched — topbar ↻, or type a flat %');
+  if (off.length) return { cfg: null, off, enabled: true };
+
+  const fac = { refinery: rec.refinery, rig: facts.reproRig, sec: EveRefine.secBandOf(rec.security) };
+  const env = {
+    charSkills: sk, base: EveRefine.basePct(fac), implantPct: pr.implantPct || 0,
+    flatPct: flat,
+    allSkills: () => (window.EveAuth && EveAuth.allSkills
+      ? EveAuth.allSkills(roleCharId('reproChar')) : null),
+  };
+  const flatMode = !sk;
+  const ores = [], oresD = oresBlob.data;
+  for (const o of Object.values(oresD.ores)){
+    if (o.c == null || !o.m || !o.m.length) continue;
+    const sName = o.s != null ? (oresD.types[o.s] || 'type ' + o.s) : null;
+    const y = EveRefine.yieldFor(sName, o.s, env);
+    if (y.pct == null || !(y.pct > 0)) continue;
+    /* the game REQUIRES the exact skill: an ore whose skill is untrained (or whose
+       level cannot be read) cannot be reprocessed at all, so it never becomes a
+       candidate. Flat mode is the owner asserting one yield by hand — the check
+       cannot run there, and the note says so. */
+    if (!flatMode && o.s != null && (y.level === 0 || y.levelKnown === false)) continue;
+    ores.push({ cTid: o.c, name: oresD.types[o.c] || ('Compressed ' + o.n),
+                portion: o.p, cVol: o.cv != null ? o.cv : o.v, outputs: o.m, pct: y.pct });
+  }
+  if (!ores.length) return { cfg: null, off: ['no reprocessable ore has a trained skill'], enabled: true };
+  return {
+    cfg: { ores, taxPct: facts.reproTaxPct, outputsFor: EveRefine.outputsFor },
+    off: flatMode ? [`flat ${flat}% yield — per-ore skills UNCHECKED`] : [],
+    enabled: true, fac, facName: rec.name, base: env.base, flatMode, oreCount: ores.length,
+  };
+}
+// a short signature of everything the repro config is derived from — part of the
+// engine-cache key, so a stale engine can never serve a fresh config
+function reproSig(){
+  const p = activeProfile();
+  const pr = p.repro || {};
+  const rec = pr.ref != null && window.EveStructures ? EveStructures.get(pr.ref) : null;
+  const f = rec && window.EveStructures ? EveStructures.facts(rec.id) : null;
+  const sk = pr.enabled ? reproSkills() : null;
+  return JSON.stringify([!!pr.enabled, pr.ref, pr.implantPct, pr.flatPct,
+    rec && rec.security, rec && rec.refinery, f && f.reproRig, f && f.reproTaxPct,
+    sk && sk.fetched, oresBlob && oresBlob.build]);
 }
 function renderRoles(){
   const p = activeProfile();
@@ -1542,6 +1679,31 @@ function renderPlanningNote(){
   for (const [k, id] of [['man', 'plSlotMan'], ['science', 'plSlotSci'], ['reaction', 'plSlotRea']])
     $(id).placeholder = String(d[k]);
 }
+/* the reprocessing fieldset's status line: every reason the feature is off, or what it
+   is on WITH — the same refusal-over-guess rule the rest of the tool lives by */
+function renderReproNote(){
+  const st = reproState();
+  const p = activeProfile();
+  const rec = p.repro && p.repro.ref != null && window.EveStructures
+    ? EveStructures.get(p.repro.ref) : null;
+  $('rpFac').textContent = rec ? `${rec.name}` : p.repro && p.repro.ref != null ? 'record gone' : 'none';
+  $('rpFac').title = rec ? 'facts read live from the Structure Manager record'
+    + `\nrig: ${EveStructures.facts(rec.id).reproRig} · repro tax: `
+    + (EveStructures.facts(rec.id).reproTaxPct == null ? 'unset' : EveStructures.facts(rec.id).reproTaxPct + '%') : '';
+  const el = $('rpNote');
+  if (!st.enabled){ el.textContent = ''; el.className = 'hint'; return; }
+  if (!st.cfg){
+    el.className = 'hint warn';
+    el.textContent = 'off: ' + st.off.join(' · ');
+    return;
+  }
+  el.className = 'hint';
+  const sample = st.cfg.ores[0];
+  el.textContent = `${st.oreCount} candidate ores · base ${Math.round(st.base * 100) / 100}%`
+    + ` · tax ${st.cfg.taxPct}%`
+    + (st.off.length ? ' · ⚠ ' + st.off.join(' · ') : '')
+    + (sample ? ` · e.g. ${sample.name} → ${Math.round(sample.pct * 10) / 10}%` : '');
+}
 function renderSettings(){
   const p = activeProfile();
   $('inSell').checked = p.market.inputSide === 'sell';
@@ -1566,6 +1728,10 @@ function renderSettings(){
   $('shipRound').checked = !!p.shipping.roundUp;
   $('shipIn').checked = !!p.shipping.inbound;
   $('shipOut').checked = !!p.shipping.outbound;
+  $('rpOn').checked = !!(p.repro && p.repro.enabled);
+  $('rpImp').value = String((p.repro && p.repro.implantPct) || 0);
+  $('rpFlat').value = p.repro && p.repro.flatPct != null ? p.repro.flatPct : '';
+  renderReproNote();
   $('asMe').value = p.assumptions.ownedBpoMe;
   $('asTe').value = p.assumptions.ownedBpoTe;
   $('asDec').value = p.assumptions.decryptor;
@@ -1605,6 +1771,19 @@ function bindSettings(){
   $('shipRound').addEventListener('change', () => { activeProfile().shipping.roundUp = $('shipRound').checked; saveProfiles(); });
   $('shipIn').addEventListener('change', () => { activeProfile().shipping.inbound = $('shipIn').checked; saveProfiles(); });
   $('shipOut').addEventListener('change', () => { activeProfile().shipping.outbound = $('shipOut').checked; saveProfiles(); });
+  const rpChanged = () => { clearEngines(); saveProfiles(); renderReproNote(); };
+  $('rpOn').addEventListener('change', () => { activeProfile().repro.enabled = $('rpOn').checked; rpChanged(); });
+  $('rpImp').addEventListener('change', () => { activeProfile().repro.implantPct = Number($('rpImp').value) || 0; rpChanged(); });
+  $('rpFlat').addEventListener('change', () => {
+    activeProfile().repro.flatPct = $('rpFlat').value === '' ? null : Number($('rpFlat').value);
+    rpChanged();
+  });
+  $('rpPick').addEventListener('click', async () => {
+    const sEntry = await EveStructures.pick({ title: 'Refinery for ore sourcing', list: true });
+    if (!sEntry) return;
+    activeProfile().repro.ref = sEntry.id;
+    rpChanged();
+  });
   $('asMe').addEventListener('change', () => { activeProfile().assumptions.ownedBpoMe = num($('asMe')); saveProfiles(); });
   $('asTe').addEventListener('change', () => { activeProfile().assumptions.ownedBpoTe = num($('asTe')); saveProfiles(); });
   $('asDec').addEventListener('change', () => { activeProfile().assumptions.decryptor = $('asDec').value; saveProfiles(); });
@@ -1776,11 +1955,13 @@ function engineFor(tid){
   const top = topMg(tid);
   // a facility whose structure record is gone carries no facts — it cannot be computed
   const fs = p.facilities.filter(f => facUsable(f) && (!f.scope || !f.scope.length || f.scope.includes(top)));
-  const key = fs.map(f => f.uid).join(',');
+  const rp = reproState();
+  const key = fs.map(f => f.uid).join(',') + '|' + reproSig();
   let e = engineCache.get(key);
   if (!e){
     ovrIdx = ovrIdx || {};
     e = IndustryEngine.create({
+      repro: rp.cfg,
       data: D,
       prices: t => {
         const en = bookEntry(t);
@@ -1937,6 +2118,8 @@ function rowFrom(tid, res, err, planDemand){
   base.iskm3 = base.profit != null && m3 > 0 ? base.profit / m3 : null;
   base.buildN = acc.build; base.buyN = acc.buy;
   base.produced = res.produced;
+  base.reproActive = !!(tt.repro && tt.repro.active);
+  base.reproSavings = tt.repro && tt.repro.active ? tt.repro.savings : null;
   base.unpriced = base.profit == null;
   return base;
 }
@@ -1956,6 +2139,7 @@ function curSig(){
               v.bonuses.me, v.bonuses.te, v.bonuses.cost, v.rigs];
     }),
     v: D && D.v,
+    rp: reproSig(),
     b: book && book.fetched, a: adjusted && adjusted.fetched,
     i: indices && indices.fetched, o: ownedBp && ownedBp.fetched,
     c: window.EveAuth && EveAuth.active ? EveAuth.active() : null,
@@ -2202,7 +2386,14 @@ function render(){
       tr.appendChild(td);
       return td;
     };
-    numCell(fmtIsk(r.cost), r.cost);
+    const tdCost = numCell(fmtIsk(r.cost), r.cost);
+    if (r.reproActive){
+      const tg = document.createElement('span');
+      tg.className = 'oretag'; tg.textContent = 'ore';
+      tg.title = `minerals sourced via compressed ore — saves ${fmtIsk(r.reproSavings)} on the batch`
+        + '\nopen the row: the drilldown shows the mix, the basket and the excess';
+      tdCost.appendChild(tg);
+    }
     numCell(fmtIsk(r.rev), r.rev);
     numCell(fmtIsk(r.profit), r.profit, r.profit > 0 ? ' pos' : r.profit != null && r.profit < 0 ? ' neg' : '');
     numCell(fmtPct(r.margin), r.margin);
@@ -2394,6 +2585,10 @@ function buildDrillRow(tid){
   const stat = sum.stat;
   stat('produced', fmt0.format(res.produced));
   stat('cost/item', fmtIsk(tt.costPerItem));
+  // reconciliation: the tree below still shows book-priced buy leaves; the row's cost
+  // is tree total MINUS this named line, so the two always sum in plain sight
+  if (tt.repro && tt.repro.active)
+    stat('incl. ore route', `−${fmtIsk(tt.repro.savings / res.produced)}/item`);
   stat('revenue/item', fmtIsk(tt.revenuePerItem));
   stat('profit/item', fmtIsk(tt.profitPerItem));
   stat('job time Σ', fmtDur(tt.totalJobTime));
@@ -2420,6 +2615,7 @@ function buildDrillRow(tid){
   if (tt.revenueThinBook)
     bp.stat('⚠ buy book', `${fmt0.format(tt.revenueThinBook.filled)}/${fmt0.format(tt.revenueThinBook.needed)} u`);
   td.appendChild(bp);
+  if (tt.repro) td.appendChild(reproPanel(tt.repro));
 
   const ctl = document.createElement('div');
   ctl.className = 'rowline';
@@ -2585,6 +2781,101 @@ function renderInvention(inv){
   }
   return d;
 }
+/* The ore-sourcing panel: what to buy, what it covers, what is left over. Every figure
+   carries its basis on hover, because two 'direct' prices exist by construction: the
+   engine's charged sum is per-leaf book walks that each restart at the top, the route's
+   legs are one aggregated walk per type — the comparison is deliberately conservative
+   (the route can only ever reveal savings) and says so where the numbers sit. */
+function matName(tid){
+  return (D && D.types[tid] && D.types[tid][0])
+    || (oresBlob && oresBlob.data.types[tid]) || ('type ' + tid);
+}
+function reproPanel(rp){
+  const d = document.createElement('div');
+  d.className = 'srcpanel';
+  const head = document.createElement('div');
+  head.className = 'srchead';
+  if (!rp.active){
+    head.innerHTML = `ore route considered — <b>not used</b>: ${rp.why || 'dearer'}`
+      + (rp.planCost != null
+        ? ` (<b>+${fmtIsk(rp.planCost - rp.directCost)}</b> vs buying the minerals)` : '');
+    head.title = 'the buy/build tree above is untouched by a losing route';
+    d.appendChild(head);
+    return d;
+  }
+  head.innerHTML = `minerals via compressed ore — saves <b>${fmtIsk(rp.savings)}</b> on this batch`;
+  d.appendChild(head);
+
+  const tbl = (heads, rows, titles) => {
+    const t = document.createElement('table');
+    const hr = document.createElement('tr');
+    heads.forEach(([h, right]) => {
+      const th = document.createElement('th');
+      th.textContent = h; if (right) th.className = 'r';
+      hr.appendChild(th);
+    });
+    t.appendChild(hr);
+    rows.forEach((cells, ri) => {
+      const tr = document.createElement('tr');
+      cells.forEach((c, i) => {
+        const td = document.createElement('td');
+        td.textContent = c; if (heads[i][1]) td.className = 'r';
+        if (titles && titles[ri]) td.title = titles[ri];
+        tr.appendChild(td);
+      });
+      t.appendChild(tr);
+    });
+    return t;
+  };
+
+  d.appendChild(tbl(
+    [['buy', 0], ['units', 1], ['portions', 1], ['cost', 1], ['m³', 1]],
+    rp.mix.map(m => [m.name + (m.thin ? ' ⚠' : ''), fmt0.format(m.units),
+      fmt0.format(m.portions), fmtIsk(m.cost), fmt.format(m.m3)]),
+    rp.mix.map(m => 'priced by the same sell-book walk as every other input'
+      + (m.thin ? `\n⚠ thin book: ${fmt0.format(m.thin.filled)}/${fmt0.format(m.thin.needed)} u` : ''))));
+
+  const gotOf = tid => {
+    const need = rp.basket.find(b => b.tid === tid);
+    const resid = rp.residuals.find(r2 => r2.tid === tid);
+    const exc = rp.excess.find(x => x.tid === tid);
+    const direct = resid ? resid.qty : 0;
+    return { need: need.qty, direct, fromOre: need.qty - direct + (exc ? exc.qty : 0) };
+  };
+  d.appendChild(tbl(
+    [['material', 0], ['needed', 1], ['from ore', 1], ['direct', 1], ['charged (book)', 1]],
+    rp.basket.map(b => {
+      const g = gotOf(b.tid);
+      return [matName(b.tid), fmt0.format(g.need), fmt0.format(g.fromOre),
+        fmt0.format(g.direct), fmtIsk(b.charged)];
+    }),
+    rp.basket.map(() => 'charged (book): the engine\u2019s own per-leaf walks — what the tree above pays'
+      + '\nfrom ore: refined output at the floored per-material yield')));
+
+  if (rp.excess.length)
+    d.appendChild(tbl(
+      [['excess (kept)', 0], ['units', 1]],
+      rp.excess.map(x => [matName(x.tid), fmt0.format(x.qty)]),
+      rp.excess.map(() => 'joint production over-covers — the leftover is yours, not the plan\u2019s')));
+
+  const foot = document.createElement('div');
+  foot.className = 'foot';
+  const bits = [
+    `via book ${fmtIsk(rp.directCost)} vs via ore ${fmtIsk(rp.planCost)} (incl. tax ${fmtIsk(rp.tax)})`,
+    rp.residCost ? `direct residuals ${fmtIsk(rp.residCost)}` : null,
+    `excess if instant-sold: ${fmtIsk(rp.excessInstantValue)} — not credited`,
+    rp.haulShiftCost ? `Δ inbound haul ${rp.haulShiftCost > 0 ? '+' : ''}${fmtIsk(rp.haulShiftCost)} (${rp.haulShiftM3 > 0 ? '+' : ''}${fmt.format(Math.round(rp.haulShiftM3))} m³, real shipLeg)` : null,
+    rp.rescuable && rp.rescuable.length
+      ? `⚠ unpriced and NOT rescued: ${[...new Set(rp.rescuable)].map(matName).join(', ')}` : null,
+  ].filter(Boolean);
+  foot.textContent = bits.join(' · ');
+  foot.title = 'mix search: LP over the live book + whole-portion round-up; the cost shown is the exact'
+    + '\nprice of this list through the one buying model (buyQuote), broker floors included'
+    + '\nyields floored per material (verify in client) · refinery→factory haul unmodeled'
+    + '\nadoption is strict: ties keep the market route';
+  d.appendChild(foot);
+  return d;
+}
 function treeTsv(res){
   const lines = [['Depth', 'Item', 'Decision', 'Qty', 'Buy cost', 'Build cost', 'Chosen cost', 'Facility', 'Job time s', 'Invention'].join('\t')];
   const n = v => v == null || !isFinite(v) ? '' : String(Math.round(v * 100) / 100);
@@ -2595,6 +2886,12 @@ function treeTsv(res){
       node.invention ? `${node.invention.decryptor || 'none'} ${(node.invention.chance * 100).toFixed(1)}%` : ''].join('\t'));
     if (node.decision === 'build') for (const c of node.children || []) walk(c, depth + 1);
   })(res.tree, 0);
+  const rp = res.totals.repro;
+  if (rp && rp.active){
+    lines.push('', 'Ore route — Jita multibuy', 'Item\tQty');
+    for (const m of rp.mix) lines.push(`${m.name}\t${m.units}`);
+    for (const r2 of rp.residuals) lines.push(`${matName(r2.tid)}\t${r2.qty}`);
+  }
   return lines.join('\n');
 }
 
@@ -2612,6 +2909,10 @@ function treeTsv(res){
   migrateRigs();               // legacy rig rows → catalog rigs → the central records
   migrateFacilityRefs();       // facilities keep the reference, the facts stay central
   renderProfileEditor();
+  // ore yields load AFTER the migrations on purpose: nothing above needs them, and a
+  // pause before them opened a window where a fast reader saw a half-booted page
+  await readOres();
+  renderReproNote();
   await loadCaches();
   render();
   if (window.EveAuth){

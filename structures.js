@@ -39,8 +39,8 @@
    entry/record = {
      id, name, typeId, typeName, refinery, systemId, systemName, security, regionId,
      size, groupId, rigSlots,                 // identity (auto-detected)
-     marketBroker, facilityTax, rigs, reproRig, roleBonus, industryActivities, notes,
-     conflicts
+     marketBroker, facilityTax, rigs, reproRig, reproTaxPct, roleBonus,
+     industryActivities, notes, conflicts
    }
 */
 'use strict';
@@ -129,6 +129,7 @@
   /* ---------- the store ---------- */
   function blankFacts(){
     return { marketBroker: null, facilityTax: null, rigs: [], reproRig: 'none',
+             reproTaxPct: null,
              roleBonus: null, industryActivities: null, notes: '', conflicts: [] };
   }
   // null = "use the hull preset"; anything else is coerced to a full {me,te,cost}
@@ -157,6 +158,7 @@
     r.groupId = t ? t.groupId : (Number.isFinite(r.groupId) ? r.groupId : null);
     r.marketBroker = num(r.marketBroker);
     r.facilityTax = num(r.facilityTax);
+    r.reproTaxPct = num(r.reproTaxPct);
     // a type id is always a positive integer — Number(null)/Number(false) are 0, which
     // would otherwise be kept as a "rig type 0" that nothing can ever resolve
     r.rigs = Array.isArray(r.rigs)
@@ -235,6 +237,7 @@
     if (!r) return null;
     return {
       marketBroker: r.marketBroker, facilityTax: r.facilityTax,
+      reproTaxPct: r.reproTaxPct,
       rigs: r.rigs.slice(), reproRig: r.reproRig, notes: r.notes,
       industryActivities: r.industryActivities || defaultActivities(r.typeId),
       activitiesAreDefault: !r.industryActivities,
@@ -244,8 +247,8 @@
       rigSlots: r.rigSlots || DEFAULT_RIG_SLOTS, size: r.size, conflicts: r.conflicts.slice(),
     };
   }
-  const MANAGED = ['marketBroker', 'facilityTax', 'rigs', 'reproRig', 'roleBonus',
-                   'industryActivities', 'notes', 'conflicts'];
+  const MANAGED = ['marketBroker', 'facilityTax', 'rigs', 'reproRig', 'reproTaxPct',
+                   'roleBonus', 'industryActivities', 'notes', 'conflicts'];
   function update(id, patch){
     const i = idx(id);
     if (i < 0 || !patch) return null;

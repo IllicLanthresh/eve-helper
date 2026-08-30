@@ -265,7 +265,50 @@ because it does in game. A ship scan carrying real section headers is the whole 
 so it now also clears a reprocessing tier its Rig Slots section does not show; a
 headerless paste is a fragment and clears nothing.
 
-Reprocessing is not in the industry activity checkboxes either, and should not be: those
-six are EVE's industry *jobs* (no blueprint, no slot, no ME/TE for refining), and they
-feed the Industry tool's routing. The activities hint now says where reprocessing lives
-instead of leaving its absence to be guessed at.
+Reprocessing is not in the industry activity checkboxes: those six are EVE's industry
+*jobs* (no blueprint, no slot, no ME/TE for refining), and they feed the Industry tool's
+job routing. The first version of this entry went further and said reprocessing "should
+not be" industry-relevant at all — the owner refuted that the same day (see the next
+section), and he was right: it is not a job, but it prices the inputs.
+
+
+## Minerals via compressed ore (owner correction, 2026-08-30)
+
+"Reprocessing is important when calculating industry because it can be cheaper to
+reprocess ore/compressed ore rather than buying minerals directly." Correct, and the
+Industry tool priced inputs only off the mineral book — its costs were wrong for anyone
+who refines. Now a plan's reprocessable buy leaves can be priced as ONE joint purchase
+of compressed ore, refined at the owner's structure. The decisions:
+
+- **Buy/build decisions stay book-priced; the basket is priced after the plan is
+  chosen.** Under joint production a per-mineral ore price is ill-defined — an ore
+  yields several minerals at once — so the honest object is the whole basket, and the
+  tree's decisions are never steered by it.
+- **The LP only searches; buyQuote prices.** The mix is found by a linear program over
+  the live book's levels (reprocessing tax folded into the ore columns), then
+  integerized to whole portions and priced through the engine's one buying model —
+  walks, broker floors, thin-book flags. Round-up is floor-vs-ceil per ore, priced
+  exactly, cheaper kept: deterministic and constant-free. The adopted cost is the exact
+  price of a concrete shopping list, optimal only in the continuous relaxation — and
+  the drilldown says so.
+- **Adoption is strict and conservative.** 'Direct' means the engine's own per-leaf
+  charged sum (walks that restart at the top of the book); the ore route's legs are
+  aggregated walks, which can only price >= that. The route can only ever reveal
+  savings, never invent them; a losing route is still shown with its deficit.
+- **The excess is listed and valued (buy-book walk, seller tax off) but NEVER
+  credited.** Both readings are printed.
+- **Refusal over guessing, three ways**: reprocessing tax unset on the structure record
+  → feature off (0 is never assumed); reprocessor skills absent and no flat % typed →
+  feature off (no default yield); an ore whose exact processing skill is untrained or
+  unreadable is not a candidate (the game will not reprocess it). Flat mode is the
+  owner asserting one yield by hand and is labelled "per-ore skills UNCHECKED".
+- **One yield model** (refine.js / EveRefine, extracted from mine.html), **one buying
+  model** (buyQuote), **one data path** (SDE.load serves ores and blueprints from the
+  same local record — decision 20 holds). The per-material output floor is marked
+  NEEDS-VERIFICATION in-client; the Mine tool deliberately keeps its continuous per-m³
+  rate reading — a rate and a batch are different questions.
+- **Candidates are derived, not curated**: an ore qualifies for a basket only when
+  every output it yields is something that basket needs. LP duals are neither shown nor
+  used; if ever displayed they are per-basket shadow prices, never decision inputs.
+- The capital-shrink loop sizes against market-direct costs — conservative (savings
+  only shrink spend) and zero LP solves inside the loop.

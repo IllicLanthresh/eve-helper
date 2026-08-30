@@ -694,9 +694,30 @@ H.run('equivalence', async () => {
     check('...with a build tree that spends job time', indBefore.trees[0].job.time > 0,
       JSON.stringify(indBefore.trees[0].job));
     check('...and a real cost', indBefore.rows[0].cost > 0, indBefore.rows[0].cost);
-    same('every row of the computed table is identical before and after', indBefore.rows, indAfter.rows);
+    /* The new build's rows carry the ore-sourcing fields (repro/reproActive/reproSavings);
+       with the feature absent from these profiles they are inert (null/false), so they are
+       stripped the way the Sell tax rounding above is — an explained, additive difference,
+       not a moved number. */
+    const stripRepro = rows => rows.map(r => {
+      const o = { ...r };
+      delete o.reproActive; delete o.reproSavings;
+      return o;
+    });
+    const stripReproTotals = ts => ts.map(t => {
+      const o = { ...t };
+      delete o.repro;
+      return o;
+    });
+    same('every row of the computed table is identical before and after',
+      stripRepro(indBefore.rows), stripRepro(indAfter.rows));
+    check('...the new fields being inert with the feature off',
+      indAfter.rows.every(r => r.reproActive === false && r.reproSavings == null),
+      JSON.stringify(indAfter.rows.map(r => [r.reproActive, r.reproSavings])));
     same('...as is every cost and job time in both product trees', indBefore.trees, indAfter.trees);
-    same('...and every batch total', indBefore.totals, indAfter.totals);
+    same('...and every batch total', stripReproTotals(indBefore.totals), stripReproTotals(indAfter.totals));
+    check('...with repro null in every total',
+      indAfter.totals.every(t => t.repro === null),
+      JSON.stringify(indAfter.totals.map(t => t.repro)));
 
     section('...and the profile keeps only its routing');
     const ictx = await browser.newContext();

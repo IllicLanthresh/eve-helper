@@ -678,6 +678,8 @@
     for (const o of Object.values(oresOut)) {
       for (const [mtid] of o.m) if (!oreTypeNames[mtid]) oreTypeNames[mtid] = allNames.get(mtid) || ('type ' + mtid);
       if (o.s != null && !oreTypeNames[o.s]) oreTypeNames[o.s] = allNames.get(o.s) || ('type ' + o.s);
+      // the compressed variant's real name, for the Industry tool's ore-sourcing tables
+      if (o.c != null && !oreTypeNames[o.c]) oreTypeNames[o.c] = allNames.get(o.c) || ('type ' + o.c);
     }
 
     /* ---- 14. anchors ------------------------------------------------ */
