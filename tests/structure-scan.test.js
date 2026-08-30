@@ -168,6 +168,76 @@ H.run('structure-scan', async () => {
       await s.close();
     }
 
+    /* A scan is the whole fitting. Replacing the rig list but leaving a reprocessing tier
+       behind would keep claiming a refine bonus the structure no longer carries — and the
+       tier is invisible on any page but this one, so nothing else would catch it. */
+    section('a headed scan clears a reprocessing tier it does not show');
+    {
+      const s = await openManager(browser, server, [
+        rec(TATARA, 'Test Tatara', 35836, { reproRig: 't2' })]);
+      await expand(s.page, TATARA);
+      await openScan(s.page, TATARA);
+      await pasteScan(s.page, TATARA, 'Rig Slots\nStandup M-Set Basic Small Ship '
+        + 'Manufacturing Material Efficiency I\nService Slots\nStandup Reprocessing Facility I');
+      await s.page.click('#s' + TATARA + ' .scan-apply');
+      await s.page.waitForFunction(id => EveStructures.facts(id).reproRig === 'none', TATARA);
+      eq('the stale tier is gone', (await factsOf(s.page, TATARA)).reproRig, 'none');
+      eq('...and it persisted', (await storedRec(s.page, TATARA)).reproRig, 'none');
+      await s.close();
+    }
+
+    // ...but a bare list with no headers is only ever a fragment, and clears nothing
+    section('a headerless paste never clears the tier');
+    {
+      const s = await openManager(browser, server, [
+        rec(TATARA, 'Test Tatara', 35836, { reproRig: 't2' })]);
+      await expand(s.page, TATARA);
+      await openScan(s.page, TATARA);
+      await pasteScan(s.page, TATARA,
+        'Standup M-Set Basic Small Ship Manufacturing Material Efficiency I');
+      await s.page.click('#s' + TATARA + ' .scan-apply');
+      await s.page.waitForFunction(id => EveStructures.facts(id).rigs.length === 1, TATARA);
+      eq('the tier survives a fragment', (await factsOf(s.page, TATARA)).reproRig, 't2');
+      await s.close();
+    }
+
+    /* The reprocessing rig is not in the industry catalog, but it is still a rig in a rig
+       slot — it belongs in the same list, and it spends a slot like every other. */
+    section('the reprocessing rig sits in the rig list and costs a slot');
+    {
+      const s = await openManager(browser, server, [
+        rec(TATARA, 'Test Tatara', 35836, { reproRig: 't1' })]);
+      await expand(s.page, TATARA);
+      const rows = await s.page.$$eval('#s' + TATARA + ' .rig',
+        els => els.map(e => e.textContent.trim()));
+      check('a fitted reprocessing rig is one of the rig rows',
+        rows.some(t => /reprocessing rig/i.test(t)), JSON.stringify(rows));
+      check('...carrying its own effect line, like the catalog rigs do',
+        rows.some(t => /refine yield/.test(t)), JSON.stringify(rows));
+      await s.close();
+    }
+
+    section('a fitted reprocessing rig spends one of the hull\u2019s rig slots');
+    {
+      const s = await openManager(browser, server, [
+        rec(SOTIYO, 'Test Sotiyo', 35827, { rigs: [RIG_EQUIP, RIG_SHIP] })]);
+      await expand(s.page, SOTIYO);
+      check('two of three slots used: the add button is live',
+        !await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.disabled),
+        await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.title));
+      await s.page.selectOption('#s' + SOTIYO + ' [data-f="reproRig"]', 't1');
+      await s.page.waitForFunction(id => EveStructures.facts(id).reproRig === 't1', SOTIYO);
+      await s.page.waitForFunction(id =>
+        document.querySelector('#s' + id + ' .rig-add').disabled, SOTIYO);
+      check('...and the reprocessing rig takes the third, so it is not',
+        await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.disabled),
+        await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.title));
+      check('...saying which slot went where',
+        /reprocessing rig/.test(await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.title)),
+        await s.page.$eval('#s' + SOTIYO + ' .rig-add', el => el.title));
+      await s.close();
+    }
+
     section('a refinery scan sets the reprocessing tier');
     {
       const s = await openManager(browser, server, [rec(TATARA, 'Test Tatara', 35836)]);

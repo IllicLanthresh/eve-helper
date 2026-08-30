@@ -591,15 +591,57 @@ function fillBody(body, rec){
     row.append(sel, eff, rx);
     rigBox.appendChild(row);
   });
+  /* The reprocessing rigs are NOT in the industry catalog and cannot be: the catalog is
+     derived from CCP's industry-modifier records, and these rigs carry none — what they
+     change is refining yield, which the Mine tool reads. That is a fact about where the
+     numbers come from, not a reason to fit them in a different-looking widget: in game
+     they sit in the same Rig Slots list and eat the same slot, so they sit here too. */
+  const repro = document.createElement('div');
+  repro.className = 'rig';
+  const rSel = document.createElement('select');
+  rSel.style.width = '200px';
+  rSel.title = 'reprocessing rig fitted here'
+    + '\nnot in the industry catalog: it changes refine yield, not jobs'
+    + '\nthe Mine tool multiplies the refinery base by it '
+    + '(the security multiplier comes from the system)';
+  for (const [k, label] of Object.entries(S.REPRO_RIGS)){
+    const o = document.createElement('option');
+    o.value = k; o.textContent = label;
+    rSel.appendChild(o);
+  }
+  rSel.value = f.reproRig;
+  rSel.dataset.f = 'reproRig';
+  rSel.addEventListener('change', () => { S.update(rec.id, { reproRig: rSel.value }); redraw(); });
+  const rEff = document.createElement('span');
+  rEff.className = 'hint';
+  // the hull warning stands whether or not one is fitted: it is what stops someone
+  // fitting one where it can never pay
+  rEff.textContent = !rec.refinery ? '\u2192 no effect: not a refinery hull'
+    : f.reproRig === 'none' ? '\u2192 no reprocessing rig fitted'
+    : '\u2192 refine yield, read by the Mine tool';
+  if (!rec.refinery)
+    rEff.title = 'a reprocessing rig only pays off on an Athanor or Tatara';
+  repro.append(rSel, rEff);
+  if (f.reproRig !== 'none'){
+    const rrx = document.createElement('span');
+    rrx.className = 'x'; rrx.textContent = '\u00d7'; rrx.title = 'remove rig';
+    rrx.style.cursor = 'pointer';
+    rrx.addEventListener('click', () => { S.update(rec.id, { reproRig: 'none' }); redraw(); });
+    repro.appendChild(rrx);
+  }
+  rigBox.appendChild(repro);
   const rigCtl = document.createElement('div');
   rigCtl.className = 'rowline';
   const addRig = document.createElement('button');
   addRig.className = 'mini rig-add'; addRig.type = 'button'; addRig.textContent = '+ rig';
   // the same rig twice is not a fitting — offer the first catalog rig not already on
   const free = valid.filter(([t]) => !f.rigs.includes(t));
-  addRig.disabled = !free.length || f.rigs.length >= slots;
+  // a fitted reprocessing rig fills one of the hull's rig slots, exactly as in game
+  const rigsUsed = f.rigs.length + (f.reproRig === 'none' ? 0 : 1);
+  addRig.disabled = !free.length || rigsUsed >= slots;
   addRig.title = !valid.length ? 'no catalog rigs fit this structure'
-    : f.rigs.length >= slots ? `all ${slots} rig slots used`
+    : rigsUsed >= slots ? `all ${slots} rig slots used`
+      + (f.reproRig === 'none' ? '' : ' (one is the reprocessing rig)')
     : !free.length ? 'every catalog rig that fits this hull is already installed' : '';
   addRig.addEventListener('click', () => {
     S.update(rec.id, { rigs: f.rigs.concat([free[0][0]]) });
@@ -635,13 +677,14 @@ function fillBody(body, rec){
   scanApply.disabled = true;
   const scanStat = document.createElement('span');
   scanStat.className = 'hint scan-stat';
-  let scanMatch = null;
+  let scanMatch = null, scanParse = null;
   scanBtn.addEventListener('click', () => {
     scanRow.hidden = !scanRow.hidden;
     if (!scanRow.hidden) scanTa.focus();
   });
   scanTa.addEventListener('input', () => {
     const p = parseStructureScan(scanTa.value);
+    scanParse = p;
     scanMatch = matchScanRigs(p.rigs);
     const bits = [];
     if (scanMatch.rigs.length) bits.push(`${scanMatch.rigs.length} rig${scanMatch.rigs.length === 1 ? '' : 's'} matched`);
@@ -659,7 +702,12 @@ function fillBody(body, rec){
   scanApply.addEventListener('click', () => {
     const upd = {};
     if (scanMatch.rigs.length) upd.rigs = scanMatch.rigs;
+    /* A scan with real section headers is the WHOLE fitting, so a Rig Slots section with
+       no reprocessing rig in it means there is none — leaving a stale tier behind would
+       keep claiming a refine bonus the structure no longer has. A headerless paste is
+       only ever a partial list, and is not allowed to clear anything. */
     if (scanMatch.repro) upd.reproRig = scanMatch.repro;
+    else if (scanParse && !scanParse.headerless) upd.reproRig = 'none';
     S.update(rec.id, upd);
     redraw();
   });
@@ -667,34 +715,6 @@ function fillBody(body, rec){
   scanRow.append(scanTa, scanCol);
   rigBox.appendChild(scanRow);
 
-  // the reprocessing rig is its own tier (the Standup reprocessing rigs are not part of
-  // the industry catalog) — the Mine tool's refine yield reads it from here
-  const repro = document.createElement('div');
-  repro.className = 'rowline';
-  const rLab = document.createElement('span');
-  rLab.className = 'hint';
-  rLab.textContent = 'reprocessing rig';
-  const rSel = document.createElement('select');
-  rSel.style.width = '200px';
-  rSel.title = 'reprocessing rig fitted here\nthe Mine tool multiplies the refinery base by it '
-    + '(the security multiplier comes from the system)';
-  for (const [k, label] of Object.entries(S.REPRO_RIGS)){
-    const o = document.createElement('option');
-    o.value = k; o.textContent = label;
-    rSel.appendChild(o);
-  }
-  rSel.value = f.reproRig;
-  rSel.dataset.f = 'reproRig';
-  rSel.addEventListener('change', () => { S.update(rec.id, { reproRig: rSel.value }); redraw(); });
-  repro.append(rLab, rSel);
-  if (!rec.refinery){
-    const warn = document.createElement('span');
-    warn.className = 'hint';
-    warn.textContent = 'not a refinery hull';
-    warn.title = 'a reprocessing rig only pays off on an Athanor or Tatara';
-    repro.appendChild(warn);
-  }
-  rigBox.appendChild(repro);
   body.appendChild(rigBox);
 
   /* industry activities */
@@ -734,9 +754,11 @@ function fillBody(body, rec){
   const actHint = document.createElement('div');
   actHint.className = 'hint';
   actHint.style.marginTop = '6px';
-  actHint.textContent = 'capability, not routing';
+  actHint.textContent = 'capability, not routing \u00b7 reprocessing is not a job';
   actHint.title = 'what the structure can run'
-    + '\nwhich activities a profile routes here, and for which products, stays in that profile';
+    + '\nwhich activities a profile routes here, and for which products, stays in that profile'
+    + '\nreprocessing: not an industry job — no blueprint, no slot, no ME/TE'
+    + '\nit comes from the refinery hull plus the rig above, read by the Mine tool';
   actBox.appendChild(actHint);
   body.appendChild(actBox);
 

@@ -251,3 +251,21 @@ more than 2 points, with the ceiling, what you asked, what you get, the threshol
 where the price would start moving, and which of the two limits pinned it. A test
 sweeps every row between a 40% and a 90% target: any row whose price does not move
 must disclose why.
+
+## The reprocessing rig is a rig (owner question, 2026-08-30)
+
+It is not in the industry rig catalog and cannot be: that catalog is derived from CCP's
+industry-modifier records, and these rigs carry none — what they change is refining
+yield, which the Mine tool reads as a tier (T1 +1%, T2 +3%, times the system's security
+multiplier). That is a fact about where the numbers come from, and it was leaking into
+the interface as a separate widget below the rig controls, so a scan that filled it
+looked like a scan that had missed it. It now sits in the same fitted-rig list as every
+other rig, in the same shape — select, effect line, remove — and it **spends a rig slot**,
+because it does in game. A ship scan carrying real section headers is the whole fitting,
+so it now also clears a reprocessing tier its Rig Slots section does not show; a
+headerless paste is a fragment and clears nothing.
+
+Reprocessing is not in the industry activity checkboxes either, and should not be: those
+six are EVE's industry *jobs* (no blueprint, no slot, no ME/TE for refining), and they
+feed the Industry tool's routing. The activities hint now says where reprocessing lives
+instead of leaving its absence to be guessed at.
