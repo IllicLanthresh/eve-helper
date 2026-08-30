@@ -448,6 +448,7 @@
 
 <script src="auth.js"></script>
 <script src="structures.js"></script>
+<script src="refine.js"></script>
 <script src="sde.js"></script>
 <script>
 'use strict';
@@ -660,20 +661,13 @@ const state = {
   },
 };
 
-/* ---------- refining model (skill mode) ---------- */
-// yield = facilityBase × (1 + 3%×Reprocessing) × (1 + 2%×Reproc.Efficiency)
-//         × (1 + 2%×ore-group skill) × (1 + implant)
-// facilityBase: NPC station = flat 50% (stations have no rigs, so rig/security never
-// apply there); player structure = type base (Athanor 52 / Tatara 55 / any other
-// structure 50) × (1 + rigBonus × securityMultiplier)
-const FACILITY_BASE = { npc: 50, athanor: 52, tatara: 55 };
-const RIG_BONUS = { none: 0, t1: 0.01, t2: 0.03 };
-const SEC_MULT = { hs: 1, ls: 1.06, ns: 1.12 };
-// security band from the system's security_status, rounded to 1 decimal like the client
-const secBandOf = sec => {
-  const r = Math.round(sec * 10) / 10;
-  return r >= 0.5 ? 'hs' : r >= 0.1 ? 'ls' : 'ns';
-};
+/* ---------- refining model (skill mode) ----------
+   The formula lives in refine.js (EveRefine) — ONE model shared with the Industry
+   tool's ore sourcing. This page keeps its historical names as thin views of it. */
+const FACILITY_BASE = EveRefine.FACILITY_BASE;
+const RIG_BONUS = EveRefine.RIG_BONUS;
+const SEC_MULT = EveRefine.SEC_MULT;
+const secBandOf = EveRefine.secBandOf;
 // only the IDENTITY is snapshotted here — the managed facts stay on the central record so
 // this page can never hold a stale copy of them
 const identOf = s => s ? {
@@ -719,10 +713,10 @@ function syncFacFromRecords(){
 }
 
 function facilityBasePct(){
-  if (state.fac.struct === 'npc') return FACILITY_BASE.npc;
+  if (state.fac.struct === 'npc') return EveRefine.basePct(null);
   const st = state.fac.structInfo;
-  const typeBase = FACILITY_BASE[(st && st.refinery) || 'npc'];
-  return typeBase * (1 + RIG_BONUS[reproRig()] * SEC_MULT[state.fac.sec]);
+  return EveRefine.basePct({ refinery: (st && st.refinery) || null,
+                             rig: reproRig(), sec: state.fac.sec });
 }
 let charSkills = null;   // set once EVE login + skills are available
 
@@ -731,24 +725,14 @@ let charSkills = null;   // set once EVE login + skills are available
 // auth.js imports resolve by name; anything else (Ice Processing, the legacy event-ore
 // skills) resolves by tid from the full trained-skill list.
 function refineWithSkill(skillName, skillTid){
-  if (!charSkills || !charSkills.groups || !Object.keys(charSkills.groups).length)
-    return { pct: state.refine, detail: 'flat refine (log in with EVE for per-ore yields)' };
-  const base = facilityBasePct();
-  let gl = 0, grpTxt;
-  if (skillTid == null){
-    grpTxt = 'no reprocessing skill on this type in the SDE — counted at level 0';
-  } else if (charSkills.groups[skillName] != null){
-    gl = charSkills.groups[skillName];
-    grpTxt = `${skillName} ${gl}`;
-  } else {
-    const all = (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills(reproCharId())) || null;
-    gl = all ? (all[skillTid] || 0) : 0;
-    grpTxt = `${skillName} ${gl}${all ? '' : ' (level unknown — refresh skills via the topbar)'}`;
-  }
-  const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
-    * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
-  const detail = `${Math.round(pct * 10) / 10}% = base ${Math.round(base * 100) / 100}% × Reprocessing ${charSkills.reprocessing} × Efficiency ${charSkills.reprocessingEfficiency} × ${grpTxt}${state.fac.imp ? ` × implant +${state.fac.imp}%` : ''}`;
-  return { pct, detail };
+  return EveRefine.yieldFor(skillName, skillTid, {
+    charSkills,
+    base: facilityBasePct(),
+    implantPct: state.fac.imp,
+    // this page always has a flat fallback: the owner-typed refine box
+    flatPct: state.refine,
+    allSkills: () => (window.EveAuth && EveAuth.allSkills && EveAuth.allSkills(reproCharId())) || null,
+  });
 }
 const refineFor = source => refineWithSkill(source.skill, source.skillTid);
 
@@ -984,8 +968,7 @@ function renderSkillsPanel(){
   const base = facilityBasePct();
   for (const grp of SKILL_PANEL){
     const gl = charSkills.groups[grp] || 0;
-    const pct = base * (1 + 0.03 * charSkills.reprocessing) * (1 + 0.02 * charSkills.reprocessingEfficiency)
-      * (1 + 0.02 * gl) * (1 + state.fac.imp / 100);
+    const pct = EveRefine.pct(base, charSkills, gl, state.fac.imp);
     const tr = document.createElement('tr');
     for (const t of [grp, String(gl), governsText(grp), pct.toFixed(2) + '%']){
       const td = document.createElement('td');
