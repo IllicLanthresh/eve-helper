@@ -173,9 +173,247 @@
     return Math.max(MIN_BROKER_FEE_ISK, value * (pct || 0) / 100);
   }
 
+  /* The two book walks are MODULE scope (and exported) on purpose: the ore-basket
+     sourcing below must provably price with the very functions buyQuote prices with —
+     one buying model, referenced, not copied. */
+
+  /* Depth-aware cost of buying `qty` off the sell book (levels [price, vol, minVol] asc).
+     min_volume is irrelevant on sells — we are the buyer and take volume per level.
+     A dry book prices the remainder at the worst (deepest) filled level. */
+  function walkSellCost(levels, qty) {
+    var cost = 0, remaining = qty, worst = null;
+    for (var i = 0; i < levels.length && remaining > 0; i++) {
+      var take = Math.min(levels[i][1], remaining);
+      if (!(take > 0)) continue;
+      cost += take * levels[i][0];
+      worst = levels[i][0];
+      remaining -= take;
+    }
+    if (worst == null) return null;   // pathological all-zero-volume book — caller falls back
+    if (remaining > 0) cost += remaining * worst;
+    return { cost: cost, filled: qty - Math.max(0, remaining) };
+  }
+
+  /* Instant-sale proceeds for `qty` against the buy book (levels desc). Orders whose
+     min_volume exceeds what is left to sell are skipped (the Sell tool's rule);
+     output the book cannot absorb earns 0. */
+  function walkBuyRevenue(levels, qty) {
+    var proceeds = 0, remaining = qty;
+    for (var i = 0; i < levels.length && remaining > 0; i++) {
+      if ((levels[i][2] || 1) > remaining) continue;
+      var take = Math.min(levels[i][1], remaining);
+      if (!(take > 0)) continue;
+      proceeds += take * levels[i][0];
+      remaining -= take;
+    }
+    return { proceeds: proceeds, filled: qty - remaining };
+  }
+
+  /* ---------------- ore-basket LP: min-cost cover of a material basket ---------------
+
+     The question "is it cheaper to buy compressed ore and reprocess it than to buy the
+     minerals" is only well-posed for the WHOLE basket at once: an ore yields several
+     materials jointly, so a per-mineral ore price does not exist. This solves exactly
+     that basket question — a linear program over
+
+       columns: one bounded segment per candidate ore per sell-book level (cost = level
+                price + the linear per-unit reprocessing tax), plus an unbounded tail at
+                the worst level (walkSellCost's dry-book rule, flagged thin), plus the
+                same segment/tail shape for buying each basket material directly;
+       rows:    one >= covering constraint per basket material (free disposal — the
+                joint excess is allowed, it is reported and never credited).
+
+     The LP is ONLY the search. The displayed and charged cost of the winning plan is the
+     engine's own buyQuote() over the integerized shopping list, so there is exactly one
+     buying model; the solution here decides WHAT to price, never what it costs.
+
+     Bounded-variable primal simplex, Bland's rule, fixed column order — deterministic:
+     the same inputs give byte-identical mixes. Sizes are small (rows = basket materials,
+     columns = a few hundred), so the dense tableau is recomputed per pivot; correctness
+     over cleverness.
+
+     rows: [{ tid, need }] need > 0
+     cols: [{ key, cost (per unit), u (upper bound, Infinity ok), a: {tid: yieldPerUnit} }]
+     Every row must be coverable by at least one unbounded column (the caller passes the
+     direct-buy tails, which guarantees it); returns { x: {key: units}, cost } or null. */
+  function solveBasket(rows, cols) {
+    var m = rows.length, n = cols.length;
+    if (!m) return { x: {}, cost: 0 };
+    var rowIx = new Map();
+    for (var r = 0; r < m; r++) rowIx.set(rows[r].tid, r);
+    // dense column matrix + surplus columns (Ax - s = b)
+    var N = n + m;
+    var A = [], c = [], U = [];
+    for (var j = 0; j < n; j++) {
+      var col = new Float64Array(m);
+      for (var tid in cols[j].a) {
+        var ri = rowIx.get(isNaN(+tid) ? tid : +tid);
+        if (ri == null) ri = rowIx.get(String(tid));
+        if (ri != null) col[ri] = cols[j].a[tid];
+      }
+      A.push(col); c.push(cols[j].cost); U.push(cols[j].u == null ? Infinity : cols[j].u);
+    }
+    for (var sR = 0; sR < m; sR++) {           // surplus s_r: -1 in its own row
+      var sc = new Float64Array(m);
+      sc[sR] = -1;
+      A.push(sc); c.push(0); U.push(Infinity);
+    }
+    var b = rows.map(function (rw) { return rw.need; });
+
+    /* initial basis: for every row, the caller-guaranteed unbounded direct tail —
+       identified as the LAST unbounded column whose only coefficient is +1 in that row */
+    var basis = new Array(m).fill(-1);
+    for (var r2 = 0; r2 < m; r2++) {
+      for (var j2 = n - 1; j2 >= 0; j2--) {
+        if (U[j2] !== Infinity) continue;
+        var only = true, coef = 0;
+        for (var r3 = 0; r3 < m; r3++) {
+          if (r3 === r2) { coef = A[j2][r3]; continue; }
+          if (A[j2][r3] !== 0) { only = false; break; }
+        }
+        if (only && coef > 0) { basis[r2] = j2; break; }
+      }
+      if (basis[r2] < 0) return null;          // caller broke the contract
+    }
+    var atUpper = new Uint8Array(N);           // nonbasic position: 0 = lower, 1 = upper
+    var EPS = 1e-9;
+
+    function invertB() {                     // B^-1 via Gauss-Jordan, once per iteration
+      var M = [];
+      for (var i = 0; i < m; i++) {
+        var rowv = new Float64Array(2 * m);
+        for (var k = 0; k < m; k++) rowv[k] = A[basis[k]][i];
+        rowv[m + i] = 1;
+        M.push(rowv);
+      }
+      for (var cIx = 0; cIx < m; cIx++) {
+        var piv = cIx;
+        for (var i2 = cIx + 1; i2 < m; i2++)
+          if (Math.abs(M[i2][cIx]) > Math.abs(M[piv][cIx])) piv = i2;
+        if (Math.abs(M[piv][cIx]) < 1e-12) return null;
+        var tmp = M[cIx]; M[cIx] = M[piv]; M[piv] = tmp;
+        var d = M[cIx][cIx];
+        for (var k2 = 0; k2 < 2 * m; k2++) M[cIx][k2] /= d;
+        for (var i3 = 0; i3 < m; i3++) {
+          if (i3 === cIx) continue;
+          var f = M[i3][cIx];
+          if (!f) continue;
+          for (var k3 = cIx; k3 < 2 * m; k3++) M[i3][k3] -= f * M[cIx][k3];
+        }
+      }
+      var inv = [];
+      for (var i4 = 0; i4 < m; i4++) {
+        var r = new Float64Array(m);
+        for (var k4 = 0; k4 < m; k4++) r[k4] = M[i4][m + k4];
+        inv.push(r);
+      }
+      return inv;
+    }
+    function mulInv(inv, vec) {              // inv * vec
+      var out = new Float64Array(m);
+      for (var i = 0; i < m; i++) {
+        var acc2 = 0;
+        for (var k = 0; k < m; k++) acc2 += inv[i][k] * vec[k];
+        out[i] = acc2;
+      }
+      return out;
+    }
+    function mulInvT(inv, vec) {             // invᵀ * vec  (duals: y = c_B B^-1)
+      var out = new Float64Array(m);
+      for (var k = 0; k < m; k++) {
+        var acc3 = 0;
+        for (var i = 0; i < m; i++) acc3 += inv[i][k] * vec[i];
+        out[k] = acc3;
+      }
+      return out;
+    }
+
+    for (var iter = 0; iter < 5000; iter++) {
+      // rhs adjusted for nonbasic-at-upper columns
+      var rhs = b.slice();
+      for (var j3 = 0; j3 < N; j3++) {
+        if (!atUpper[j3]) continue;
+        for (var r4 = 0; r4 < m; r4++) rhs[r4] -= A[j3][r4] * U[j3];
+      }
+      var inv = invertB();
+      if (!inv) return null;
+      var xB = mulInv(inv, rhs);
+      var cB = new Float64Array(m);
+      for (var i5 = 0; i5 < m; i5++) cB[i5] = c[basis[i5]];
+      var y = mulInvT(inv, cB);
+
+      // entering column, Bland's rule over the fixed column order
+      var enter = -1, dir = 0;
+      var inBasis = new Uint8Array(N);
+      for (var i6 = 0; i6 < m; i6++) inBasis[basis[i6]] = 1;
+      for (var j4 = 0; j4 < N; j4++) {
+        if (inBasis[j4]) continue;
+        var d = c[j4];
+        for (var r5 = 0; r5 < m; r5++) d -= y[r5] * A[j4][r5];
+        if (!atUpper[j4] && d < -EPS) { enter = j4; dir = 1; break; }
+        if (atUpper[j4] && d > EPS) { enter = j4; dir = -1; break; }
+      }
+      if (enter < 0) {                         // optimal
+        var x = {};
+        for (var j5 = 0; j5 < n; j5++) if (atUpper[j5]) x[cols[j5].key] = U[j5];
+        for (var i7 = 0; i7 < m; i7++) {
+          var bj = basis[i7];
+          if (bj < n && xB[i7] > EPS) x[cols[bj].key] = (x[cols[bj].key] || 0) + xB[i7];
+        }
+        var cost = 0;
+        for (var j6 = 0; j6 < n; j6++) if (x[cols[j6].key]) cost += c[j6] * x[cols[j6].key];
+        return { x: x, cost: cost, iters: iter };
+      }
+
+      var w = mulInv(inv, A[enter]);           // direction through the basis
+      // ratio test: basic vars leave at 0 or at their upper bound; the entering
+      // variable may also stop at its own opposite bound (a bound flip, no pivot)
+      var tMax = U[enter] === Infinity ? Infinity : U[enter];
+      var leave = -1, leaveTo = 0;
+      for (var i8 = 0; i8 < m; i8++) {
+        var wi = dir * w[i8];
+        var bU = U[basis[i8]];
+        if (wi > EPS) {
+          var t1 = xB[i8] / wi;
+          if (t1 < tMax - 1e-12 || (Math.abs(t1 - tMax) <= 1e-12 && leave < 0 && t1 < Infinity)) {
+            if (t1 < tMax) { tMax = t1; leave = i8; leaveTo = 0; }
+          }
+        } else if (wi < -EPS && bU !== Infinity) {
+          var t2 = (bU - xB[i8]) / (-wi);
+          if (t2 < tMax) { tMax = t2; leave = i8; leaveTo = 1; }
+        }
+      }
+      if (tMax === Infinity) return null;      // unbounded — cannot happen with tails
+      if (leave < 0) {
+        atUpper[enter] = atUpper[enter] ? 0 : 1;   // bound flip
+      } else {
+        var leaving = basis[leave];
+        atUpper[leaving] = leaveTo;
+        basis[leave] = enter;
+        atUpper[enter] = 0;
+      }
+    }
+    return null;                               // iteration cap — refuse rather than lie
+  }
+
   function create(cfg) {
     var data = cfg.data, prices = cfg.prices, adjusted = cfg.adjusted, indices = cfg.indices;
     var profile = cfg.profile || {};
+    /* Ore-basket sourcing config (optional; null = the engine behaves byte-identically
+       to before it existed). The page owns every yield number: ores arrive with their
+       pct already computed by EveRefine (skill-gated there), outputsFor IS
+       EveRefine.outputsFor — the engine never recomputes a yield, it only spends it.
+       taxPct is REQUIRED: an unset reprocessing tax is not assumed 0, the page gates
+       the feature off instead (an invented 0 would let the route claim false savings). */
+    var reproCfg = null;
+    if (cfg.repro && cfg.repro.ores && cfg.repro.ores.length
+        && typeof cfg.repro.outputsFor === 'function' && cfg.repro.taxPct != null) {
+      reproCfg = {
+        ores: cfg.repro.ores.slice().sort(function (a, b) { return a.cTid - b.cTid; }),
+        taxPct: cfg.repro.taxPct,
+        outputsFor: cfg.repro.outputsFor,
+      };
+    }
     var params = cfg.params || {};
     var market = profile.market || { inputSide: 'sell', outputSide: 'sellOrder', brokerPct: 0, taxPct: 0 };
     // role fees: seller fields fall back to the legacy names; buyer broker defaults to 0
@@ -334,37 +572,6 @@
       return market.inputSide === 'buy' ? p * (1 + buyerBrokerPct / 100) : p;
     }
 
-    /* Depth-aware cost of buying `qty` off the sell book (levels [price, vol, minVol] asc).
-       min_volume is irrelevant on sells — we are the buyer and take volume per level.
-       A dry book prices the remainder at the worst (deepest) filled level. */
-    function walkSellCost(levels, qty) {
-      var cost = 0, remaining = qty, worst = null;
-      for (var i = 0; i < levels.length && remaining > 0; i++) {
-        var take = Math.min(levels[i][1], remaining);
-        if (!(take > 0)) continue;
-        cost += take * levels[i][0];
-        worst = levels[i][0];
-        remaining -= take;
-      }
-      if (worst == null) return null;   // pathological all-zero-volume book — caller falls back
-      if (remaining > 0) cost += remaining * worst;
-      return { cost: cost, filled: qty - Math.max(0, remaining) };
-    }
-
-    /* Instant-sale proceeds for `qty` against the buy book (levels desc). Orders whose
-       min_volume exceeds what is left to sell are skipped (the Sell tool's rule);
-       output the book cannot absorb earns 0. */
-    function walkBuyRevenue(levels, qty) {
-      var proceeds = 0, remaining = qty;
-      for (var i = 0; i < levels.length && remaining > 0; i++) {
-        if ((levels[i][2] || 1) > remaining) continue;
-        var take = Math.min(levels[i][1], remaining);
-        if (!(take > 0)) continue;
-        proceeds += take * levels[i][0];
-        remaining -= take;
-      }
-      return { proceeds: proceeds, filled: qty - remaining };
-    }
 
     /* Full acquisition quote for `qty` units: {cost, thinBook?} | null. */
     function buyQuote(tid, qty) {
@@ -583,6 +790,222 @@
       for (var i = 0; i < node.children.length; i++) walkChosen(node.children[i], depth + 1, acc);
     }
 
+    /* ---------------- ore-basket sourcing: reprocess compressed ore instead ------------
+
+       The buy/build tree stays priced off the book — under joint production a
+       per-mineral ore price is ill-defined, so the tree's decisions are never touched.
+       AFTER the plan is chosen, its reprocessable buy leaves form ONE basket, and this
+       asks: is there a compressed-ore purchase which, refined at the owner's refinery,
+       covers that basket for less than the engine charged for it? The LP (solveBasket)
+       only searches; the winning shopping list is integerized to whole portions and
+       priced through buyQuote() — the same walk, floors and thin-book rules as every
+       other input — so exactly one buying model exists.
+
+       'direct' throughout = the engine's own charged sum over the basket's buy leaves
+       (per-node walks that each restart at the top of the book). The ore route's
+       residual legs are aggregated per type, which can only price >= that — a
+       deliberate conservative bias, stated in DECISIONS.md: the route can only ever
+       reveal savings, never invent them. Adoption is strict (<), losing routes are
+       reported with their deficit, and the joint-production excess is listed and
+       valued but NEVER credited. */
+    function basketFrom(root, outTids) {
+      var per = new Map(), rescuable = [];
+      (function walk(node) {
+        if (node.decision === 'buy') {
+          if (!outTids.has(node.tid)) return;
+          // an unpriced leaf is Infinity in the tree; it stays unpriced (advisory only)
+          if (node.buyCost == null || !isFinite(node.buyCost)) { rescuable.push(node.tid); return; }
+          var e = per.get(node.tid);
+          if (!e) { e = { qty: 0, charged: 0, m3: 0 }; per.set(node.tid, e); }
+          // per-parent-reference accounting, like matTotal/walkChosen — NO dedupe
+          e.qty += node.qty; e.charged += node.buyCost; e.m3 += typeVol(node.tid) * node.qty;
+          return;
+        }
+        for (var i = 0; i < node.children.length; i++) walk(node.children[i]);
+      })(root);
+      return { per: per, rescuable: rescuable };
+    }
+
+    // linear per-unit reprocessing tax for the LP objective: tax% of the CONTINUOUS
+    // output value per compressed unit (exact floored tax is charged at final pricing)
+    function taxPerUnit(ore) {
+      var v = 0;
+      for (var i = 0; i < ore.outputs.length; i++)
+        v += ore.outputs[i][1] * (ore.pct / 100) * (adjusted(ore.outputs[i][0]) || 0);
+      return (reproCfg.taxPct / 100) * v / ore.portion;
+    }
+
+    // walkSellCost's shape as LP columns: bounded segment per level + unbounded tail at
+    // the worst level (the dry-book rule); scalar books and inputSide 'buy' collapse to
+    // one unbounded column, mirroring buyQuote's own branches
+    function priceCols(tid, keyBase, a, extraPerUnit) {
+      var q = prices(tid);
+      if (!q) return null;
+      var cols = [];
+      if (market.inputSide === 'buy') {
+        if (!(q.buy > 0)) return null;
+        cols.push({ key: keyBase + ':t', cost: q.buy * (1 + buyerBrokerPct / 100) + extraPerUnit,
+                    u: Infinity, a: a });
+        return cols;
+      }
+      var lv = q.sellLevels;
+      if (lv && lv.length) {
+        var worst = null;
+        for (var i = 0; i < lv.length; i++) {
+          if (!(lv[i][1] > 0)) continue;
+          cols.push({ key: keyBase + ':' + i, cost: lv[i][0] + extraPerUnit, u: lv[i][1], a: a });
+          worst = lv[i][0];
+        }
+        if (worst == null) return null;
+        cols.push({ key: keyBase + ':t', cost: worst + extraPerUnit, u: Infinity, a: a });
+        return cols;
+      }
+      if (!(q.sell > 0)) return null;
+      cols.push({ key: keyBase + ':t', cost: q.sell + extraPerUnit, u: Infinity, a: a });
+      return cols;
+    }
+
+    /* Exact price of one integer shopping list. Every ISK here comes from buyQuote()
+       (broker floors and thin flags included) plus the floored-output tax — the LP never
+       prices anything the owner sees. Returns null when a leg cannot be priced. */
+    function priceExactPlan(counts, basket) {
+      var mix = [], oreCost = 0, planM3 = 0, got = new Map(), allOut = [];
+      for (var i = 0; i < reproCfg.ores.length; i++) {
+        var ore = reproCfg.ores[i], portions = counts[i];
+        if (!(portions > 0)) continue;
+        var units = portions * ore.portion;
+        var quote = buyQuote(ore.cTid, units);
+        if (!quote) return null;
+        var out = reproCfg.outputsFor(ore.outputs, portions, ore.pct);
+        for (var k = 0; k < out.length; k++) {
+          got.set(out[k][0], (got.get(out[k][0]) || 0) + out[k][1]);
+          allOut.push(out[k]);
+        }
+        oreCost += quote.cost;
+        planM3 += units * ore.cVol;
+        mix.push({ cTid: ore.cTid, name: ore.name, portions: portions, units: units,
+                   cost: quote.cost, m3: units * ore.cVol, thin: quote.thinBook || null });
+      }
+      var tax = 0;
+      for (var t = 0; t < allOut.length; t++)
+        tax += allOut[t][1] * (adjusted(allOut[t][0]) || 0);
+      tax = tax * reproCfg.taxPct / 100;
+      var residuals = [], residCost = 0, excess = [];
+      basket.per.forEach(function (e, tid) {
+        var have = got.get(tid) || 0;
+        if (have < e.qty) {
+          var need = e.qty - have;
+          var rq = buyQuote(tid, need);
+          if (!rq) { residuals = null; return; }
+          residuals.push({ tid: tid, qty: need, cost: rq.cost, thin: rq.thinBook || null });
+          residCost += rq.cost;
+          planM3 += typeVol(tid) * need;
+        } else if (have > e.qty) {
+          excess.push({ tid: tid, qty: have - e.qty });
+        }
+      });
+      if (residuals == null) return null;
+      return { mix: mix, residuals: residuals, excess: excess,
+               oreCost: oreCost, residCost: residCost, tax: tax,
+               planCost: oreCost + tax + residCost, planM3: planM3 };
+    }
+
+    function reproPlan(root) {
+      if (!reproCfg) return null;
+      var outTids = new Set();
+      for (var i = 0; i < reproCfg.ores.length; i++)
+        for (var k = 0; k < reproCfg.ores[i].outputs.length; k++)
+          outTids.add(reproCfg.ores[i].outputs[k][0]);
+      var basket = basketFrom(root, outTids);
+      if (!basket.per.size) return null;
+      // candidate rule, derived not invented: an ore qualifies only when EVERY output it
+      // yields is something this basket needs — an out-of-basket output would force
+      // excess by construction, and it keeps the solve small without a magic threshold
+      var tids = new Set(basket.per.keys());
+      var cand = [], candIdx = [];
+      for (var o = 0; o < reproCfg.ores.length; o++) {
+        var ore = reproCfg.ores[o];
+        if (!(ore.pct > 0) || !(ore.portion > 0)) continue;
+        var fits = ore.outputs.length > 0;
+        for (var j = 0; j < ore.outputs.length; j++)
+          if (!tids.has(ore.outputs[j][0])) { fits = false; break; }
+        if (fits) { cand.push(ore); candIdx.push(o); }
+      }
+      var directCost = 0, basketM3 = 0, basketArr = [];
+      basket.per.forEach(function (e, tid) {
+        directCost += e.charged; basketM3 += e.m3;
+        basketArr.push({ tid: tid, qty: e.qty, charged: e.charged });
+      });
+      basketArr.sort(function (a, b) { return a.tid - b.tid; });
+      var base = { basket: basketArr, directCost: directCost, basketM3: basketM3,
+                   rescuable: basket.rescuable };
+      if (!cand.length) { base.active = false; base.why = 'no candidate ore'; return base; }
+
+      var rows = basketArr.map(function (e) { return { tid: e.tid, need: e.qty }; });
+      var cols = [];
+      var usable = [];
+      for (var c2 = 0; c2 < cand.length; c2++) {
+        var a = {};
+        for (var j2 = 0; j2 < cand[c2].outputs.length; j2++)
+          a[cand[c2].outputs[j2][0]] = cand[c2].outputs[j2][1] / cand[c2].portion * (cand[c2].pct / 100);
+        var oc = priceCols(cand[c2].cTid, 'o' + cand[c2].cTid, a, taxPerUnit(cand[c2]));
+        if (!oc) continue;               // no market for this compressed ore
+        usable.push(cand[c2]);
+        for (var j3 = 0; j3 < oc.length; j3++) cols.push(oc[j3]);
+      }
+      if (!usable.length) { base.active = false; base.why = 'no compressed-ore market'; return base; }
+      for (var r2 = 0; r2 < rows.length; r2++) {
+        var da = {}; da[rows[r2].tid] = 1;
+        var dc = priceCols(rows[r2].tid, 'd' + rows[r2].tid, da, 0);
+        if (!dc) { base.active = false; base.why = 'basket leg unpriceable'; return base; }
+        for (var j4 = 0; j4 < dc.length; j4++) cols.push(dc[j4]);
+      }
+      var sol = solveBasket(rows, cols);
+      if (!sol) { base.active = false; base.why = 'solve failed'; return base; }
+
+      // LP units per usable ore, then integerize: for each ore try floor and ceil of the
+      // fractional portion count (in cTid order, greedily keeping the cheaper EXACT
+      // plan) — deterministic and constant-free; residual buys cover any shortfall
+      var counts = new Array(reproCfg.ores.length).fill(0);
+      for (var u2 = 0; u2 < usable.length; u2++) {
+        var unitsLp = 0;
+        for (var key in sol.x)
+          if (key.indexOf('o' + usable[u2].cTid + ':') === 0) unitsLp += sol.x[key];
+        counts[reproCfg.ores.indexOf(usable[u2])] = unitsLp / usable[u2].portion;
+      }
+      var best = null, chosen = counts.map(function (v) { return Math.ceil(v - 1e-9); });
+      best = priceExactPlan(chosen, basket);
+      for (var v2 = 0; v2 < counts.length; v2++) {
+        if (!(counts[v2] > 0)) continue;
+        var lo = Math.floor(counts[v2] - 1e-9);
+        if (lo === chosen[v2]) continue;
+        var trial = chosen.slice(); trial[v2] = lo;
+        var tp = priceExactPlan(trial, basket);
+        if (tp && (!best || tp.planCost < best.planCost)) { best = tp; chosen = trial; }
+      }
+      if (!best) { base.active = false; base.why = 'plan unpriceable'; return base; }
+
+      // the excess is valued the way the engine values instant output (buy-book walk,
+      // seller sales tax off) and NEVER credited — both readings are always shown
+      var excessInstant = 0;
+      for (var x2 = 0; x2 < best.excess.length; x2++) {
+        var q3 = prices(best.excess[x2].tid);
+        if (!q3) continue;
+        var gross = q3.buyLevels && q3.buyLevels.length
+          ? walkBuyRevenue(q3.buyLevels, best.excess[x2].qty).proceeds
+          : (q3.buy > 0 ? q3.buy * best.excess[x2].qty : 0);
+        excessInstant += gross * (1 - sellerTaxPct / 100);
+      }
+      base.mix = best.mix; base.residuals = best.residuals; base.excess = best.excess;
+      base.oreCost = best.oreCost; base.residCost = best.residCost; base.tax = best.tax;
+      base.planCost = best.planCost; base.planM3 = best.planM3;
+      base.excessInstantValue = excessInstant;
+      base.active = best.planCost < directCost;      // strict: ties keep the market route
+      if (!base.active) base.why = 'ore route dearer';
+      base.savings = base.active ? directCost - best.planCost : 0;
+      return base;
+    }
+
     function shipCost(m3, collateral) {
       if (!shipping) return 0;
       var c = (shipping.base || 0) + (shipping.perM3 || 0) * m3 + (shipping.collateralPct || 0) * collateral;
@@ -756,12 +1179,30 @@
           revenueUnit = (grossTotal * (1 - sellerTaxPct / 100) - brokerFee) / produced;
         }
       }
-      var haulIn = shipping && shipping.applyInbound && acc.boughtM3 > 0
-        ? shipLeg(acc.boughtM3, acc.boughtCost) : NO_LEG;
+      /* Ore-basket sourcing runs ONCE, after the batch is final. The capital-shrink
+         loop above deliberately sized against market-direct costs: the ore route only
+         lowers spend, so a batch that fits without it fits with it — conservative, and
+         it keeps the loop at zero LP solves. */
+      var repro = reproCfg ? reproPlan(root) : null;
+      var reproSavings = repro && repro.active ? repro.savings : 0;
+      var effM3 = acc.boughtM3, effCost = acc.boughtCost;
+      if (repro && repro.active) {
+        effM3 = acc.boughtM3 - repro.basketM3 + repro.planM3;
+        effCost = acc.boughtCost - repro.directCost + repro.planCost;
+      }
+      var haulIn = shipping && shipping.applyInbound && effM3 > 0
+        ? shipLeg(effM3, effCost) : NO_LEG;
+      if (repro && shipping && shipping.applyInbound) {
+        // the ACTUAL inbound delta the model charges (base fees, splitting, collateral
+        // included) — the display never shows a per-m³ estimate that differs from it
+        var haulWas = acc.boughtM3 > 0 ? shipLeg(acc.boughtM3, acc.boughtCost) : NO_LEG;
+        repro.haulShiftCost = haulIn.cost - haulWas.cost;
+        repro.haulShiftM3 = effM3 - acc.boughtM3;
+      } else if (repro) { repro.haulShiftCost = 0; repro.haulShiftM3 = 0; }
       var haulOut = shipping && shipping.applyOutbound && grossTotal != null
         ? shipLeg(typeVol(productTid) * produced, grossTotal) : NO_LEG;
       var shipIn = haulIn.cost, shipOut = haulOut.cost;
-      var capitalUsed = built.buildTotalForProduced + shipIn;
+      var capitalUsed = built.buildTotalForProduced - reproSavings + shipIn;
 
       // steady-state pipeline: units/hour = min over stages; limits that shrank the
       // plan (capital, then demand) take priority in the bottleneck label
@@ -777,7 +1218,7 @@
       var cycleHours = sr.perRunTime > 0 ? sr.perRunTime * R / 3600 : 0;
       if (dailyLaunch) cycleHours = Math.max(cycleHours, 24);
 
-      var costPerItem = (built.buildTotalForProduced + shipIn + shipOut) / produced;
+      var costPerItem = (built.buildTotalForProduced - reproSavings + shipIn + shipOut) / produced;
       var profitPerItem = revenueUnit != null ? revenueUnit - costPerItem : null;
       var iskPerHour = profitPerItem != null && effRate != null && effRate > 0
         ? profitPerItem * effRate : null;
@@ -806,6 +1247,7 @@
           salesTax: salesTax, brokerFee: brokerFee,
           totalJobTime: acc.jobTime, treeDepth: acc.maxDepth,
           thinBookCount: acc.thinBookCount, revenueThinBook: revenueThinBook,
+          repro: repro,
         },
         tree: root, stats: res.ctx.stats,
       };
@@ -815,7 +1257,10 @@
   }
 
   var IndustryEngine = { create: create, matQty: matQty, jobCost: jobCost,
-    timeSkillMult: timeSkillMult, DECRYPTORS: DECRYPTORS };
+    timeSkillMult: timeSkillMult, DECRYPTORS: DECRYPTORS,
+    // exported so the ore-basket tests can prove basket pricing uses THESE walks
+    walkSellCost: walkSellCost, walkBuyRevenue: walkBuyRevenue, brokerOnOrder: brokerOnOrder,
+    solveBasket: solveBasket };
   if (typeof window !== 'undefined') window.IndustryEngine = IndustryEngine;
   if (typeof module !== 'undefined' && module.exports) module.exports = IndustryEngine;
 })();
